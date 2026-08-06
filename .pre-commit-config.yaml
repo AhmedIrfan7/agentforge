@@ -1,0 +1,35 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.1
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^apps/api/
+      - id: ruff-format
+        files: ^apps/api/
+
+  - repo: local
+    hooks:
+      - id: web-eslint
+        name: eslint (apps/web)
+        entry: pnpm --filter @agentforge/web run lint
+        language: system
+        pass_filenames: false
+        files: ^apps/web/.*\.(ts|tsx|js|jsx)$
+
+      - id: web-prettier
+        name: prettier --check (apps/web)
+        entry: pnpm --filter @agentforge/web run format:check
+        language: system
+        pass_filenames: false
+        files: ^apps/web/
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+      - id: check-yaml
