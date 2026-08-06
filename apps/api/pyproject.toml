@@ -28,7 +28,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
-ignore = []
+# B008: FastAPI's Depends()/Query()/etc. are meant to be called in argument
+# defaults — that's the framework's actual DI pattern, not a footgun here.
+ignore = ["B008"]
 
 [tool.ruff.format]
 quote-style = "double"
