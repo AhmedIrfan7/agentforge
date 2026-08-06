@@ -6,6 +6,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import models  # noqa: F401  registers every model on Base.metadata
 from config import settings
 from db import Base
 
@@ -21,8 +22,6 @@ config.set_main_option("sqlalchemy.url", settings.database_url)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Import every model module here so autogenerate can see it, e.g.:
-# from models import organization, workspace  # noqa: F401
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from config import settings
 
@@ -23,7 +24,16 @@ class Base(DeclarativeBase):
     pass
 
 
-engine: AsyncEngine = create_async_engine(settings.database_url, pool_pre_ping=True)
+# NullPool under pytest: pooled asyncpg connections get bound to whichever
+# event loop first used them, but each test function gets a fresh loop —
+# reusing a pooled connection across tests raises "Event loop is closed".
+# Opening/closing a real connection per use avoids that entirely; production
+# keeps normal pooling since it runs one process on one long-lived loop.
+engine: AsyncEngine = (
+    create_async_engine(settings.database_url, poolclass=NullPool)
+    if settings.environment == "test"
+    else create_async_engine(settings.database_url, pool_pre_ping=True)
+)
 
 async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
     bind=engine,
