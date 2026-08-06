@@ -1,0 +1,14 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Native/postinstall build scripts explicitly allowed to run.
+# Keep this list minimal and reviewed — arbitrary postinstall scripts
+# are a real supply-chain risk (AGENTS.md SECTION 9).
+onlyBuiltDependencies:
+  - sharp
+
+# Explicitly reviewed and denied — pure-JS fallback exists, no native
+# build script needed for this dependency.
+allowBuilds:
+  unrs-resolver: false
