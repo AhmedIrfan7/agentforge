@@ -20,7 +20,14 @@ from dependencies.db import get_db
 from errors import ConflictError, UnauthorizedError
 from repositories.session import SessionRepository
 from repositories.user import UserRepository
-from schemas.auth import LoginRequest, RefreshRequest, SignupRequest, TokenResponse, UserRead
+from schemas.auth import (
+    LoginRequest,
+    LogoutRequest,
+    RefreshRequest,
+    SignupRequest,
+    TokenResponse,
+    UserRead,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -102,3 +109,15 @@ async def refresh(
     await session_repo.revoke(existing)
 
     return await _issue_tokens(session, existing.user_id, request)
+
+
+@router.post("/logout", status_code=204)
+async def logout(body: LogoutRequest, session: Annotated[AsyncSession, Depends(get_db)]) -> None:
+    # Idempotent and silent either way: whether the token was valid,
+    # already revoked, or never existed, logout looks the same to the
+    # caller — no reason to leak which (AGENTS.md SECTION 9).
+    session_repo = SessionRepository(session)
+    token_hash = hash_refresh_token(body.refresh_token)
+    existing = await session_repo.get_by_refresh_token_hash(token_hash)
+    if existing is not None and existing.revoked_at is None:
+        await session_repo.revoke(existing)
