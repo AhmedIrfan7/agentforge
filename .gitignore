@@ -1,0 +1,41 @@
+# --- Python (apps/api) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Node / TypeScript (apps/web, apps/widget, packages/shared) ---
+node_modules/
+.next/
+dist/
+build/
+*.tsbuildinfo
+.turbo/
+
+# --- Env & secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# --- Docker / local data volumes ---
+.docker-data/
+
+# --- Misc ---
+*.tmp
