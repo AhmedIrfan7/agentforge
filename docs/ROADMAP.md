@@ -57,7 +57,7 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 - [x] 041. Create `Role`/`Permission` tables + migration — global catalog, 10 built-in roles seeded; Permission rows deliberately empty until Milestone 2 defines what they check
 - [x] 042. Add `tenant_id` column + index convention to base model mixin — pulled forward before 038 (ADR-0003 requires tenant_id land in the same migration as the table, not bolted on after)
 - [x] 043. Enable Postgres Row-Level Security policies on tenant tables — pulled forward with 042/038 for the same reason. **Found and fixed a real bug: the docker-compose bootstrap Postgres role is always a superuser and unconditionally bypasses RLS.** App runtime now uses a separate least-privilege `agentforge_app` role (see `infra/postgres/init/01-app-role.sql`, ADR-0003); migrations still use the bootstrap superuser. Verified with real cross-tenant read/write attempts against the actual least-privilege connection, not the superuser one.
-- [ ] 044. Add tenant-context middleware (resolves org/workspace from JWT)
+- [x] 044. Add tenant-context dependency (`dependencies/tenant.py`) — the "resolve from JWT" half is an explicit `NotImplementedError` placeholder until Milestone 2's auth exists (deliberately not a client-header shortcut, see ADR-0003); the session/RLS-wiring half is real and tested end-to-end through FastAPI's dependency chain
 - [ ] 045. Add repository base class enforcing `tenant_id` filter on every query
 - [ ] 046. Add test: cross-tenant query attempt is blocked
 - [ ] 047. Create Organization CRUD endpoints
