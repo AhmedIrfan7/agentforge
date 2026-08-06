@@ -1,5 +1,10 @@
 # AgentForge
 
+[![Lint](https://github.com/AhmedIrfan7/agentforge/actions/workflows/lint.yml/badge.svg)](https://github.com/AhmedIrfan7/agentforge/actions/workflows/lint.yml)
+[![API Tests](https://github.com/AhmedIrfan7/agentforge/actions/workflows/api-tests.yml/badge.svg)](https://github.com/AhmedIrfan7/agentforge/actions/workflows/api-tests.yml)
+[![Web Tests](https://github.com/AhmedIrfan7/agentforge/actions/workflows/web-tests.yml/badge.svg)](https://github.com/AhmedIrfan7/agentforge/actions/workflows/web-tests.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
 Enterprise-grade, open-source, multi-tenant AI SaaS platform for building and deploying AI chatbots **and** AI voice bots that share one intelligence layer.
 
 > Status: early development. Not yet usable. Following the roadmap in [`docs/ROADMAP.md`](docs/ROADMAP.md).
