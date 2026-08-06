@@ -69,3 +69,25 @@ async def test_list_only_returns_current_tenants_rows() -> None:
         await set_tenant_context(session, org_a.id)
         results = await repo_a.list()
         assert [w.slug for w in results] == ["repo-list-a-ws"]
+
+
+@pytest.mark.anyio
+async def test_get_by_id_across_tenants_returns_none_not_another_tenants_row() -> None:
+    """The specific attack this guards against: tenant B knows (guesses,
+    leaks from a log, whatever) tenant A's row ID and requests it directly
+    by ID rather than listing. get() must still return None, not A's row.
+    """
+    async with get_session() as session:
+        org_a = Organization(name="Repo Get Org A", slug="repo-get-org-a")
+        org_b = Organization(name="Repo Get Org B", slug="repo-get-org-b")
+        session.add_all([org_a, org_b])
+        await session.flush()
+
+        await set_tenant_context(session, org_a.id)
+        workspace_a = await WorkspaceRepository(session, org_a.id).create(
+            name="A WS", slug="repo-get-a-ws"
+        )
+
+        await set_tenant_context(session, org_b.id)
+        repo_b = WorkspaceRepository(session, org_b.id)
+        assert await repo_b.get(workspace_a.id) is None
