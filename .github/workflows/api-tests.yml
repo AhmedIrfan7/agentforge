@@ -47,6 +47,9 @@ jobs:
       - name: Run migrations
         working-directory: apps/api
         run: uv run alembic upgrade head
+      - name: Check for model/migration drift
+        working-directory: apps/api
+        run: uv run alembic check
       - name: Run tests
         working-directory: apps/api
         run: uv run pytest -v
