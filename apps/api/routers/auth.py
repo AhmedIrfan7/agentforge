@@ -29,6 +29,8 @@ from schemas.auth import (
     LogoutRequest,
     MagicLinkRequest,
     MagicLinkVerifyRequest,
+    PasswordResetConfirmRequest,
+    PasswordResetRequest,
     RefreshRequest,
     SignupRequest,
     TokenResponse,
@@ -213,3 +215,53 @@ async def verify_magic_link(
 
     await token_repo.mark_used(token)
     return await _issue_tokens(session, token.user_id, request)
+
+
+@router.post("/password-reset/request", status_code=204)
+async def request_password_reset(
+    body: PasswordResetRequest, session: Annotated[AsyncSession, Depends(get_db)]
+) -> None:
+    # Same anti-enumeration reasoning as magic-link/request.
+    user = await UserRepository(session).get_by_email(body.email)
+    if user is None:
+        return
+
+    raw_token, token_hash, expires_at = generate_verification_token()
+    await VerificationTokenRepository(session).create(
+        user_id=user.id, token_hash=token_hash, purpose="password_reset", expires_at=expires_at
+    )
+    link = f"{settings.app_base_url}/reset-password?token={raw_token}"
+    send_email(
+        to=user.email,
+        subject="Reset your AgentForge password",
+        body=f"Click to reset your password: {link}\n\nThis link expires in 1 hour.",
+    )
+
+
+@router.post("/password-reset/confirm", status_code=204)
+async def confirm_password_reset(
+    body: PasswordResetConfirmRequest, session: Annotated[AsyncSession, Depends(get_db)]
+) -> None:
+    token_repo = VerificationTokenRepository(session)
+    token_hash = hash_verification_token(body.token)
+    token = await token_repo.get_valid(token_hash=token_hash, purpose="password_reset")
+
+    invalid_token = UnauthorizedError("Invalid or expired password reset link.")
+    if token is None:
+        raise invalid_token
+    if token.used_at is not None:
+        raise invalid_token
+    if token.expires_at < datetime.now(UTC):
+        raise invalid_token
+
+    user = await UserRepository(session).get(token.user_id)
+    if user is None:
+        raise invalid_token
+
+    user.hashed_password = hash_password(body.new_password)
+    await token_repo.mark_used(token)
+
+    # If the account was compromised, any already-logged-in session could
+    # be the attacker's, not the real owner's — a reset invalidates all
+    # of them, not just the password going forward.
+    await SessionRepository(session).revoke_all_for_user(user.id)

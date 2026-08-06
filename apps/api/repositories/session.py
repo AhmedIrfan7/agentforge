@@ -2,7 +2,7 @@
 TenantScopedRepository either."""
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,4 +43,17 @@ class SessionRepository:
 
     async def revoke(self, session: Session) -> None:
         session.revoked_at = datetime.now(session.expires_at.tzinfo)
+        await self.session.flush()
+
+    async def revoke_all_for_user(self, user_id: uuid.UUID) -> None:
+        """Password reset (step 067) calls this: if the account was
+        compromised, any already-logged-in session could be the
+        attacker's — a reset should invalidate all of them, not just
+        change the password going forward."""
+        now = datetime.now(UTC)
+        result = await self.session.execute(
+            select(Session).where(Session.user_id == user_id, Session.revoked_at.is_(None))
+        )
+        for existing in result.scalars().all():
+            existing.revoked_at = now
         await self.session.flush()
