@@ -41,3 +41,13 @@ class TenantScopedMixin:
             nullable=False,
             index=True,
         )
+
+
+class TenantScopedEntity(UUIDPrimaryKeyMixin, TenantScopedMixin):
+    """Combines the two mixins above so repositories/base.py can bind its
+    generic type parameter to a real class. A structural Protocol with
+    plain `id: uuid.UUID` / `tenant_id: uuid.UUID` attributes doesn't
+    reliably match SQLAlchemy's Mapped[] descriptors (InstrumentedAttribute
+    at the class level vs. a plain value at the instance level) — binding
+    to this class instead sidesteps that entirely.
+    """

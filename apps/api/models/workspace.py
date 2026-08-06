@@ -5,10 +5,10 @@ from sqlalchemy import UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db import Base
-from models.mixins import TenantScopedMixin, TimestampMixin, UUIDPrimaryKeyMixin
+from models.mixins import TenantScopedEntity, TimestampMixin
 
 
-class Workspace(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base):
+class Workspace(TenantScopedEntity, TimestampMixin, Base):
     __tablename__ = "workspaces"
     __table_args__ = (
         # Slug only needs to be unique within an organization, not globally.

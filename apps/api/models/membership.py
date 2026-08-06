@@ -18,10 +18,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db import Base
-from models.mixins import TenantScopedMixin, TimestampMixin, UUIDPrimaryKeyMixin
+from models.mixins import TenantScopedEntity, TimestampMixin
 
 
-class Membership(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base):
+class Membership(TenantScopedEntity, TimestampMixin, Base):
     __tablename__ = "memberships"
     __table_args__ = (
         Index(
