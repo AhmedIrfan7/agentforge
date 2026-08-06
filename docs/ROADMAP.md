@@ -48,15 +48,15 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 
 ## Milestone 1 — Multi-Tenancy Core (steps 35–59)
 
-- [ ] 035. Add SQLAlchemy async engine setup
-- [ ] 036. Add Alembic migrations setup
-- [ ] 037. Create `Organization` model + migration
-- [ ] 038. Create `Workspace` model + migration
+- [x] 035. Add SQLAlchemy async engine setup
+- [x] 036. Add Alembic migrations setup
+- [x] 037. Create `Organization` model + migration
+- [x] 038. Create `Workspace` model + migration — landed with 042+043, see their notes
 - [ ] 039. Create `User` model + migration
 - [ ] 040. Create `Membership` model (user↔org/workspace + role) + migration
 - [ ] 041. Create `Role`/`Permission` tables + migration
-- [ ] 042. Add `tenant_id` column + index convention to base model mixin
-- [ ] 043. Enable Postgres Row-Level Security policies on tenant tables
+- [x] 042. Add `tenant_id` column + index convention to base model mixin — pulled forward before 038 (ADR-0003 requires tenant_id land in the same migration as the table, not bolted on after)
+- [x] 043. Enable Postgres Row-Level Security policies on tenant tables — pulled forward with 042/038 for the same reason. **Found and fixed a real bug: the docker-compose bootstrap Postgres role is always a superuser and unconditionally bypasses RLS.** App runtime now uses a separate least-privilege `agentforge_app` role (see `infra/postgres/init/01-app-role.sql`, ADR-0003); migrations still use the bootstrap superuser. Verified with real cross-tenant read/write attempts against the actual least-privilege connection, not the superuser one.
 - [ ] 044. Add tenant-context middleware (resolves org/workspace from JWT)
 - [ ] 045. Add repository base class enforcing `tenant_id` filter on every query
 - [ ] 046. Add test: cross-tenant query attempt is blocked
