@@ -60,12 +60,12 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 - [x] 044. Add tenant-context dependency (`dependencies/tenant.py`) — the "resolve from JWT" half is an explicit `NotImplementedError` placeholder until Milestone 2's auth exists (deliberately not a client-header shortcut, see ADR-0003); the session/RLS-wiring half is real and tested end-to-end through FastAPI's dependency chain
 - [x] 045. Add repository base class enforcing `tenant_id` filter on every query — `repositories/base.py`, `TenantScopedEntity` mixin added for clean generic typing
 - [x] 046. Add test: cross-tenant query attempt is blocked — get/list/create all covered across `test_repository_base.py` and `test_tenant_isolation.py`
-- [ ] 047. Create Organization CRUD endpoints
-- [ ] 048. Create Workspace CRUD endpoints
-- [ ] 049. Add pagination utility for list endpoints
-- [ ] 050. Add API error-handling middleware (consistent schema, no internal leak)
-- [ ] 051. Add Pydantic request/response schemas for org/workspace endpoints
-- [ ] 052. Add integration tests for org/workspace endpoints
+- [x] 047. Create Organization CRUD endpoints — fully functional, verified live against a running server (create/get/list/409/404/422/delete)
+- [x] 048. Create Workspace CRUD endpoints — correctly wired but non-functional until Milestone 2 auth exists; verified both the fail-closed 500 and the working path via dependency override
+- [x] 049. Add pagination utility for list endpoints — `schemas/common.py` (`Page[T]`, `PaginationParams`), `repositories/base.py:count()`
+- [x] 050. Add API error-handling middleware (consistent schema, no internal leak) — `errors.py`
+- [x] 051. Add Pydantic request/response schemas for org/workspace endpoints — `schemas/organization.py`, `schemas/workspace.py`
+- [x] 052. Add integration tests for org/workspace endpoints — `test_organization_endpoints.py`, `test_workspace_endpoints.py`, 27/27 passing
 - [ ] 053. Add local dev seed script (demo org/workspace/user)
 - [ ] 054. Add `AuditLog` table + model
 - [ ] 055. Add audit logging hook on org/workspace create/update/delete
