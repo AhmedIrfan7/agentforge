@@ -66,13 +66,13 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 - [x] 050. Add API error-handling middleware (consistent schema, no internal leak) — `errors.py`
 - [x] 051. Add Pydantic request/response schemas for org/workspace endpoints — `schemas/organization.py`, `schemas/workspace.py`
 - [x] 052. Add integration tests for org/workspace endpoints — `test_organization_endpoints.py`, `test_workspace_endpoints.py`, 27/27 passing
-- [ ] 053. Add local dev seed script (demo org/workspace/user)
-- [ ] 054. Add `AuditLog` table + model
-- [ ] 055. Add audit logging hook on org/workspace create/update/delete
-- [ ] 056. Document tenant isolation approach in `docs/ARCHITECTURE.md`
-- [ ] 057. Add dedicated tenant-isolation pytest module
-- [ ] 058. Add DB connection pooling config
-- [ ] 059. Add CI check: `alembic upgrade head` runs clean
+- [x] 053. Add local dev seed script (demo org/workspace/user) — idempotent, verified live
+- [x] 054. Add `AuditLog` table + model — `tenant_id` deliberately has no FK (outlives the org it's about)
+- [x] 055. Add audit logging hook on org/workspace create/update/delete (no update endpoints exist yet, so create+delete only)
+- [x] 056. Document tenant isolation approach in `docs/ARCHITECTURE.md`
+- [x] 057. Add dedicated tenant-isolation pytest module — `test_tenant_isolation.py` (built alongside step 043)
+- [x] 058. Add DB connection pooling config — `config.py`, applies outside tests only
+- [x] 059. Add CI check: `alembic upgrade head` runs clean — plus `alembic check` for model/migration drift
 
 ## Milestone 2 — Authentication & Authorization (steps 60–81)
 
