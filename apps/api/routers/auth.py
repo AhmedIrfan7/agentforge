@@ -27,6 +27,8 @@ from repositories.verification_token import VerificationTokenRepository
 from schemas.auth import (
     LoginRequest,
     LogoutRequest,
+    MagicLinkRequest,
+    MagicLinkVerifyRequest,
     RefreshRequest,
     SignupRequest,
     TokenResponse,
@@ -165,3 +167,49 @@ async def logout(body: LogoutRequest, session: Annotated[AsyncSession, Depends(g
     existing = await session_repo.get_by_refresh_token_hash(token_hash)
     if existing is not None and existing.revoked_at is None:
         await session_repo.revoke(existing)
+
+
+@router.post("/magic-link/request", status_code=204)
+async def request_magic_link(
+    body: MagicLinkRequest, session: Annotated[AsyncSession, Depends(get_db)]
+) -> None:
+    # Always 204 regardless of whether the email exists — a differing
+    # response would let an attacker enumerate accounts (AGENTS.md
+    # SECTION 9), same reasoning as login's identical invalid-credentials
+    # message.
+    user = await UserRepository(session).get_by_email(body.email)
+    if user is None:
+        return
+
+    raw_token, token_hash, expires_at = generate_verification_token()
+    await VerificationTokenRepository(session).create(
+        user_id=user.id, token_hash=token_hash, purpose="magic_link", expires_at=expires_at
+    )
+    link = f"{settings.app_base_url}/magic-link?token={raw_token}"
+    send_email(
+        to=user.email,
+        subject="Your AgentForge sign-in link",
+        body=f"Click to sign in: {link}\n\nThis link expires in 1 hour.",
+    )
+
+
+@router.post("/magic-link/verify", response_model=TokenResponse)
+async def verify_magic_link(
+    body: MagicLinkVerifyRequest,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> TokenResponse:
+    token_repo = VerificationTokenRepository(session)
+    token_hash = hash_verification_token(body.token)
+    token = await token_repo.get_valid(token_hash=token_hash, purpose="magic_link")
+
+    invalid_token = UnauthorizedError("Invalid or expired sign-in link.")
+    if token is None:
+        raise invalid_token
+    if token.used_at is not None:
+        raise invalid_token
+    if token.expires_at < datetime.now(UTC):
+        raise invalid_token
+
+    await token_repo.mark_used(token)
+    return await _issue_tokens(session, token.user_id, request)
