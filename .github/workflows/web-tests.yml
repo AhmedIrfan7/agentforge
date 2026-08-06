@@ -1,0 +1,29 @@
+name: Web Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Next.js production build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm --filter @agentforge/web run build
+
+# No unit/e2e test suite exists yet for apps/web — a production build is
+# the meaningful automated check available today (catches type errors,
+# broken imports, and build-time failures). Playwright e2e tests land
+# per docs/ROADMAP.md step 198; this job gains a real `test` step
+# alongside `build` at that point instead of replacing it.
