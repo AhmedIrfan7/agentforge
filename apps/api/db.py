@@ -30,11 +30,19 @@ class Base(DeclarativeBase):
 # event loop first used them, but each test function gets a fresh loop —
 # reusing a pooled connection across tests raises "Event loop is closed".
 # Opening/closing a real connection per use avoids that entirely; production
-# keeps normal pooling since it runs one process on one long-lived loop.
+# keeps normal pooling since it runs one process on one long-lived loop, with
+# size/timeout/recycle tunable via config.py (env vars), not hardcoded here.
 engine: AsyncEngine = (
     create_async_engine(settings.database_url, poolclass=NullPool)
     if settings.environment == "test"
-    else create_async_engine(settings.database_url, pool_pre_ping=True)
+    else create_async_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_timeout=settings.db_pool_timeout_seconds,
+        pool_recycle=settings.db_pool_recycle_seconds,
+    )
 )
 
 async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(

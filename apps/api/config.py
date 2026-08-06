@@ -32,6 +32,15 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://agentforge:agentforge@localhost:5432/agentforge"
     )
 
+    # SQLAlchemy async engine pool sizing (ignored in tests — see db.py,
+    # which uses NullPool there regardless of these values). Defaults are
+    # conservative for local dev; tune per-deployment via env vars, not by
+    # editing these numbers.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_timeout_seconds: int = 30
+    db_pool_recycle_seconds: int = 1800
+
     redis_url: str = "redis://localhost:6379/0"
 
     storage_endpoint_url: str = "http://localhost:9000"
