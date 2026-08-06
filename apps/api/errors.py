@@ -34,6 +34,16 @@ class ConflictError(AppError):
     code = "conflict"
 
 
+class UnauthorizedError(AppError):
+    status_code = 401
+    code = "unauthorized"
+
+
+class ForbiddenError(AppError):
+    status_code = 403
+    code = "forbidden"
+
+
 def _error_response(
     status_code: int, code: str, message: str, details: object = None
 ) -> JSONResponse:

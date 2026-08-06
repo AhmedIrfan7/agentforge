@@ -6,9 +6,16 @@ elsewhere in the codebase, per AGENTS.md's configuration-management guidance.
 """
 
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Self
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Long enough (32+ bytes) that PyJWT doesn't warn about weak HMAC key
+# length even if a dev never overrides it locally — but still obviously
+# a placeholder, and _PLACEHOLDER_SECRETS below stops it reaching prod.
+_PLACEHOLDER_SECRET = "change-me-to-a-random-value-at-least-32-bytes-long"
+_PLACEHOLDER_SECRETS = frozenset({_PLACEHOLDER_SECRET})
 
 
 class Settings(BaseSettings):
@@ -16,7 +23,7 @@ class Settings(BaseSettings):
 
     environment: Literal["development", "test", "staging", "production"] = "development"
     log_level: str = "info"
-    secret_key: str = "change-me-to-a-random-value"
+    secret_key: str = _PLACEHOLDER_SECRET
 
     # Least-privilege role — no BYPASSRLS, not a superuser, not the table
     # owner — so Row-Level Security policies actually apply. Used by the
@@ -51,13 +58,24 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     anthropic_api_key: str = ""
 
-    jwt_secret: str = "change-me-to-a-random-value"
+    jwt_secret: str = _PLACEHOLDER_SECRET
     jwt_access_token_ttl_minutes: int = 15
     jwt_refresh_token_ttl_days: int = 30
 
     @property
     def is_development(self) -> bool:
         return self.environment == "development"
+
+    @model_validator(mode="after")
+    def _reject_placeholder_secrets_in_production(self) -> Self:
+        # Fail at startup, not silently in production — AGENTS.md SECTION 9
+        # treats insecure defaults as a design bug, not an ops footnote.
+        if self.environment == "production":
+            if self.secret_key in _PLACEHOLDER_SECRETS:
+                raise ValueError("SECRET_KEY is still the placeholder value — set a real secret.")
+            if self.jwt_secret in _PLACEHOLDER_SECRETS:
+                raise ValueError("JWT_SECRET is still the placeholder value — set a real secret.")
+        return self
 
 
 @lru_cache
