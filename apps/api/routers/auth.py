@@ -21,6 +21,7 @@ from config import settings
 from dependencies.db import get_db
 from errors import ConflictError, UnauthorizedError
 from notifications.email import send_email
+from rate_limit import rate_limit
 from repositories.session import SessionRepository
 from repositories.user import UserRepository
 from repositories.verification_token import VerificationTokenRepository
@@ -72,7 +73,12 @@ async def _send_verification_email(session: AsyncSession, user_id: uuid.UUID, em
     )
 
 
-@router.post("/signup", response_model=UserRead, status_code=201)
+@router.post(
+    "/signup",
+    response_model=UserRead,
+    status_code=201,
+    dependencies=[Depends(rate_limit(key_prefix="signup", limit=5, window_seconds=3600))],
+)
 async def signup(
     body: SignupRequest, session: Annotated[AsyncSession, Depends(get_db)]
 ) -> UserRead:
@@ -90,7 +96,11 @@ async def signup(
     return UserRead.model_validate(user)
 
 
-@router.post("/verify-email", status_code=204)
+@router.post(
+    "/verify-email",
+    status_code=204,
+    dependencies=[Depends(rate_limit(key_prefix="verify-email", limit=20, window_seconds=3600))],
+)
 async def verify_email(
     body: VerifyEmailRequest, session: Annotated[AsyncSession, Depends(get_db)]
 ) -> None:
@@ -114,7 +124,11 @@ async def verify_email(
     await token_repo.mark_used(token)
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    dependencies=[Depends(rate_limit(key_prefix="login", limit=10, window_seconds=300))],
+)
 async def login(
     body: LoginRequest, request: Request, session: Annotated[AsyncSession, Depends(get_db)]
 ) -> TokenResponse:
@@ -135,7 +149,11 @@ async def login(
     return await _issue_tokens(session, user.id, request)
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    dependencies=[Depends(rate_limit(key_prefix="refresh", limit=30, window_seconds=300))],
+)
 async def refresh(
     body: RefreshRequest, request: Request, session: Annotated[AsyncSession, Depends(get_db)]
 ) -> TokenResponse:
@@ -159,7 +177,11 @@ async def refresh(
     return await _issue_tokens(session, existing.user_id, request)
 
 
-@router.post("/logout", status_code=204)
+@router.post(
+    "/logout",
+    status_code=204,
+    dependencies=[Depends(rate_limit(key_prefix="logout", limit=30, window_seconds=300))],
+)
 async def logout(body: LogoutRequest, session: Annotated[AsyncSession, Depends(get_db)]) -> None:
     # Idempotent and silent either way: whether the token was valid,
     # already revoked, or never existed, logout looks the same to the
@@ -171,7 +193,13 @@ async def logout(body: LogoutRequest, session: Annotated[AsyncSession, Depends(g
         await session_repo.revoke(existing)
 
 
-@router.post("/magic-link/request", status_code=204)
+@router.post(
+    "/magic-link/request",
+    status_code=204,
+    dependencies=[
+        Depends(rate_limit(key_prefix="magic-link-request", limit=3, window_seconds=3600))
+    ],
+)
 async def request_magic_link(
     body: MagicLinkRequest, session: Annotated[AsyncSession, Depends(get_db)]
 ) -> None:
@@ -195,7 +223,13 @@ async def request_magic_link(
     )
 
 
-@router.post("/magic-link/verify", response_model=TokenResponse)
+@router.post(
+    "/magic-link/verify",
+    response_model=TokenResponse,
+    dependencies=[
+        Depends(rate_limit(key_prefix="magic-link-verify", limit=20, window_seconds=3600))
+    ],
+)
 async def verify_magic_link(
     body: MagicLinkVerifyRequest,
     request: Request,
@@ -217,7 +251,13 @@ async def verify_magic_link(
     return await _issue_tokens(session, token.user_id, request)
 
 
-@router.post("/password-reset/request", status_code=204)
+@router.post(
+    "/password-reset/request",
+    status_code=204,
+    dependencies=[
+        Depends(rate_limit(key_prefix="password-reset-request", limit=3, window_seconds=3600))
+    ],
+)
 async def request_password_reset(
     body: PasswordResetRequest, session: Annotated[AsyncSession, Depends(get_db)]
 ) -> None:
@@ -238,7 +278,13 @@ async def request_password_reset(
     )
 
 
-@router.post("/password-reset/confirm", status_code=204)
+@router.post(
+    "/password-reset/confirm",
+    status_code=204,
+    dependencies=[
+        Depends(rate_limit(key_prefix="password-reset-confirm", limit=20, window_seconds=3600))
+    ],
+)
 async def confirm_password_reset(
     body: PasswordResetConfirmRequest, session: Annotated[AsyncSession, Depends(get_db)]
 ) -> None:

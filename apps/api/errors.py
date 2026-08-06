@@ -44,6 +44,11 @@ class ForbiddenError(AppError):
     code = "forbidden"
 
 
+class TooManyRequestsError(AppError):
+    status_code = 429
+    code = "too_many_requests"
+
+
 def _error_response(
     status_code: int, code: str, message: str, details: object = None
 ) -> JSONResponse:
