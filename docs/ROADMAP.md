@@ -85,7 +85,7 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 - [x] 066. Add magic-link login flow
 - [x] 067. Add password reset flow — confirm revokes all other active sessions for the user, not just the password
 - [x] 068. Add `Session` model (device/IP/last-active tracking) — built alongside step 061, since login needed it to issue refresh tokens against
-- [ ] 069. Add Redis-backed rate limiting on auth endpoints
+- [x] 069. Add Redis-backed rate limiting on auth endpoints — per-IP fixed-window, disabled under test env (test suite legitimately exceeds real-world limits), verified live (3-request limit correctly 429'd on the 4th)
 - [ ] 070. Add RBAC permission-check FastAPI dependency
 - [ ] 071. Define role matrix (Super Admin, Org Owner, Admin, Manager, Knowledge Manager, Developer, Support Agent, Analyst, Viewer, End User, Guest)
 - [ ] 072. Enforce role checks per route via permission dependency
