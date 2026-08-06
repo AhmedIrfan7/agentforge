@@ -82,9 +82,9 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 - [x] 063. Add refresh-token rotation endpoint — single-use rotation, replay of an old token correctly rejected
 - [x] 064. Add logout/session revocation
 - [x] 065. Add email verification flow — shared `VerificationToken` model (reused by 066, 067); found+fixed a real migration hazard against the seeded dev DB (NOT NULL column add needs server_default)
-- [ ] 066. Add magic-link login flow
-- [ ] 067. Add password reset flow
-- [ ] 068. Add `Session` model (device/IP/last-active tracking)
+- [x] 066. Add magic-link login flow
+- [x] 067. Add password reset flow — confirm revokes all other active sessions for the user, not just the password
+- [x] 068. Add `Session` model (device/IP/last-active tracking) — built alongside step 061, since login needed it to issue refresh tokens against
 - [ ] 069. Add Redis-backed rate limiting on auth endpoints
 - [ ] 070. Add RBAC permission-check FastAPI dependency
 - [ ] 071. Define role matrix (Super Admin, Org Owner, Admin, Manager, Knowledge Manager, Developer, Support Agent, Analyst, Viewer, End User, Guest)
