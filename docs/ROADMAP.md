@@ -76,11 +76,11 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 
 ## Milestone 2 — Authentication & Authorization (steps 60–81)
 
-- [ ] 060. Add password hashing utility (argon2)
-- [ ] 061. Create email/password signup endpoint
-- [ ] 062. Create login endpoint issuing JWT access+refresh tokens
-- [ ] 063. Add refresh-token rotation endpoint
-- [ ] 064. Add logout/session revocation
+- [x] 060. Add password hashing utility (argon2)
+- [x] 061. Create email/password signup endpoint
+- [x] 062. Create login endpoint issuing JWT access+refresh tokens — found+fixed weak default JWT secret, added production startup guard against placeholder secrets
+- [x] 063. Add refresh-token rotation endpoint — single-use rotation, replay of an old token correctly rejected
+- [x] 064. Add logout/session revocation
 - [ ] 065. Add email verification flow
 - [ ] 066. Add magic-link login flow
 - [ ] 067. Add password reset flow
