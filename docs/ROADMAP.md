@@ -11,40 +11,40 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 
 ## Milestone 0 — Foundation (steps 1–34)
 
-- [ ] 001. Init monorepo structure: `apps/`, `packages/`, `docs/`, `infra/`
-- [ ] 002. Add root `.gitignore`
-- [ ] 003. Add root `README.md` skeleton
-- [ ] 004. Add `LICENSE` (Apache 2.0)
-- [ ] 005. Add `CODE_OF_CONDUCT.md`
-- [ ] 006. Add `CONTRIBUTING.md` skeleton
-- [ ] 007. Scaffold `apps/api` FastAPI project (uv init)
-- [ ] 008. Add `pyproject.toml` with base deps (fastapi, uvicorn)
-- [ ] 009. Add ruff + black config for API
-- [ ] 010. Add mypy config for API
-- [ ] 011. Add pytest config + first smoke test
-- [ ] 012. Scaffold `apps/web` Next.js project
-- [ ] 013. Add ESLint + Prettier config for web
-- [ ] 014. Add TypeScript strict config
-- [ ] 015. Add `pnpm-workspace.yaml`
-- [ ] 016. Scaffold `packages/shared` TS types package
-- [ ] 017. Add `docker-compose.yml` (Postgres+pgvector, Redis, MinIO)
-- [ ] 018. Add `.env.example` for api and web
-- [ ] 019. Add Makefile/justfile for common dev commands
-- [ ] 020. Configure pre-commit hooks (lint/format on commit)
-- [ ] 021. Add GitHub Actions workflow: lint
-- [ ] 022. Add GitHub Actions workflow: backend tests
-- [ ] 023. Add GitHub Actions workflow: frontend tests
-- [ ] 024. Add `GET /health` endpoint in API
-- [ ] 025. Add `docs/ARCHITECTURE.md` skeleton
-- [ ] 026. Add `docs/adr/` folder + ADR template
-- [ ] 027. Write ADR-0001: technology stack decision
-- [ ] 028. Write ADR-0002: monorepo vs multi-repo decision
-- [ ] 029. Write ADR-0003: multi-tenancy isolation strategy decision
-- [ ] 030. Add structured logging (structlog) in API
-- [ ] 031. Add centralized config module (pydantic-settings) in API
-- [ ] 032. Add Dockerfiles for api and web (multi-stage)
-- [ ] 033. Verify `docker compose up` boots api+web+db+redis+minio end-to-end
-- [ ] 034. Add CI status badge to README
+- [x] 001. Init monorepo structure: `apps/`, `packages/`, `docs/`, `infra/`
+- [x] 002. Add root `.gitignore`
+- [x] 003. Add root `README.md` skeleton
+- [x] 004. Add `LICENSE` (Apache 2.0)
+- [x] 005. Add `CODE_OF_CONDUCT.md`
+- [x] 006. Add `CONTRIBUTING.md` skeleton
+- [x] 007. Scaffold `apps/api` FastAPI project (uv init)
+- [x] 008. Add `pyproject.toml` with base deps (fastapi, uvicorn)
+- [x] 009. Add ruff config for API — ruff only, not ruff+black (see step 009 commit; ruff format is black-compatible, running both was redundant)
+- [x] 010. Add mypy config for API
+- [x] 011. Add pytest config + first smoke test
+- [x] 012. Scaffold `apps/web` Next.js project
+- [x] 013. Add ESLint + Prettier config for web
+- [x] 014. Add TypeScript strict config
+- [x] 015. Add `pnpm-workspace.yaml`
+- [x] 016. Scaffold `packages/shared` TS types package
+- [x] 017. Add `docker-compose.yml` (Postgres+pgvector, Redis, MinIO) — config validated, not yet boot-tested (see 033)
+- [x] 018. Add `.env.example` for api and web
+- [x] 019. Add Makefile for common dev commands (`make` unavailable locally to test; commands verified directly)
+- [x] 020. Configure pre-commit hooks (lint/format on commit)
+- [x] 021. Add GitHub Actions workflow: lint
+- [x] 022. Add GitHub Actions workflow: backend tests
+- [x] 023. Add GitHub Actions workflow: frontend tests (build-check; no test suite exists yet)
+- [x] 024. Add `GET /health` endpoint in API
+- [x] 025. Add `docs/ARCHITECTURE.md` skeleton
+- [x] 026. Add `docs/adr/` folder + ADR template
+- [x] 027. Write ADR-0001: technology stack decision
+- [x] 028. Write ADR-0002: monorepo vs multi-repo decision
+- [x] 029. Write ADR-0003: multi-tenancy isolation strategy decision
+- [x] 030. Add structured logging (structlog) in API
+- [x] 031. Add centralized config module (pydantic-settings) in API
+- [x] 032. Add Dockerfiles for api and web (multi-stage) — **not runtime-verified**, Docker Desktop's engine wasn't running when written
+- [ ] 033. Verify `docker compose up` boots api+web+db+redis+minio end-to-end — **BLOCKED: Docker Desktop engine not running locally.** Start Docker Desktop, then re-run this step (also re-verify step 032's Dockerfiles with real `docker build`).
+- [x] 034. Add CI status badge to README
 
 ## Milestone 1 — Multi-Tenancy Core (steps 35–59)
 
