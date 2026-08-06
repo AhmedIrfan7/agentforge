@@ -16,10 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.jwt import create_access_token, generate_refresh_token, hash_refresh_token
 from auth.passwords import hash_password, needs_rehash, verify_password
+from auth.verification import generate_verification_token, hash_verification_token
+from config import settings
 from dependencies.db import get_db
 from errors import ConflictError, UnauthorizedError
+from notifications.email import send_email
 from repositories.session import SessionRepository
 from repositories.user import UserRepository
+from repositories.verification_token import VerificationTokenRepository
 from schemas.auth import (
     LoginRequest,
     LogoutRequest,
@@ -27,6 +31,7 @@ from schemas.auth import (
     SignupRequest,
     TokenResponse,
     UserRead,
+    VerifyEmailRequest,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -50,6 +55,19 @@ async def _issue_tokens(
     return TokenResponse(access_token=access_token, refresh_token=raw_refresh_token)
 
 
+async def _send_verification_email(session: AsyncSession, user_id: uuid.UUID, email: str) -> None:
+    raw_token, token_hash, expires_at = generate_verification_token()
+    await VerificationTokenRepository(session).create(
+        user_id=user_id, token_hash=token_hash, purpose="email_verify", expires_at=expires_at
+    )
+    link = f"{settings.app_base_url}/verify-email?token={raw_token}"
+    send_email(
+        to=email,
+        subject="Verify your AgentForge email",
+        body=f"Click to verify your email: {link}\n\nThis link expires in 1 hour.",
+    )
+
+
 @router.post("/signup", response_model=UserRead, status_code=201)
 async def signup(
     body: SignupRequest, session: Annotated[AsyncSession, Depends(get_db)]
@@ -63,7 +81,33 @@ async def signup(
         )
     except IntegrityError as exc:
         raise ConflictError(f"An account with email '{body.email}' already exists.") from exc
+
+    await _send_verification_email(session, user.id, user.email)
     return UserRead.model_validate(user)
+
+
+@router.post("/verify-email", status_code=204)
+async def verify_email(
+    body: VerifyEmailRequest, session: Annotated[AsyncSession, Depends(get_db)]
+) -> None:
+    token_repo = VerificationTokenRepository(session)
+    token_hash = hash_verification_token(body.token)
+    token = await token_repo.get_valid(token_hash=token_hash, purpose="email_verify")
+
+    invalid_token = UnauthorizedError("Invalid or expired verification token.")
+    if token is None:
+        raise invalid_token
+    if token.used_at is not None:
+        raise invalid_token
+    if token.expires_at < datetime.now(UTC):
+        raise invalid_token
+
+    user = await UserRepository(session).get(token.user_id)
+    if user is None:
+        raise invalid_token
+
+    user.is_email_verified = True
+    await token_repo.mark_used(token)
 
 
 @router.post("/login", response_model=TokenResponse)

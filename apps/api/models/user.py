@@ -20,6 +20,8 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # auth/passwords.py.
     hashed_password: Mapped[str | None] = mapped_column(nullable=True)
 
+    is_email_verified: Mapped[bool] = mapped_column(default=False, nullable=False)
+
     # Platform Super Admin (AGENTS.md role matrix) operates across every
     # organization, not within one — a per-org Membership role can't
     # express that, so it's a flag here instead.

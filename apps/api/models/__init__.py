@@ -8,6 +8,7 @@ from models.permission import Permission, RolePermission
 from models.role import Role
 from models.session import Session
 from models.user import User
+from models.verification_token import VerificationToken
 from models.workspace import Workspace
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "RolePermission",
     "Session",
     "User",
+    "VerificationToken",
     "Workspace",
 ]

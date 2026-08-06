@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     jwt_access_token_ttl_minutes: int = 15
     jwt_refresh_token_ttl_days: int = 30
 
+    # Used to build links in emails (verify-email, magic-link,
+    # password-reset). apps/web doesn't have routes for these yet — the
+    # links are logged (email.py is a stub), not clicked, until it does.
+    app_base_url: str = "http://localhost:3000"
+
     @property
     def is_development(self) -> bool:
         return self.environment == "development"
