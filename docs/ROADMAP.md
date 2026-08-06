@@ -42,8 +42,8 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 - [x] 029. Write ADR-0003: multi-tenancy isolation strategy decision
 - [x] 030. Add structured logging (structlog) in API
 - [x] 031. Add centralized config module (pydantic-settings) in API
-- [x] 032. Add Dockerfiles for api and web (multi-stage) — **not runtime-verified**, Docker Desktop's engine wasn't running when written
-- [ ] 033. Verify `docker compose up` boots api+web+db+redis+minio end-to-end — **BLOCKED: Docker Desktop engine not running locally.** Start Docker Desktop, then re-run this step (also re-verify step 032's Dockerfiles with real `docker build`).
+- [x] 032. Add Dockerfiles for api and web (multi-stage) — verified with real `docker build` + `docker run` for both apps (see step 033)
+- [x] 033. Verify `docker compose up` boots api+web+db+redis+minio end-to-end — postgres+redis+minio all healthy via `docker compose up -d`, pgvector extension confirmed loadable; `apps/api` and `apps/web` Docker images built and run, both served real HTTP responses (`/health` → 200, web root → 200). Fixed a real bug found in the process: `apps/api/.python-version` was pinned to 3.14 (a local-machine workaround) which broke the container build against the `python:3.12-slim` base — repinned to 3.12.
 - [x] 034. Add CI status badge to README
 
 ## Milestone 1 — Multi-Tenancy Core (steps 35–59)
