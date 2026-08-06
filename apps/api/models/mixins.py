@@ -9,9 +9,9 @@ leak AGENTS.md SECTION 9 calls out.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, func
+from sqlalchemy import DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, declared_attr, mapped_column
 
 
 class UUIDPrimaryKeyMixin:
@@ -23,3 +23,21 @@ class TimestampMixin:
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class TenantScopedMixin:
+    """Every tenant-scoped table gets this. See
+    docs/adr/0003-multi-tenancy-isolation-strategy.md — tenant_id here is
+    one layer of defense-in-depth; Postgres Row-Level Security (enabled per
+    table via Alembic migration) is the other, so a forgotten application
+    query filter still can't leak across tenants.
+    """
+
+    @declared_attr
+    def tenant_id(cls) -> Mapped[uuid.UUID]:  # noqa: N805  SQLAlchemy declared_attr convention
+        return mapped_column(
+            UUID(as_uuid=True),
+            ForeignKey("organizations.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )

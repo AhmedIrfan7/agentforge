@@ -2,5 +2,6 @@
 for Alembic autogenerate — see migrations/env.py."""
 
 from models.organization import Organization
+from models.workspace import Workspace
 
-__all__ = ["Organization"]
+__all__ = ["Organization", "Workspace"]

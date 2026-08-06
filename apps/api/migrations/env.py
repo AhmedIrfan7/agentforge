@@ -14,8 +14,10 @@ from db import Base
 # access to the values within the .ini file in use.
 config = context.config
 
-# Single source of truth for the DB URL is apps/api/config.py, not alembic.ini.
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Migrations need DDL rights, so they use the bootstrap superuser, not the
+# least-privilege app role settings.database_url points at — see
+# docs/adr/0003-multi-tenancy-isolation-strategy.md.
+config.set_main_option("sqlalchemy.url", settings.database_migrations_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

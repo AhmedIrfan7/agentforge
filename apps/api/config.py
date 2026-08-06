@@ -18,7 +18,20 @@ class Settings(BaseSettings):
     log_level: str = "info"
     secret_key: str = "change-me-to-a-random-value"
 
-    database_url: str = "postgresql+asyncpg://agentforge:agentforge@localhost:5432/agentforge"
+    # Least-privilege role — no BYPASSRLS, not a superuser, not the table
+    # owner — so Row-Level Security policies actually apply. Used by the
+    # application at runtime (db.py). See infra/postgres/init/01-app-role.sql
+    # and docs/adr/0003-multi-tenancy-isolation-strategy.md.
+    database_url: str = (
+        "postgresql+asyncpg://agentforge_app:agentforge_app@localhost:5432/agentforge"
+    )
+
+    # Bootstrap superuser — needed for DDL. Used only by Alembic
+    # (migrations/env.py), never by the running application.
+    database_migrations_url: str = (
+        "postgresql+asyncpg://agentforge:agentforge@localhost:5432/agentforge"
+    )
+
     redis_url: str = "redis://localhost:6379/0"
 
     storage_endpoint_url: str = "http://localhost:9000"

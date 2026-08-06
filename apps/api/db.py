@@ -5,9 +5,11 @@ described in docs/adr/0003-multi-tenancy-isolation-strategy.md — read that
 before adding a new model here.
 """
 
+import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -45,3 +47,17 @@ async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
 async def get_session() -> AsyncGenerator[AsyncSession]:
     async with async_session_factory() as session:
         yield session
+
+
+async def set_tenant_context(session: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """Set the Postgres session variable Row-Level Security policies check
+    (models/mixins.py:TenantScopedMixin, migrations/rls.py). Only lasts for
+    the current transaction (SET LOCAL) — call this again after each commit.
+
+    Postgres's SET/SET LOCAL don't accept bind parameters, so the value has
+    to be inlined into the SQL text. That's safe here specifically because
+    tenant_id is typed as uuid.UUID, not str — there's no string to escape,
+    only a fixed hex/hyphen representation. Do not change this to accept a
+    raw str.
+    """
+    await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_id}'"))
