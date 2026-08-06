@@ -69,3 +69,18 @@ async def set_tenant_context(session: AsyncSession, tenant_id: uuid.UUID) -> Non
     raw str.
     """
     await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_id}'"))
+
+
+async def set_user_context(session: AsyncSession, user_id: uuid.UUID) -> None:
+    """Companion to set_tenant_context, for the one case a single tenant_id
+    isn't enough: "which organizations does this user belong to" has to
+    read Membership rows across every tenant at once, which a
+    tenant_id-only RLS policy can never satisfy (there's no single
+    tenant_id to set — that's literally the question being asked). See
+    migrations/versions/*_add_own_membership_rls_policy.py: a second,
+    separate RLS policy on memberships permits SELECT where
+    user_id = this value, alongside (not instead of) the existing
+    tenant_isolation policy. Same SET LOCAL / no-bind-parameters
+    reasoning as set_tenant_context.
+    """
+    await session.execute(text(f"SET LOCAL app.current_user_id = '{user_id}'"))

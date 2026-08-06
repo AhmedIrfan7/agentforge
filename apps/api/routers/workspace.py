@@ -1,10 +1,8 @@
-"""Workspace CRUD, tenant-scoped via dependencies/tenant.py:get_tenant_db.
-
-Non-functional until Milestone 2's auth exists (roadmap steps 060-062):
-get_tenant_db depends on get_current_tenant_id, which currently raises
-NotImplementedError — see dependencies/tenant.py. That's intentional;
-these routes are wired correctly and will start working the moment real
-tenant resolution lands, with no route code changes needed.
+"""Workspace CRUD, nested under an organization
+(/organizations/{organization_id}/workspaces) so get_current_tenant_id
+(dependencies/tenant.py) has an organization_id to resolve tenant
+context from and verify membership against — this was flat /workspaces
+until RBAC (roadmap steps 070-072) needed an unambiguous tenant source.
 
 Each route depends on both get_tenant_db and get_current_tenant_id
 directly. FastAPI caches a dependency's result per request by default, so
@@ -21,19 +19,25 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import write_audit_log
+from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from errors import ConflictError, NotFoundError
 from repositories.workspace import WorkspaceRepository
 from schemas.common import Page, PaginationParams
 from schemas.workspace import WorkspaceCreate, WorkspaceRead
 
-router = APIRouter(prefix="/workspaces", tags=["workspaces"])
+router = APIRouter(prefix="/organizations/{organization_id}/workspaces", tags=["workspaces"])
 
 TenantDb = Annotated[AsyncSession, Depends(get_tenant_db)]
 TenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
 
 
-@router.post("", response_model=WorkspaceRead, status_code=201)
+@router.post(
+    "",
+    response_model=WorkspaceRead,
+    status_code=201,
+    dependencies=[Depends(require_permission("workspace:create"))],
+)
 async def create_workspace(
     body: WorkspaceCreate, session: TenantDb, tenant_id: TenantId
 ) -> WorkspaceRead:
@@ -53,7 +57,11 @@ async def create_workspace(
     return WorkspaceRead.model_validate(workspace)
 
 
-@router.get("", response_model=Page[WorkspaceRead])
+@router.get(
+    "",
+    response_model=Page[WorkspaceRead],
+    dependencies=[Depends(require_permission("workspace:read"))],
+)
 async def list_workspaces(
     session: TenantDb, tenant_id: TenantId, pagination: Annotated[PaginationParams, Depends()]
 ) -> Page[WorkspaceRead]:
@@ -68,7 +76,11 @@ async def list_workspaces(
     )
 
 
-@router.get("/{workspace_id}", response_model=WorkspaceRead)
+@router.get(
+    "/{workspace_id}",
+    response_model=WorkspaceRead,
+    dependencies=[Depends(require_permission("workspace:read"))],
+)
 async def get_workspace(
     workspace_id: uuid.UUID, session: TenantDb, tenant_id: TenantId
 ) -> WorkspaceRead:
@@ -79,7 +91,11 @@ async def get_workspace(
     return WorkspaceRead.model_validate(workspace)
 
 
-@router.delete("/{workspace_id}", status_code=204)
+@router.delete(
+    "/{workspace_id}",
+    status_code=204,
+    dependencies=[Depends(require_permission("workspace:delete"))],
+)
 async def delete_workspace(workspace_id: uuid.UUID, session: TenantDb, tenant_id: TenantId) -> None:
     repo = WorkspaceRepository(session, tenant_id)
     workspace = await repo.get(workspace_id)

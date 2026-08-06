@@ -1,20 +1,15 @@
 """Tenant-context resolution for FastAPI routes.
 
-The full version of this — deriving tenant_id from an authenticated
-JWT — can't be built until Milestone 2's auth work exists (roadmap
-steps 060-062: there's no token to derive anything from yet). What CAN
-be built now is the other half: given an already-resolved, trusted
-tenant_id, wire it onto the request's DB session so Postgres RLS
-(docs/adr/0003-multi-tenancy-isolation-strategy.md) actually applies.
-
-get_current_tenant_id() below is a deliberate placeholder that raises —
-NOT a stopgap that trusts a client-supplied header or query param.
-AGENTS.md SECTION 9 and ADR-0003 are explicit that tenant context must
-never come from client input; a "just read X-Tenant-Id for now" shortcut
-here would be exactly the footgun those documents warn about, and it's
-easy to forget to remove later. Once JWT auth exists, this is the one
-function that changes — every route already wired against get_tenant_db
-below picks up real tenant resolution automatically, no route code changes.
+get_current_tenant_id() used to be a deliberate NotImplementedError
+placeholder (see git history / AGENTS.md SECTION 9 / ADR-0003 for why it
+was never a "just read X-Tenant-Id" shortcut) until JWT auth existed to
+resolve a real, trusted identity from. It now does the real thing:
+organization_id comes from the URL path (every route using get_tenant_db
+must declare {organization_id}), and get_current_user_id resolves who's
+asking from their JWT — but the organization_id is only ever TRUSTED
+once it's cross-checked against that user's actual Membership rows, not
+because the client claimed it. A user with no membership in that org
+gets 403, same as if the org query returned nothing.
 """
 
 import uuid
@@ -25,16 +20,26 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_session, set_tenant_context
+from dependencies.auth import get_current_user_id
+from errors import ForbiddenError
+from repositories.rbac import get_user_memberships
 
 
-async def get_current_tenant_id() -> uuid.UUID:
-    raise NotImplementedError(
-        "Tenant resolution from an authenticated JWT isn't built yet — "
-        "see docs/ROADMAP.md Milestone 2 (steps 060-062). Override this "
-        "dependency (FastAPI dependency_overrides, or replace this "
-        "function's body once JWT auth exists) rather than trusting any "
-        "client-supplied value for tenant_id."
-    )
+async def get_current_tenant_id(
+    organization_id: uuid.UUID,
+    user_id: Annotated[uuid.UUID, Depends(get_current_user_id)],
+) -> uuid.UUID:
+    async with get_session() as session:
+        # Membership is RLS-protected (tenant_isolation policy) — without
+        # this, the query below silently returns zero rows for everyone,
+        # including the actual owner, and every route 403s unconditionally.
+        await set_tenant_context(session, organization_id)
+        memberships = await get_user_memberships(
+            session, user_id=user_id, tenant_id=organization_id
+        )
+    if not memberships:
+        raise ForbiddenError("You do not have access to this organization.")
+    return organization_id
 
 
 async def get_tenant_db(
