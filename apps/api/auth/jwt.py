@@ -37,6 +37,13 @@ def create_access_token(user_id: uuid.UUID) -> str:
     payload: dict[str, Any] = {
         "sub": str(user_id),
         "type": "access",
+        # Standard JWT claim, not decoded/checked anywhere yet — but
+        # without it, two tokens issued for the same user within the same
+        # wall-clock second are byte-identical (iat/exp have second-level
+        # granularity), which is harmless functionally but surprising, and
+        # means no way to reference "this specific token" later
+        # (step 064's logout-of-one-session needs exactly that).
+        "jti": str(uuid.uuid4()),
         "iat": now,
         "exp": now + timedelta(minutes=settings.jwt_access_token_ttl_minutes),
     }

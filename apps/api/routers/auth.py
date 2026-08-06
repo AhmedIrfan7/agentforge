@@ -6,21 +6,41 @@ through the invitation flow (roadmap steps 073-075) or by creating one
 (routers/organization.py), both later.
 """
 
+import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth.jwt import create_access_token, generate_refresh_token
+from auth.jwt import create_access_token, generate_refresh_token, hash_refresh_token
 from auth.passwords import hash_password, needs_rehash, verify_password
 from dependencies.db import get_db
 from errors import ConflictError, UnauthorizedError
 from repositories.session import SessionRepository
 from repositories.user import UserRepository
-from schemas.auth import LoginRequest, SignupRequest, TokenResponse, UserRead
+from schemas.auth import LoginRequest, RefreshRequest, SignupRequest, TokenResponse, UserRead
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+async def _issue_tokens(
+    session: AsyncSession, user_id: uuid.UUID, request: Request
+) -> TokenResponse:
+    access_token = create_access_token(user_id)
+    raw_refresh_token, refresh_token_hash, expires_at = generate_refresh_token()
+
+    session_repo = SessionRepository(session)
+    await session_repo.create(
+        user_id=user_id,
+        refresh_token_hash=refresh_token_hash,
+        expires_at=expires_at,
+        device_info=request.headers.get("user-agent"),
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return TokenResponse(access_token=access_token, refresh_token=raw_refresh_token)
 
 
 @router.post("/signup", response_model=UserRead, status_code=201)
@@ -57,16 +77,28 @@ async def login(
     if needs_rehash(user.hashed_password):
         user.hashed_password = hash_password(body.password)
 
-    access_token = create_access_token(user.id)
-    raw_refresh_token, refresh_token_hash, expires_at = generate_refresh_token()
+    return await _issue_tokens(session, user.id, request)
 
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh(
+    body: RefreshRequest, request: Request, session: Annotated[AsyncSession, Depends(get_db)]
+) -> TokenResponse:
     session_repo = SessionRepository(session)
-    await session_repo.create(
-        user_id=user.id,
-        refresh_token_hash=refresh_token_hash,
-        expires_at=expires_at,
-        device_info=request.headers.get("user-agent"),
-        ip_address=request.client.host if request.client else None,
-    )
+    token_hash = hash_refresh_token(body.refresh_token)
+    existing = await session_repo.get_by_refresh_token_hash(token_hash)
 
-    return TokenResponse(access_token=access_token, refresh_token=raw_refresh_token)
+    invalid_token = UnauthorizedError("Invalid or expired refresh token.")
+    if existing is None:
+        raise invalid_token
+    if existing.revoked_at is not None:
+        raise invalid_token
+    if existing.expires_at < datetime.now(UTC):
+        raise invalid_token
+
+    # Rotation: this refresh token is single-use. Revoking it here means a
+    # stolen-and-already-used token can never be replayed — presenting it
+    # again just looks like an already-revoked token (invalid_token above).
+    await session_repo.revoke(existing)
+
+    return await _issue_tokens(session, existing.user_id, request)

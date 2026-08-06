@@ -40,3 +40,7 @@ class SessionRepository:
         self.session.add(session)
         await self.session.flush()
         return session
+
+    async def revoke(self, session: Session) -> None:
+        session.revoked_at = datetime.now(session.expires_at.tzinfo)
+        await self.session.flush()
