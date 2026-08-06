@@ -86,9 +86,9 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 - [x] 067. Add password reset flow — confirm revokes all other active sessions for the user, not just the password
 - [x] 068. Add `Session` model (device/IP/last-active tracking) — built alongside step 061, since login needed it to issue refresh tokens against
 - [x] 069. Add Redis-backed rate limiting on auth endpoints — per-IP fixed-window, disabled under test env (test suite legitimately exceeds real-world limits), verified live (3-request limit correctly 429'd on the 4th)
-- [ ] 070. Add RBAC permission-check FastAPI dependency
-- [ ] 071. Define role matrix (Super Admin, Org Owner, Admin, Manager, Knowledge Manager, Developer, Support Agent, Analyst, Viewer, End User, Guest)
-- [ ] 072. Enforce role checks per route via permission dependency
+- [x] 070. Add RBAC permission-check FastAPI dependency — `dependencies/rbac.py:require_permission()`, union of permissions across every role the caller holds in the tenant
+- [x] 071. Define role matrix (Super Admin, Org Owner, Admin, Manager, Knowledge Manager, Developer, Support Agent, Analyst, Viewer, End User, Guest) — seeded by migration `1d0ef14faf9e` (permission catalog + role→permission matrix)
+- [x] 072. Enforce role checks per route via permission dependency — organization/workspace routes now require real JWT + membership + permission; found+fixed a real RLS bug (dependencies never set tenant context before querying Membership, so every check silently 403'd) and a real tenant-isolation leak (`list_organizations` returned all orgs unfiltered) along the way
 - [ ] 073. Add `Invitation` model + invite-teammate endpoint
 - [ ] 074. Add invitation-accept endpoint
 - [ ] 075. Add invitation expiration handling
