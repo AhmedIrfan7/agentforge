@@ -12,6 +12,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "mypy>=2.3.0",
+    "pytest>=9.1.1",
     "ruff>=0.16.1",
 ]
 
@@ -26,6 +27,10 @@ ignore = []
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
 
 [tool.mypy]
 python_version = "3.12"
