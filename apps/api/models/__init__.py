@@ -6,6 +6,7 @@ from models.membership import Membership
 from models.organization import Organization
 from models.permission import Permission, RolePermission
 from models.role import Role
+from models.session import Session
 from models.user import User
 from models.workspace import Workspace
 
@@ -16,6 +17,7 @@ __all__ = [
     "Permission",
     "Role",
     "RolePermission",
+    "Session",
     "User",
     "Workspace",
 ]
