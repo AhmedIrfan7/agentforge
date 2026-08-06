@@ -9,14 +9,16 @@ functions triggers a real pytest/anyio fixture-teardown-ordering bug
 combination. Keeping the whole file consistently async avoids it.
 """
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from db import get_session
+from db import get_session, set_tenant_context
 from main import app
+from models.audit_log import AuditLog
 from models.organization import Organization
 
 client = TestClient(app)
@@ -29,8 +31,26 @@ async def _cleanup() -> AsyncGenerator[None]:
         result = await session.execute(
             select(Organization).where(Organization.slug.like("endpoint-test-%"))
         )
-        for org in result.scalars().all():
+        orgs = result.scalars().all()
+        for org in orgs:
+            # audit_logs has no FK cascade from organizations by design
+            # (models/audit_log.py) — an org's create action writes one
+            # before the org itself is deleted, so it has to be cleaned
+            # up explicitly too, or it accumulates across test runs.
+            #
+            # Flushing before moving to the next org matters: without it,
+            # this org's pending deletes stay unflushed until the next
+            # org's set_tenant_context() call triggers autoflush — by
+            # which point app.current_tenant_id has already switched to
+            # the NEXT org, so RLS silently drops THIS org's audit_log
+            # delete (0 rows matched, no error) instead of raising
+            # anything. Cost a real debugging pass to track down.
+            await set_tenant_context(session, org.id)
+            log_result = await session.execute(select(AuditLog).where(AuditLog.tenant_id == org.id))
+            for log in log_result.scalars().all():
+                await session.delete(log)
             await session.delete(org)
+            await session.flush()
         await session.commit()
 
 
@@ -84,6 +104,19 @@ async def test_get_and_delete_organization() -> None:
 
     after_delete = client.get(f"/organizations/{org_id}")
     assert after_delete.status_code == 404
+
+    # The org itself is gone, so the generic _cleanup fixture's
+    # slug-based query won't find it to clean up its audit logs (RLS
+    # requires a tenant context, and this is the only place that still
+    # knows this specific org_id) — clean up here instead.
+    async with get_session() as session:
+        await set_tenant_context(session, uuid.UUID(org_id))
+        result = await session.execute(
+            select(AuditLog).where(AuditLog.tenant_id == uuid.UUID(org_id))
+        )
+        for log in result.scalars().all():
+            await session.delete(log)
+        await session.commit()
 
 
 @pytest.mark.anyio

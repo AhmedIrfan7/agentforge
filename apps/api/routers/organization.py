@@ -14,6 +14,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audit import write_audit_log
+from db import set_tenant_context
 from dependencies.db import get_db
 from errors import ConflictError, NotFoundError
 from repositories.organization import OrganizationRepository
@@ -32,6 +34,17 @@ async def create_organization(
         org = await repo.create(name=body.name, slug=body.slug)
     except IntegrityError as exc:
         raise ConflictError(f"An organization with slug '{body.slug}' already exists.") from exc
+
+    # audit_logs is tenant-scoped (RLS); an org's own audit trail is
+    # rooted at its own id — see docs/adr/0003.
+    await set_tenant_context(session, org.id)
+    await write_audit_log(
+        session,
+        tenant_id=org.id,
+        action="organization.create",
+        resource_type="organization",
+        resource_id=org.id,
+    )
     return OrganizationRead.model_validate(org)
 
 
@@ -70,4 +83,13 @@ async def delete_organization(
     org = await repo.get(organization_id)
     if org is None:
         raise NotFoundError(f"Organization {organization_id} not found.")
+
+    await set_tenant_context(session, org.id)
+    await write_audit_log(
+        session,
+        tenant_id=org.id,
+        action="organization.delete",
+        resource_type="organization",
+        resource_id=org.id,
+    )
     await repo.delete(org)

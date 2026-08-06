@@ -16,6 +16,7 @@ from sqlalchemy import select
 from db import get_session, set_tenant_context
 from dependencies.tenant import get_current_tenant_id
 from main import app
+from models.audit_log import AuditLog
 from models.organization import Organization
 from models.workspace import Workspace
 
@@ -74,5 +75,12 @@ async def test_workspace_crud_with_resolved_tenant() -> None:
             )
             for ws in result.scalars().all():
                 await cleanup_session.delete(ws)
+            # workspace.create wrote an audit log with no FK cascade from
+            # organizations (models/audit_log.py) — clean it up explicitly.
+            log_result = await cleanup_session.execute(
+                select(AuditLog).where(AuditLog.tenant_id == org.id)
+            )
+            for log in log_result.scalars().all():
+                await cleanup_session.delete(log)
             await cleanup_session.delete(await cleanup_session.get(Organization, org.id))
             await cleanup_session.commit()

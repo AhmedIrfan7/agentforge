@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audit import write_audit_log
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from errors import ConflictError, NotFoundError
 from repositories.workspace import WorkspaceRepository
@@ -41,6 +42,14 @@ async def create_workspace(
         workspace = await repo.create(name=body.name, slug=body.slug)
     except IntegrityError as exc:
         raise ConflictError(f"A workspace with slug '{body.slug}' already exists.") from exc
+
+    await write_audit_log(
+        session,
+        tenant_id=tenant_id,
+        action="workspace.create",
+        resource_type="workspace",
+        resource_id=workspace.id,
+    )
     return WorkspaceRead.model_validate(workspace)
 
 
@@ -76,4 +85,12 @@ async def delete_workspace(workspace_id: uuid.UUID, session: TenantDb, tenant_id
     workspace = await repo.get(workspace_id)
     if workspace is None:
         raise NotFoundError(f"Workspace {workspace_id} not found.")
+
+    await write_audit_log(
+        session,
+        tenant_id=tenant_id,
+        action="workspace.delete",
+        resource_type="workspace",
+        resource_id=workspace.id,
+    )
     await repo.delete(workspace)
