@@ -81,7 +81,7 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 - [x] 062. Create login endpoint issuing JWT access+refresh tokens — found+fixed weak default JWT secret, added production startup guard against placeholder secrets
 - [x] 063. Add refresh-token rotation endpoint — single-use rotation, replay of an old token correctly rejected
 - [x] 064. Add logout/session revocation
-- [ ] 065. Add email verification flow
+- [x] 065. Add email verification flow — shared `VerificationToken` model (reused by 066, 067); found+fixed a real migration hazard against the seeded dev DB (NOT NULL column add needs server_default)
 - [ ] 066. Add magic-link login flow
 - [ ] 067. Add password reset flow
 - [ ] 068. Add `Session` model (device/IP/last-active tracking)
