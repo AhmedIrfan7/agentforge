@@ -40,6 +40,16 @@ async def get_current_tenant_id() -> uuid.UUID:
 async def get_tenant_db(
     tenant_id: Annotated[uuid.UUID, Depends(get_current_tenant_id)],
 ) -> AsyncGenerator[AsyncSession]:
+    # Commits automatically on a clean exit, rolls back on any exception —
+    # see dependencies/db.py:get_db's docstring for why. SET LOCAL from
+    # set_tenant_context lasts exactly as long as this one transaction,
+    # which is exactly the request's lifetime here.
     async with get_session() as session:
         await set_tenant_context(session, tenant_id)
-        yield session
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        else:
+            await session.commit()

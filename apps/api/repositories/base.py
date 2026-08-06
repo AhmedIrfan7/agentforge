@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.mixins import TenantScopedEntity
@@ -42,6 +42,15 @@ class TenantScopedRepository[ModelT: TenantScopedEntity]:
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def count(self) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(self.model)
+            .where(self.model.tenant_id == self.tenant_id)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
 
     async def create(self, **fields: Any) -> ModelT:
         # tenant_id is always this repository's own — never accepted from
