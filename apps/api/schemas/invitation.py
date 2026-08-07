@@ -30,3 +30,9 @@ class InvitationRead(BaseModel):
     accepted_at: datetime | None
     revoked_at: datetime | None
     created_at: datetime
+    # "pending" | "accepted" | "revoked" | "expired" — derived, not stored
+    # (models/invitation.py's docstring explains why: a fourth stored
+    # status column would just be another thing to keep in sync with
+    # accepted_at/revoked_at/expires_at). See
+    # routers/invitation.py:_invitation_status().
+    status: str

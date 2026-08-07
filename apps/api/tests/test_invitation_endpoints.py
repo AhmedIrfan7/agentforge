@@ -1,5 +1,5 @@
 """Integration tests against the real FastAPI app for routers/invitation.py
-(roadmap steps 073 create + 074 accept).
+(roadmap steps 073 create, 074 accept, 075 list/revoke + status).
 """
 
 import uuid
@@ -442,3 +442,215 @@ async def test_accept_invitation_is_audited() -> None:
         await _cleanup_org(org_id)
         await _cleanup_user(owner_email)
         await _cleanup_user(invitee_email)
+
+
+def test_list_invitations_requires_auth() -> None:
+    response = client.get(f"/organizations/{uuid.uuid4()}/invitations")
+    assert response.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_list_invitations_shows_derived_status() -> None:
+    owner_email = "endpoint-test-inv-list-owner-1@example.com"
+    org_id, headers = await _new_org(owner_email)
+    try:
+        _pending_token, pending_id = await _new_invitation(
+            org_id, "pending@example.com", role_name="viewer"
+        )
+        _expired_token, expired_id = await _new_invitation(
+            org_id, "expired@example.com", role_name="viewer", expired=True
+        )
+        accepted_token, accepted_id = await _new_invitation(
+            org_id, "accepted@example.com", role_name="viewer"
+        )
+        revoked_token, revoked_id = await _new_invitation(
+            org_id, "revoked@example.com", role_name="viewer"
+        )
+
+        accepted_email = "accepted@example.com"
+        accepted_user_token = signup_and_login(
+            client,
+            email=accepted_email,
+            password="correct horse battery staple",
+            full_name="Accepted",
+        )
+        client.post(
+            "/invitations/accept",
+            json={"token": accepted_token},
+            headers=auth_headers(accepted_user_token),
+        )
+        client.delete(
+            f"/organizations/{org_id}/invitations/{revoked_id}",
+            headers=headers,
+        )
+
+        response = client.get(
+            f"/organizations/{org_id}/invitations", params={"limit": 50}, headers=headers
+        )
+        assert response.status_code == 200
+        by_id = {item["id"]: item["status"] for item in response.json()["items"]}
+        assert by_id[str(pending_id)] == "pending"
+        assert by_id[str(expired_id)] == "expired"
+        assert by_id[str(accepted_id)] == "accepted"
+        assert by_id[str(revoked_id)] == "revoked"
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(accepted_email)
+
+
+@pytest.mark.anyio
+async def test_end_user_cannot_list_invitations() -> None:
+    owner_email = "endpoint-test-inv-list-owner-2@example.com"
+    org_id, _owner_headers = await _new_org(owner_email)
+    try:
+        member_token = signup_and_login(
+            client,
+            email="endpoint-test-inv-list-member@example.com",
+            password="correct horse battery staple",
+            full_name="End User Member",
+        )
+        async with get_session() as session:
+            result = await session.execute(
+                select(User).where(User.email == "endpoint-test-inv-list-member@example.com")
+            )
+            member_user = result.scalar_one()
+            role_result = await session.execute(select(Role).where(Role.name == "end_user"))
+            end_user_role = role_result.scalar_one()
+            await set_tenant_context(session, org_id)
+            session.add(
+                Membership(
+                    tenant_id=org_id,
+                    user_id=member_user.id,
+                    workspace_id=None,
+                    role_id=end_user_role.id,
+                )
+            )
+            await session.commit()
+
+        response = client.get(
+            f"/organizations/{org_id}/invitations", headers=auth_headers(member_token)
+        )
+        assert response.status_code == 403
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user("endpoint-test-inv-list-member@example.com")
+
+
+@pytest.mark.anyio
+async def test_revoke_invitation_blocks_later_accept() -> None:
+    owner_email = "endpoint-test-inv-revoke-owner-1@example.com"
+    invitee_email = "endpoint-test-inv-revoke-invitee-1@example.com"
+    org_id, headers = await _new_org(owner_email)
+    try:
+        raw_token, invitation_id = await _new_invitation(org_id, invitee_email, role_name="viewer")
+
+        revoke_response = client.delete(
+            f"/organizations/{org_id}/invitations/{invitation_id}", headers=headers
+        )
+        assert revoke_response.status_code == 204
+
+        invitee_token = signup_and_login(
+            client,
+            email=invitee_email,
+            password="correct horse battery staple",
+            full_name="Invitee",
+        )
+        accept_response = client.post(
+            "/invitations/accept",
+            json={"token": raw_token},
+            headers=auth_headers(invitee_token),
+        )
+        assert accept_response.status_code == 401
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(invitee_email)
+
+
+@pytest.mark.anyio
+async def test_revoke_is_idempotent() -> None:
+    owner_email = "endpoint-test-inv-revoke-owner-2@example.com"
+    org_id, headers = await _new_org(owner_email)
+    try:
+        _raw_token, invitation_id = await _new_invitation(
+            org_id, "someone@example.com", role_name="viewer"
+        )
+
+        first = client.delete(
+            f"/organizations/{org_id}/invitations/{invitation_id}", headers=headers
+        )
+        assert first.status_code == 204
+        second = client.delete(
+            f"/organizations/{org_id}/invitations/{invitation_id}", headers=headers
+        )
+        assert second.status_code == 204
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+
+
+@pytest.mark.anyio
+async def test_revoke_accepted_invitation_returns_409() -> None:
+    owner_email = "endpoint-test-inv-revoke-owner-3@example.com"
+    invitee_email = "endpoint-test-inv-revoke-invitee-3@example.com"
+    org_id, headers = await _new_org(owner_email)
+    try:
+        raw_token, invitation_id = await _new_invitation(org_id, invitee_email, role_name="viewer")
+        invitee_token = signup_and_login(
+            client,
+            email=invitee_email,
+            password="correct horse battery staple",
+            full_name="Invitee",
+        )
+        client.post(
+            "/invitations/accept",
+            json={"token": raw_token},
+            headers=auth_headers(invitee_token),
+        )
+
+        response = client.delete(
+            f"/organizations/{org_id}/invitations/{invitation_id}", headers=headers
+        )
+        assert response.status_code == 409
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(invitee_email)
+
+
+@pytest.mark.anyio
+async def test_revoke_nonexistent_invitation_returns_404() -> None:
+    owner_email = "endpoint-test-inv-revoke-owner-4@example.com"
+    org_id, headers = await _new_org(owner_email)
+    try:
+        response = client.delete(
+            f"/organizations/{org_id}/invitations/{uuid.uuid4()}", headers=headers
+        )
+        assert response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+
+
+@pytest.mark.anyio
+async def test_revoke_invitation_is_audited() -> None:
+    owner_email = "endpoint-test-inv-revoke-owner-5@example.com"
+    org_id, headers = await _new_org(owner_email)
+    try:
+        _raw_token, invitation_id = await _new_invitation(
+            org_id, "someone@example.com", role_name="viewer"
+        )
+        client.delete(f"/organizations/{org_id}/invitations/{invitation_id}", headers=headers)
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            result = await session.execute(
+                select(AuditLog).where(AuditLog.resource_id == invitation_id)
+            )
+            logs = result.scalars().all()
+            assert [log.action for log in logs] == ["invitation.revoke"]
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)

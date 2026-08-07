@@ -26,12 +26,14 @@ from dependencies.db import get_db
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from errors import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
+from models.invitation import Invitation
 from models.membership import Membership
 from notifications.email import send_email
 from repositories.invitation import InvitationRepository, get_invitation_by_token_hash
 from repositories.role import RoleRepository
 from repositories.user import UserRepository
 from repositories.workspace import WorkspaceRepository
+from schemas.common import Page, PaginationParams
 from schemas.invitation import InvitationAcceptRequest, InvitationCreate, InvitationRead
 
 router = APIRouter(prefix="/organizations/{organization_id}/invitations", tags=["invitations"])
@@ -40,6 +42,34 @@ accept_router = APIRouter(prefix="/invitations", tags=["invitations"])
 TenantDb = Annotated[AsyncSession, Depends(get_tenant_db)]
 TenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
 CurrentUserId = Annotated[uuid.UUID, Depends(get_current_user_id)]
+
+
+def _to_invitation_read(invitation: Invitation) -> InvitationRead:
+    """Derives status rather than storing it — a fourth column would just
+    be another thing to keep in sync with accepted_at/revoked_at/
+    expires_at, which already say everything status would (roadmap step
+    075)."""
+    if invitation.revoked_at is not None:
+        status = "revoked"
+    elif invitation.accepted_at is not None:
+        status = "accepted"
+    elif invitation.expires_at < datetime.now(UTC):
+        status = "expired"
+    else:
+        status = "pending"
+    return InvitationRead(
+        id=invitation.id,
+        tenant_id=invitation.tenant_id,
+        email=invitation.email,
+        role_id=invitation.role_id,
+        workspace_id=invitation.workspace_id,
+        invited_by_user_id=invitation.invited_by_user_id,
+        expires_at=invitation.expires_at,
+        accepted_at=invitation.accepted_at,
+        revoked_at=invitation.revoked_at,
+        created_at=invitation.created_at,
+        status=status,
+    )
 
 
 @router.post(
@@ -93,7 +123,55 @@ async def create_invitation(
         body=f"Click to accept the invitation: {link}\n\nThis link expires in 7 days.",
     )
 
-    return InvitationRead.model_validate(invitation)
+    return _to_invitation_read(invitation)
+
+
+@router.get(
+    "",
+    response_model=Page[InvitationRead],
+    dependencies=[Depends(require_permission("invitation:read"))],
+)
+async def list_invitations(
+    session: TenantDb, tenant_id: TenantId, pagination: Annotated[PaginationParams, Depends()]
+) -> Page[InvitationRead]:
+    repo = InvitationRepository(session, tenant_id)
+    invitations = await repo.list(limit=pagination.limit, offset=pagination.offset)
+    total = await repo.count()
+    return Page(
+        items=[_to_invitation_read(i) for i in invitations],
+        limit=pagination.limit,
+        offset=pagination.offset,
+        total=total,
+    )
+
+
+@router.delete(
+    "/{invitation_id}",
+    status_code=204,
+    dependencies=[Depends(require_permission("invitation:revoke"))],
+)
+async def revoke_invitation(
+    invitation_id: uuid.UUID, session: TenantDb, tenant_id: TenantId, user_id: CurrentUserId
+) -> None:
+    repo = InvitationRepository(session, tenant_id)
+    invitation = await repo.get(invitation_id)
+    if invitation is None:
+        raise NotFoundError(f"Invitation {invitation_id} not found.")
+    if invitation.accepted_at is not None:
+        raise ConflictError("This invitation has already been accepted and can't be revoked.")
+    if invitation.revoked_at is not None:
+        return
+
+    invitation.revoked_at = datetime.now(UTC)
+
+    await write_audit_log(
+        session,
+        tenant_id=tenant_id,
+        action="invitation.revoke",
+        resource_type="invitation",
+        resource_id=invitation.id,
+        actor_user_id=user_id,
+    )
 
 
 @accept_router.post("/accept", status_code=204)
