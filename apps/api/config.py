@@ -67,6 +67,19 @@ class Settings(BaseSettings):
     # links are logged (email.py is a stub), not clicked, until it does.
     app_base_url: str = "http://localhost:3000"
 
+    # Google OAuth (roadmap step 076). Empty by default: unset, Google
+    # simply rejects the request at the authorize step (fails closed, not
+    # silently insecure) — no reason to gate this behind the placeholder-
+    # secret production check the way jwt_secret/secret_key are, since an
+    # empty client_secret can't be used to forge anything, only to fail.
+    # google_redirect_uri must exactly match a URI registered in Google
+    # Cloud Console, and points at this API directly (not app_base_url,
+    # the frontend's origin) — see auth/oauth.py's module docstring for
+    # why the callback lives here rather than on the frontend.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/auth/google/callback"
+
     @property
     def is_development(self) -> bool:
         return self.environment == "development"

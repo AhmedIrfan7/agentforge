@@ -42,9 +42,13 @@ from schemas.auth import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-async def _issue_tokens(
+async def issue_tokens(
     session: AsyncSession, user_id: uuid.UUID, request: Request
 ) -> TokenResponse:
+    """Shared by every "this login attempt just succeeded" endpoint —
+    password login, refresh rotation, magic-link verify, and Google OAuth
+    (routers/oauth.py) — issuing an access token plus a new Session row
+    is identical regardless of how the user proved who they are."""
     access_token = create_access_token(user_id)
     raw_refresh_token, refresh_token_hash, expires_at = generate_refresh_token()
 
@@ -146,7 +150,7 @@ async def login(
     if needs_rehash(user.hashed_password):
         user.hashed_password = hash_password(body.password)
 
-    return await _issue_tokens(session, user.id, request)
+    return await issue_tokens(session, user.id, request)
 
 
 @router.post(
@@ -174,7 +178,7 @@ async def refresh(
     # again just looks like an already-revoked token (invalid_token above).
     await session_repo.revoke(existing)
 
-    return await _issue_tokens(session, existing.user_id, request)
+    return await issue_tokens(session, existing.user_id, request)
 
 
 @router.post(
@@ -248,7 +252,7 @@ async def verify_magic_link(
         raise invalid_token
 
     await token_repo.mark_used(token)
-    return await _issue_tokens(session, token.user_id, request)
+    return await issue_tokens(session, token.user_id, request)
 
 
 @router.post(
