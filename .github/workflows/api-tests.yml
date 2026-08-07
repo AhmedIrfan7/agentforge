@@ -24,6 +24,15 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       ENVIRONMENT: test
       # Least-privilege role, actually subject to Row-Level Security — see
@@ -34,6 +43,7 @@ jobs:
       # init-script mount docker-compose.yml uses locally.
       DATABASE_URL: postgresql+asyncpg://agentforge_app:agentforge_app@localhost:5432/agentforge
       DATABASE_MIGRATIONS_URL: postgresql+asyncpg://agentforge:agentforge@localhost:5432/agentforge
+      REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
