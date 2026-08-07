@@ -1,12 +1,16 @@
-"""Google OAuth2 login (roadmap step 076).
+"""Generic OAuth2 login (roadmap step 077, generalizing step 076's
+Google-only routes to /auth/{provider}/... over auth/oauth.py's
+PROVIDERS registry — adding a new provider is a new entry there, not a
+change here).
 
 CSRF protection for the state parameter uses a double-submit cookie
 (random nonce set as an httponly cookie on /login, compared byte-for-byte
-against the query-string `state` Google echoes back on /callback) rather
-than server-side storage — there's nothing to look up, just a match
-check, so a new stateful table would be pure overhead. See
-auth/oauth.py's module docstring for why the callback doesn't
-independently re-verify Google's id_token.
+against the query-string `state` the provider echoes back on /callback)
+rather than server-side storage — there's nothing to look up, just a
+match check, so a new stateful table would be pure overhead. One cookie
+name shared across every provider is fine: the nonce itself, not the
+cookie name, is what's checked, and only one OAuth attempt is ever in
+flight per browser at a time.
 """
 
 import secrets
@@ -15,29 +19,37 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth.oauth import build_google_authorize_url, exchange_google_code_for_userinfo
+from auth.oauth import PROVIDERS, OAuthProvider
 from config import settings
 from dependencies.db import get_db
-from errors import UnauthorizedError
+from errors import NotFoundError, UnauthorizedError
 from rate_limit import rate_limit
 from repositories.oauth_identity import OAuthIdentityRepository
 from repositories.user import UserRepository
 from routers.auth import issue_tokens
 from schemas.auth import TokenResponse
 
-router = APIRouter(prefix="/auth/google", tags=["auth"])
+router = APIRouter(prefix="/auth/{provider}", tags=["auth"])
 
 _STATE_COOKIE_NAME = "oauth_state"
 _STATE_COOKIE_MAX_AGE_SECONDS = 600
 
 
+def _get_provider(provider: str) -> OAuthProvider:
+    resolved = PROVIDERS.get(provider)
+    if resolved is None:
+        raise NotFoundError(f"Unknown auth provider '{provider}'.")
+    return resolved
+
+
 @router.get(
     "/login",
-    dependencies=[Depends(rate_limit(key_prefix="google-login", limit=10, window_seconds=300))],
+    dependencies=[Depends(rate_limit(key_prefix="oauth-login", limit=10, window_seconds=300))],
 )
-def google_login() -> Response:
+def oauth_login(provider: str) -> Response:
+    provider_impl = _get_provider(provider)
     state = secrets.token_urlsafe(32)
-    response = Response(status_code=302, headers={"Location": build_google_authorize_url(state)})
+    response = Response(status_code=302, headers={"Location": provider_impl.authorize_url(state)})
     response.set_cookie(
         _STATE_COOKIE_NAME,
         state,
@@ -59,15 +71,18 @@ def google_login() -> Response:
 @router.get(
     "/callback",
     response_model=TokenResponse,
-    dependencies=[Depends(rate_limit(key_prefix="google-callback", limit=10, window_seconds=300))],
+    dependencies=[Depends(rate_limit(key_prefix="oauth-callback", limit=10, window_seconds=300))],
 )
-async def google_callback(
+async def oauth_callback(
+    provider: str,
     request: Request,
     response: Response,
     session: Annotated[AsyncSession, Depends(get_db)],
     code: Annotated[str, Query()],
     state: Annotated[str, Query()],
 ) -> TokenResponse:
+    provider_impl = _get_provider(provider)
+
     # Best-effort: only actually reaches the client on the success path
     # below — errors.py's AppError handler builds its own JSONResponse,
     # not this one, so a failed attempt leaves the cookie in place. Not a
@@ -78,17 +93,17 @@ async def google_callback(
     if cookie_state is None or not secrets.compare_digest(cookie_state, state):
         raise UnauthorizedError("Invalid or expired sign-in attempt.")
 
-    google_user = await exchange_google_code_for_userinfo(code)
-    if not google_user.email_verified:
-        # Google itself is the thing vouching for this email — without
-        # that, linking or creating an account off it would be trusting
-        # an unverified claim, exactly what the rest of this app's email
-        # verification flow exists to prevent.
-        raise UnauthorizedError("Your Google account's email is not verified.")
+    oauth_user = await provider_impl.exchange_code_for_userinfo(code)
+    if not oauth_user.email_verified:
+        # The provider itself is the thing vouching for this email —
+        # without that, linking or creating an account off it would be
+        # trusting an unverified claim, exactly what the rest of this
+        # app's email verification flow exists to prevent.
+        raise UnauthorizedError(f"Your {provider_impl.name} account's email is not verified.")
 
     identity_repo = OAuthIdentityRepository(session)
     identity = await identity_repo.get_by_provider_and_subject(
-        provider="google", provider_user_id=google_user.subject
+        provider=provider_impl.name, provider_user_id=oauth_user.subject
     )
 
     user_repo = UserRepository(session)
@@ -97,15 +112,15 @@ async def google_callback(
         if user is None:
             raise UnauthorizedError("Invalid or expired sign-in attempt.")
     else:
-        # Google verified this email, so it satisfies our own
+        # The provider verified this email, so it satisfies our own
         # is_email_verified requirement too — same reasoning a verify-
         # email link would, just from a provider we trust instead of our
         # own token.
-        user = await user_repo.get_by_email(google_user.email)
+        user = await user_repo.get_by_email(oauth_user.email)
         if user is None:
             user = await user_repo.create(
-                email=google_user.email,
-                full_name=google_user.full_name,
+                email=oauth_user.email,
+                full_name=oauth_user.full_name,
                 hashed_password=None,
                 is_email_verified=True,
             )
@@ -114,9 +129,9 @@ async def google_callback(
 
         await identity_repo.create(
             user_id=user.id,
-            provider="google",
-            provider_user_id=google_user.subject,
-            email=google_user.email,
+            provider=provider_impl.name,
+            provider_user_id=oauth_user.subject,
+            email=oauth_user.email,
         )
 
     return await issue_tokens(session, user.id, request)
