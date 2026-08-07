@@ -2,6 +2,7 @@
 for Alembic autogenerate — see migrations/env.py."""
 
 from models.audit_log import AuditLog
+from models.invitation import Invitation
 from models.membership import Membership
 from models.organization import Organization
 from models.permission import Permission, RolePermission
@@ -13,6 +14,7 @@ from models.workspace import Workspace
 
 __all__ = [
     "AuditLog",
+    "Invitation",
     "Membership",
     "Organization",
     "Permission",

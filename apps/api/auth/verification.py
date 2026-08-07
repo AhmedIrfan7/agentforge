@@ -14,12 +14,28 @@ from datetime import UTC, datetime, timedelta
 # magic-link login too.
 _TOKEN_TTL = timedelta(hours=1)
 
+# Invitations aren't "prove you're at this email right now" — the
+# invitee may be traveling, on leave, or just slow to check their inbox.
+# 7 days matches common SaaS practice for team invites.
+_INVITATION_TOKEN_TTL = timedelta(days=7)
+
 
 def generate_verification_token() -> tuple[str, str, datetime]:
     """Returns (raw_token, hash_for_storage, expires_at)."""
     raw_token = secrets.token_urlsafe(32)
     token_hash = hash_verification_token(raw_token)
     expires_at = datetime.now(UTC) + _TOKEN_TTL
+    return raw_token, token_hash, expires_at
+
+
+def generate_invitation_token() -> tuple[str, str, datetime]:
+    """Returns (raw_token, hash_for_storage, expires_at). Same shape as
+    generate_verification_token, just a longer TTL — see module docstring
+    for why Invitation is a separate model rather than reusing
+    VerificationToken's `purpose` field."""
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hash_verification_token(raw_token)
+    expires_at = datetime.now(UTC) + _INVITATION_TOKEN_TTL
     return raw_token, token_hash, expires_at
 
 

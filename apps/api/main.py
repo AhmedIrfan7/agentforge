@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from config import settings
 from errors import register_exception_handlers
 from logging_config import configure_logging, get_logger
-from routers import auth, organization, workspace
+from routers import auth, invitation, organization, workspace
 
 configure_logging()
 logger = get_logger(__name__)
@@ -13,6 +13,7 @@ register_exception_handlers(app)
 app.include_router(auth.router)
 app.include_router(organization.router)
 app.include_router(workspace.router)
+app.include_router(invitation.router)
 
 
 @app.get("/health")
