@@ -1,13 +1,15 @@
 """Integration tests against the real FastAPI app for routers/invitation.py
-(roadmap step 073 — create only; accept is step 074, not implemented yet).
+(roadmap steps 073 create + 074 accept).
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from auth.verification import generate_invitation_token
 from db import get_session, set_tenant_context
 from main import app
 from models.audit_log import AuditLog
@@ -18,6 +20,8 @@ from models.role import Role
 from models.session import Session
 from models.user import User
 from models.workspace import Workspace
+from repositories.invitation import InvitationRepository
+from repositories.role import RoleRepository
 from tests.helpers import auth_headers, signup_and_login
 
 client = TestClient(app)
@@ -62,6 +66,40 @@ async def _new_org(email: str) -> tuple[uuid.UUID, dict[str, str]]:
         headers=headers,
     )
     return uuid.UUID(org_response.json()["id"]), headers
+
+
+async def _new_invitation(
+    org_id: uuid.UUID,
+    email: str,
+    *,
+    role_name: str = "viewer",
+    expired: bool = False,
+) -> tuple[str, uuid.UUID]:
+    """Seeds an Invitation row directly (bypassing the create endpoint and
+    its stub email) with a known raw token — same reasoning as
+    tests/test_verify_email_endpoint.py using generate_verification_token()
+    directly rather than scraping the logged email body."""
+    raw_token, token_hash, expires_at = generate_invitation_token()
+    if expired:
+        expires_at = datetime.now(UTC) - timedelta(hours=1)
+    async with get_session() as session:
+        await set_tenant_context(session, org_id)
+        role = await RoleRepository(session).get_by_name(role_name)
+        assert role is not None
+        owner_result = await session.execute(
+            select(Membership).where(Membership.tenant_id == org_id).limit(1)
+        )
+        owner_membership = owner_result.scalar_one()
+        invitation = await InvitationRepository(session, org_id).create(
+            email=email,
+            role_id=role.id,
+            workspace_id=None,
+            invited_by_user_id=owner_membership.user_id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+        )
+        await session.commit()
+        return raw_token, invitation.id
 
 
 def test_create_invitation_requires_auth() -> None:
@@ -223,3 +261,184 @@ async def test_invitation_create_is_audited() -> None:
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)
+
+
+def test_accept_invitation_requires_auth() -> None:
+    response = client.post("/invitations/accept", json={"token": "not-a-real-token"})
+    assert response.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_accept_invitation_creates_membership() -> None:
+    owner_email = "endpoint-test-inv-accept-owner-1@example.com"
+    invitee_email = "endpoint-test-inv-accept-invitee-1@example.com"
+    org_id, _owner_headers = await _new_org(owner_email)
+    try:
+        raw_token, invitation_id = await _new_invitation(org_id, invitee_email, role_name="viewer")
+        invitee_token = signup_and_login(
+            client,
+            email=invitee_email,
+            password="correct horse battery staple",
+            full_name="Invitee",
+        )
+
+        response = client.post(
+            "/invitations/accept",
+            json={"token": raw_token},
+            headers=auth_headers(invitee_token),
+        )
+        assert response.status_code == 204
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            invitation = await session.get(Invitation, invitation_id)
+            assert invitation is not None
+            assert invitation.accepted_at is not None
+
+            user_result = await session.execute(select(User).where(User.email == invitee_email))
+            invitee = user_result.scalar_one()
+            membership_result = await session.execute(
+                select(Membership).where(
+                    Membership.tenant_id == org_id, Membership.user_id == invitee.id
+                )
+            )
+            membership = membership_result.scalar_one()
+            assert membership.role_id == invitation.role_id
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(invitee_email)
+
+
+@pytest.mark.anyio
+async def test_accept_invitation_with_wrong_account_returns_403() -> None:
+    owner_email = "endpoint-test-inv-accept-owner-2@example.com"
+    wrong_email = "endpoint-test-inv-accept-wrong-2@example.com"
+    org_id, _owner_headers = await _new_org(owner_email)
+    try:
+        raw_token, _invitation_id = await _new_invitation(
+            org_id, "someone-else-2@example.com", role_name="viewer"
+        )
+        wrong_token = signup_and_login(
+            client, email=wrong_email, password="correct horse battery staple", full_name="Wrong"
+        )
+
+        response = client.post(
+            "/invitations/accept",
+            json={"token": raw_token},
+            headers=auth_headers(wrong_token),
+        )
+        assert response.status_code == 403
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(wrong_email)
+
+
+@pytest.mark.anyio
+async def test_accept_expired_invitation_returns_401() -> None:
+    owner_email = "endpoint-test-inv-accept-owner-3@example.com"
+    invitee_email = "endpoint-test-inv-accept-invitee-3@example.com"
+    org_id, _owner_headers = await _new_org(owner_email)
+    try:
+        raw_token, _invitation_id = await _new_invitation(
+            org_id, invitee_email, role_name="viewer", expired=True
+        )
+        invitee_token = signup_and_login(
+            client,
+            email=invitee_email,
+            password="correct horse battery staple",
+            full_name="Invitee",
+        )
+
+        response = client.post(
+            "/invitations/accept",
+            json={"token": raw_token},
+            headers=auth_headers(invitee_token),
+        )
+        assert response.status_code == 401
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(invitee_email)
+
+
+@pytest.mark.anyio
+async def test_accept_unknown_token_returns_401() -> None:
+    invitee_email = "endpoint-test-inv-accept-invitee-4@example.com"
+    invitee_token = signup_and_login(
+        client,
+        email=invitee_email,
+        password="correct horse battery staple",
+        full_name="Invitee",
+    )
+    try:
+        response = client.post(
+            "/invitations/accept",
+            json={"token": "totally-bogus-token"},
+            headers=auth_headers(invitee_token),
+        )
+        assert response.status_code == 401
+    finally:
+        await _cleanup_user(invitee_email)
+
+
+@pytest.mark.anyio
+async def test_accept_already_accepted_invitation_returns_401() -> None:
+    owner_email = "endpoint-test-inv-accept-owner-5@example.com"
+    invitee_email = "endpoint-test-inv-accept-invitee-5@example.com"
+    org_id, _owner_headers = await _new_org(owner_email)
+    try:
+        raw_token, _invitation_id = await _new_invitation(org_id, invitee_email, role_name="viewer")
+        invitee_token = signup_and_login(
+            client,
+            email=invitee_email,
+            password="correct horse battery staple",
+            full_name="Invitee",
+        )
+        headers = auth_headers(invitee_token)
+
+        first = client.post("/invitations/accept", json={"token": raw_token}, headers=headers)
+        assert first.status_code == 204
+
+        second = client.post("/invitations/accept", json={"token": raw_token}, headers=headers)
+        assert second.status_code == 401
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(invitee_email)
+
+
+@pytest.mark.anyio
+async def test_accept_invitation_is_audited() -> None:
+    owner_email = "endpoint-test-inv-accept-owner-6@example.com"
+    invitee_email = "endpoint-test-inv-accept-invitee-6@example.com"
+    org_id, _owner_headers = await _new_org(owner_email)
+    try:
+        raw_token, invitation_id = await _new_invitation(org_id, invitee_email, role_name="viewer")
+        invitee_token = signup_and_login(
+            client,
+            email=invitee_email,
+            password="correct horse battery staple",
+            full_name="Invitee",
+        )
+
+        client.post(
+            "/invitations/accept", json={"token": raw_token}, headers=auth_headers(invitee_token)
+        )
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            result = await session.execute(
+                select(AuditLog)
+                .where(AuditLog.resource_id == invitation_id)
+                .order_by(AuditLog.created_at)
+            )
+            logs = result.scalars().all()
+            # _new_invitation seeds the row directly via the repository, not
+            # the audited create endpoint, so accept is the only log here.
+            assert [log.action for log in logs] == ["invitation.accept"]
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(invitee_email)

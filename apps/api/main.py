@@ -14,6 +14,7 @@ app.include_router(auth.router)
 app.include_router(organization.router)
 app.include_router(workspace.router)
 app.include_router(invitation.router)
+app.include_router(invitation.accept_router)
 
 
 @app.get("/health")

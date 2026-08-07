@@ -84,3 +84,23 @@ async def set_user_context(session: AsyncSession, user_id: uuid.UUID) -> None:
     reasoning as set_tenant_context.
     """
     await session.execute(text(f"SET LOCAL app.current_user_id = '{user_id}'"))
+
+
+async def set_lookup_token_hash(session: AsyncSession, token_hash: str) -> None:
+    """Same dual-policy idea as set_user_context, applied to accepting an
+    Invitation by raw token (step 074): the caller doesn't know which
+    tenant the invitation belongs to yet — that's the whole question the
+    token answers — so tenant_id can't be set first. A second RLS policy
+    on invitations permits SELECT where token_hash matches this session
+    variable (see migrations/versions/*_add_invitation_by_token_rls_policy.py).
+    Once that lookup reveals the invitation's tenant_id, the caller should
+    switch to set_tenant_context() for everything after.
+
+    token_hash is always a hashlib.sha256(...).hexdigest() — exactly 64
+    lowercase hex characters — so, like tenant_id being a uuid.UUID object
+    above, there's nothing here that needs escaping. The check below
+    makes that guarantee explicit rather than trusting the caller.
+    """
+    if len(token_hash) != 64 or any(c not in "0123456789abcdef" for c in token_hash):
+        raise ValueError("token_hash must be a 64-character lowercase hex digest.")
+    await session.execute(text(f"SET LOCAL app.lookup_token_hash = '{token_hash}'"))
