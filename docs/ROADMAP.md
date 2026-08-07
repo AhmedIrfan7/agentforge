@@ -90,7 +90,7 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 - [x] 071. Define role matrix (Super Admin, Org Owner, Admin, Manager, Knowledge Manager, Developer, Support Agent, Analyst, Viewer, End User, Guest) — seeded by migration `1d0ef14faf9e` (permission catalog + role→permission matrix)
 - [x] 072. Enforce role checks per route via permission dependency — organization/workspace routes now require real JWT + membership + permission; found+fixed a real RLS bug (dependencies never set tenant context before querying Membership, so every check silently 403'd) and a real tenant-isolation leak (`list_organizations` returned all orgs unfiltered) along the way
 - [x] 073. Add `Invitation` model + invite-teammate endpoint — `POST /organizations/{id}/invitations`, gated by new `invitation:create` permission (org_owner/admin/manager); opaque 7-day token (SHA-256 hashed, same pattern as VerificationToken); partial unique index blocks duplicate pending invites per (tenant, email)
-- [ ] 074. Add invitation-accept endpoint
+- [x] 074. Add invitation-accept endpoint — `POST /invitations/accept`, token-only (no org in path); requires real auth + caller's email to match the invite; creates the Membership directly. Found and fixed a real production bug along the way: `tenant_isolation`'s RLS policy cast `''::uuid` on a reused pooled connection whose GUC had reverted from a prior request's `SET LOCAL` — invisible under pytest's NullPool, only surfaced live. Fixed with `NULLIF(..., '')` in `migrations/rls.py` and repaired every already-applied policy via migration `c5861fcf8c88`
 - [ ] 075. Add invitation expiration handling
 - [ ] 076. Add Google OAuth login
 - [ ] 077. Add auth-provider abstraction interface (future SSO/SAML/OIDC)
