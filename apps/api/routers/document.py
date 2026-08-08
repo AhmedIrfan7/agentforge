@@ -3,11 +3,10 @@ organization
 (/organizations/{id}/workspaces/{id}/knowledge-bases/{id}/documents).
 
 Deliberately narrow scope, matching what this step actually asks for:
-- No file-type allow-list (step 085) or size-limit validation (step 086)
-  yet -- any file, any size is accepted right now. Not an oversight;
-  those are the next two roadmap steps specifically because they're
-  real, separate decisions (which types, what limit) that shouldn't be
-  guessed at here.
+- File-type allow-list validation (step 085, validation.py) runs before
+  anything is stored. No file-size limit yet (step 086) -- any size is
+  still accepted right now, a real, separate decision not guessed at
+  here.
 - No virus/malware scan (step 087) yet -- a file is trusted (stored,
   Document row created) the moment it's uploaded. Real gap, tracked by
   the roadmap's own sequencing, not hidden.
@@ -41,6 +40,7 @@ from repositories.knowledge_base import KnowledgeBaseRepository
 from schemas.common import Page, PaginationParams
 from schemas.document import DocumentRead
 from storage import ensure_bucket_exists, upload_file
+from validation import validate_upload
 
 router = APIRouter(
     prefix=(
@@ -79,6 +79,8 @@ async def upload_document(
     file: Annotated[UploadFile, File()],
 ) -> DocumentRead:
     content = await file.read()
+    validate_upload(file.filename, content)
+
     document_id = uuid.uuid4()
     storage_key = f"{tenant_id}/{knowledge_base.id}/{document_id}/{file.filename}"
 

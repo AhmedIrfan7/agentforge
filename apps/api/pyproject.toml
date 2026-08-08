@@ -12,6 +12,7 @@ dependencies = [
     "cryptography>=50.0.0",
     "email-validator>=2.3.0",
     "fastapi>=0.141.1",
+    "filetype>=1.2.0",
     "httpx>=0.28.1",
     "pydantic-settings>=2.14.2",
     "pyjwt>=2.13.0",
@@ -61,4 +62,10 @@ plugins = ["pydantic.mypy"]
 # project, which is fully typed.
 [[tool.mypy.overrides]]
 module = ["aioboto3.*", "botocore.*"]
+ignore_missing_imports = true
+
+# Same gap as aioboto3/botocore above, for filetype (validation.py,
+# roadmap step 085).
+[[tool.mypy.overrides]]
+module = ["filetype.*"]
 ignore_missing_imports = true

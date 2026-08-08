@@ -256,3 +256,43 @@ async def test_document_not_visible_under_a_different_knowledge_base() -> None:
             await _cleanup_storage(storage_key)
         await _cleanup_org(org_id)
         await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_upload_rejects_disallowed_file_type() -> None:
+    """validation.py (step 085) is actually wired into the real
+    endpoint, not just correct in isolation (see test_validation.py for
+    the full extension/content-signature matrix)."""
+    email = "endpoint-test-doc-owner-5@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("malware.exe", b"MZ\x90\x00", "application/octet-stream")},
+            headers=headers,
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "validation_error"
+
+        # Nothing should have been created for a rejected upload.
+        list_response = client.get(_docs_url(org_id, workspace_id, kb_id), headers=headers)
+        assert list_response.json()["total"] == 0
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_upload_rejects_content_that_does_not_match_its_extension() -> None:
+    email = "endpoint-test-doc-owner-6@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("fake.pdf", b"just plain text, not a real PDF", "application/pdf")},
+            headers=headers,
+        )
+        assert response.status_code == 422
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)

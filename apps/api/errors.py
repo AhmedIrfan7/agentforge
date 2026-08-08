@@ -49,6 +49,15 @@ class TooManyRequestsError(AppError):
     code = "too_many_requests"
 
 
+class UnsupportedFileTypeError(AppError):
+    # Same code as the automatic pydantic/RequestValidationError path
+    # below ("validation_error") -- a rejected file type is the same
+    # category of problem to a client as a malformed request body, not
+    # a distinct error class it needs to special-case.
+    status_code = 422
+    code = "validation_error"
+
+
 def _error_response(
     status_code: int, code: str, message: str, details: object = None
 ) -> JSONResponse:
