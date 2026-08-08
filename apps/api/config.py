@@ -107,6 +107,14 @@ class Settings(BaseSettings):
     # of a size limit is defeated if the check happens after the fact).
     max_upload_size_bytes: int = 52_428_800
 
+    # Virus/malware scan (roadmap step 087). clamd (ClamAV's daemon) --
+    # antivirus.py speaks its INSTREAM protocol directly over this
+    # host/port rather than through a client library. No disable toggle:
+    # like database_url/storage_endpoint_url, this is required
+    # infrastructure, not an optional feature.
+    clamav_host: str = "localhost"
+    clamav_port: int = 3310
+
     @property
     def is_development(self) -> bool:
         return self.environment == "development"

@@ -182,6 +182,33 @@ async def test_upload_document_as_org_owner_stores_in_minio() -> None:
 
 
 @pytest.mark.anyio
+async def test_upload_rejects_infected_file() -> None:
+    """antivirus.py's scan (step 087) is actually wired into the real
+    endpoint, not just correct in isolation (see test_antivirus.py). Uses
+    the standard EICAR test string -- a harmless file every antivirus
+    engine, including ClamAV, is guaranteed to flag as a virus."""
+    eicar = (r"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*").encode(
+        "ascii"
+    )
+    email = "endpoint-test-doc-owner-9@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("eicar.txt", eicar, "text/plain")},
+            headers=headers,
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "infected_file"
+
+        list_response = client.get(_docs_url(org_id, workspace_id, kb_id), headers=headers)
+        assert list_response.json()["total"] == 0
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
 async def test_end_user_role_cannot_upload_document() -> None:
     owner_email = "endpoint-test-doc-owner-3@example.com"
     org_id, workspace_id, kb_id, _owner_headers = _new_org_with_kb(owner_email)

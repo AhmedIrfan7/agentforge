@@ -67,6 +67,16 @@ class FileTooLargeError(AppError):
     code = "file_too_large"
 
 
+class InfectedFileError(AppError):
+    # 422, like UnsupportedFileTypeError -- still "the file you sent is
+    # unprocessable" -- but its own code, not "validation_error": a virus
+    # hit is a different problem for a client to surface than "wrong
+    # type", the same reasoning that gave FileTooLargeError its own code
+    # instead of folding into validation_error.
+    status_code = 422
+    code = "infected_file"
+
+
 def _error_response(
     status_code: int, code: str, message: str, details: object = None
 ) -> JSONResponse:

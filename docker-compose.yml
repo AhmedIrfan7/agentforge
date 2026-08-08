@@ -50,3 +50,30 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  clamav:
+    # Non-"_base" tag: ships with its virus database pre-loaded in the
+    # image, so a container restart doesn't need a fresh freshclam
+    # download (which can otherwise take minutes) before it's ready to
+    # scan. Feature-release tag ("1.5"), not "latest"/"stable"/"unstable"
+    # -- reproducible across machines, matching how every other service
+    # here pins a specific version except minio (which pins "latest"
+    # deliberately, to always match whatever CI's plain `docker run`
+    # step pulls -- see api-tests.yml).
+    image: clamav/clamav:1.5
+    container_name: agentforge-clamav
+    restart: unless-stopped
+    ports:
+      - "3310:3310" # clamd, unauthenticated -- never expose beyond this host/network
+    # No volume mount: a bind-mounted (host-directory) volume here would
+    # shadow the database this image ships pre-loaded in
+    # /var/lib/clamav with an empty host directory, forcing the exact
+    # slow freshclam download the non-"_base" tag was chosen to avoid --
+    # unlike a named volume, a bind mount doesn't get seeded with the
+    # image's existing directory content on first use.
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping", "1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s

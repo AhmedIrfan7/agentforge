@@ -3,11 +3,9 @@ organization
 (/organizations/{id}/workspaces/{id}/knowledge-bases/{id}/documents).
 
 Deliberately narrow scope, matching what this step actually asks for:
-- File-type allow-list validation (step 085) and size-limit enforcement
-  (step 086), both in validation.py, run before anything is stored.
-- No virus/malware scan (step 087) yet -- a file is trusted (stored,
-  Document row created) the moment it's uploaded. Real gap, tracked by
-  the roadmap's own sequencing, not hidden.
+- File-type allow-list validation (step 085), size-limit enforcement
+  (step 086, validation.py), and a virus/malware scan (step 087,
+  antivirus.py) all run before anything is stored.
 - No processing pipeline (steps 090+) -- status starts and stays
   "pending" after upload; nothing dispatches extraction yet.
 - No delete endpoint -- step 116 ("tenant-scoped document deletion")
@@ -28,6 +26,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from antivirus import scan_for_viruses
 from audit import write_audit_log
 from config import settings
 from dependencies.rbac import require_permission
@@ -79,6 +78,7 @@ async def upload_document(
 ) -> DocumentRead:
     content = await read_upload_content(file, settings.max_upload_size_bytes)
     validate_upload(file.filename, content)
+    await scan_for_viruses(content)
 
     document_id = uuid.uuid4()
     storage_key = f"{tenant_id}/{knowledge_base.id}/{document_id}/{file.filename}"

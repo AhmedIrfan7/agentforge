@@ -48,6 +48,8 @@ jobs:
       STORAGE_ACCESS_KEY: agentforge
       STORAGE_SECRET_KEY: agentforge123
       STORAGE_BUCKET: agentforge-dev
+      CLAMAV_HOST: localhost
+      CLAMAV_PORT: 3310
     steps:
       - uses: actions/checkout@v4
       # MinIO isn't a `services:` container: that block can't override a
@@ -74,6 +76,20 @@ jobs:
           done
           docker exec minio mc alias set local http://localhost:9000 agentforge agentforge123
           docker exec minio mc mb local/agentforge-dev --ignore-existing
+      # Same not-a-`services:`-container reasoning as MinIO above doesn't
+      # apply here (clamav/clamav needs no command override) -- run as a
+      # plain step anyway, for the same "match local dev exactly" reason.
+      # The non-"_base" tag ships its virus database pre-loaded in the
+      # image, so this doesn't need a freshclam-download wait, only a
+      # wait for clamd itself to finish starting up.
+      - name: Start ClamAV
+        run: docker run -d --name clamav -p 3310:3310 clamav/clamav:1.5
+      - name: Wait for ClamAV
+        run: |
+          for i in $(seq 1 60); do
+            docker exec clamav clamdscan --ping 1 && break
+            sleep 2
+          done
       - uses: astral-sh/setup-uv@v5
         with:
           version: "latest"
