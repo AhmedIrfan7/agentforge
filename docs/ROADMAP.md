@@ -101,7 +101,7 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 
 ## Milestone 3 — Knowledge Pipeline: Ingestion + RAG (steps 82–136)
 
-- [ ] 082. Create `KnowledgeBase` model + migration
+- [x] 082. Create `KnowledgeBase` model + migration — sits under Workspace (org→workspace→knowledge base); deliberately minimal (no embedding/chunking config until steps 098-106 need it); also built minimal CRUD (create/list/get/delete, matching Workspace's own no-update scope) nested under `/organizations/{id}/workspaces/{id}/knowledge-bases`, since an inert model can't be reached/tested and step 084 needs a real target to upload into; `get_target_workspace` cross-checks the URL's workspace_id belongs to the resolved tenant (verified both cross-workspace and cross-org 404s)
 - [ ] 083. Create `Document` model + migration (status, metadata)
 - [ ] 084. Add file upload endpoint (multipart → MinIO/S3)
 - [ ] 085. Add file-type allow-list validation (pdf, docx, pptx, xlsx, csv, txt, md, html, json, xml)
