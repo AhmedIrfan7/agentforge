@@ -9,6 +9,7 @@ from models.oauth_identity import OAuthIdentity
 from models.organization import Organization
 from models.permission import Permission, RolePermission
 from models.role import Role
+from models.security_settings import SecuritySettings
 from models.session import Session
 from models.user import User
 from models.verification_token import VerificationToken
@@ -24,6 +25,7 @@ __all__ = [
     "Permission",
     "Role",
     "RolePermission",
+    "SecuritySettings",
     "Session",
     "User",
     "VerificationToken",

@@ -22,7 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db import get_session, set_tenant_context
 from dependencies.auth import get_current_user_id
 from errors import ForbiddenError
+from models.user import User
 from repositories.rbac import get_user_memberships
+from repositories.security_settings import SecuritySettingsRepository
 
 
 async def get_current_tenant_id(
@@ -37,8 +39,25 @@ async def get_current_tenant_id(
         memberships = await get_user_memberships(
             session, user_id=user_id, tenant_id=organization_id
         )
-    if not memberships:
-        raise ForbiddenError("You do not have access to this organization.")
+        if not memberships:
+            raise ForbiddenError("You do not have access to this organization.")
+
+        # security_settings.mfa_required (step 079) — the one field on
+        # that model with a real enforcement point, because this is
+        # already the place tenant-scoped access gets decided per
+        # request. See models/security_settings.py for why
+        # session_timeout/password policy don't have one yet.
+        security_settings = await SecuritySettingsRepository(
+            session, organization_id
+        ).get_singleton()
+        if security_settings is not None and security_settings.mfa_required:
+            user = await session.get(User, user_id)
+            if user is None or not user.mfa_enabled:
+                raise ForbiddenError(
+                    "This organization requires multi-factor authentication to be "
+                    "enabled on your account."
+                )
+
     return organization_id
 
 

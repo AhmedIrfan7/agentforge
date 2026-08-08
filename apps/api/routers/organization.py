@@ -25,6 +25,7 @@ from dependencies.rbac import require_permission
 from dependencies.tenant import get_tenant_db
 from errors import AppError, ConflictError, NotFoundError
 from models.membership import Membership
+from models.security_settings import SecuritySettings
 from repositories.organization import OrganizationRepository
 from repositories.role import RoleRepository
 from schemas.common import Page, PaginationParams
@@ -55,6 +56,9 @@ async def create_organization(
     session.add(
         Membership(tenant_id=org.id, user_id=user_id, workspace_id=None, role_id=owner_role.id)
     )
+    # One row per org, created here rather than left nullable and
+    # special-cased everywhere it's read — see models/security_settings.py.
+    session.add(SecuritySettings(tenant_id=org.id))
     await session.flush()
 
     await write_audit_log(
