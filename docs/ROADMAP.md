@@ -102,7 +102,7 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 ## Milestone 3 — Knowledge Pipeline: Ingestion + RAG (steps 82–136)
 
 - [x] 082. Create `KnowledgeBase` model + migration — sits under Workspace (org→workspace→knowledge base); deliberately minimal (no embedding/chunking config until steps 098-106 need it); also built minimal CRUD (create/list/get/delete, matching Workspace's own no-update scope) nested under `/organizations/{id}/workspaces/{id}/knowledge-bases`, since an inert model can't be reached/tested and step 084 needs a real target to upload into; `get_target_workspace` cross-checks the URL's workspace_id belongs to the resolved tenant (verified both cross-workspace and cross-org 404s)
-- [ ] 083. Create `Document` model + migration (status, metadata)
+- [x] 083. Create `Document` model + migration (status, metadata) — sits under `KnowledgeBase`; genuinely model-only (unlike 082) since step 084's file upload is what actually creates a Document, no throwaway create endpoint to build/discard; `status` plain str defaulting to "pending" (new pipeline stages are app-level additions, not migrations); `doc_metadata` JSONB (not `metadata` — reserved on every SQLAlchemy model); storage columns deliberately deferred to 084; tested at the ORM/RLS layer directly, no live-server check needed for a model-only step
 - [ ] 084. Add file upload endpoint (multipart → MinIO/S3)
 - [ ] 085. Add file-type allow-list validation (pdf, docx, pptx, xlsx, csv, txt, md, html, json, xml)
 - [ ] 086. Add file-size limit validation
