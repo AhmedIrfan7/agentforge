@@ -58,6 +58,15 @@ class UnsupportedFileTypeError(AppError):
     code = "validation_error"
 
 
+class FileTooLargeError(AppError):
+    # 413, not 422 -- "too large" is a distinct, standard HTTP status
+    # (Payload Too Large) from "malformed"/"wrong type", and worth a
+    # client being able to tell apart (e.g. to show "compress your file"
+    # rather than "pick a different file").
+    status_code = 413
+    code = "file_too_large"
+
+
 def _error_response(
     status_code: int, code: str, message: str, details: object = None
 ) -> JSONResponse:

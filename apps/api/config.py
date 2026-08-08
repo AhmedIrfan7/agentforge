@@ -99,6 +99,14 @@ class Settings(BaseSettings):
     mfa_encryption_key: str = _PLACEHOLDER_MFA_KEY
     mfa_ticket_ttl_minutes: int = 10
 
+    # Upload size limit (roadmap step 086). 50 MB — generous for real
+    # documents (PDFs/DOCXs/etc. rarely approach this) while still
+    # bounding how much any single upload can force into memory
+    # (validation.py:read_upload_content enforces this while streaming
+    # the file in, not after already buffering it all — the whole point
+    # of a size limit is defeated if the check happens after the fact).
+    max_upload_size_bytes: int = 52_428_800
+
     @property
     def is_development(self) -> bool:
         return self.environment == "development"

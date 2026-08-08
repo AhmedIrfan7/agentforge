@@ -1,9 +1,11 @@
-"""Upload validation (roadmap step 085: file-type allow-list).
+"""Upload validation: file-type allow-list (roadmap step 085) and
+size limit (step 086).
 
-Two layers, because a filename extension alone is trivially spoofable
-(rename evil.exe to evil.pdf) and a client-supplied Content-Type header
-is exactly as spoofable (the client sets whatever it wants) -- neither
-is proof of what a file actually is, only what it claims to be:
+Type-checking is two layers, because a filename extension alone is
+trivially spoofable (rename evil.exe to evil.pdf) and a client-supplied
+Content-Type header is exactly as spoofable (the client sets whatever it
+wants) -- neither is proof of what a file actually is, only what it
+claims to be:
 
 1. Every extension must be in ALLOWED_EXTENSIONS -- the roadmap's own
    list, and the primary signal for "what kind of document is this."
@@ -16,11 +18,21 @@ is proof of what a file actually is, only what it claims to be:
    content actually decodes as UTF-8, which at least catches a renamed
    binary without pretending to verify more than that. A full content or
    malware scan is step 087, not this one.
+
+read_upload_content enforces the size limit *while* reading, not after
+-- checking len(content) against a max only after `await file.read()`
+already buffered the whole thing defeats the entire point of a size
+limit (bounding how much memory one upload can force the process to
+hold), so it reads in bounded chunks and bails the moment the running
+total goes over, before ever reading the rest of an oversized file.
 """
 
 import filetype
+from fastapi import UploadFile
 
-from errors import UnsupportedFileTypeError
+from errors import FileTooLargeError, UnsupportedFileTypeError
+
+_READ_CHUNK_SIZE = 1024 * 1024  # 1 MB per read() call
 
 ALLOWED_EXTENSIONS = frozenset(
     {"pdf", "docx", "pptx", "xlsx", "csv", "txt", "md", "html", "json", "xml"}
@@ -57,3 +69,17 @@ def validate_upload(filename: str | None, content: bytes) -> None:
             raise UnsupportedFileTypeError(
                 f"File content isn't valid text for a '.{extension}' file."
             ) from exc
+
+
+async def read_upload_content(file: UploadFile, max_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_READ_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise FileTooLargeError(f"File exceeds the maximum upload size of {max_bytes} bytes.")
+        chunks.append(chunk)
+    return b"".join(chunks)

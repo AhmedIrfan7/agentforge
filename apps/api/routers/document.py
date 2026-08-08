@@ -3,10 +3,8 @@ organization
 (/organizations/{id}/workspaces/{id}/knowledge-bases/{id}/documents).
 
 Deliberately narrow scope, matching what this step actually asks for:
-- File-type allow-list validation (step 085, validation.py) runs before
-  anything is stored. No file-size limit yet (step 086) -- any size is
-  still accepted right now, a real, separate decision not guessed at
-  here.
+- File-type allow-list validation (step 085) and size-limit enforcement
+  (step 086), both in validation.py, run before anything is stored.
 - No virus/malware scan (step 087) yet -- a file is trusted (stored,
   Document row created) the moment it's uploaded. Real gap, tracked by
   the roadmap's own sequencing, not hidden.
@@ -31,6 +29,7 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import write_audit_log
+from config import settings
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from errors import NotFoundError
@@ -40,7 +39,7 @@ from repositories.knowledge_base import KnowledgeBaseRepository
 from schemas.common import Page, PaginationParams
 from schemas.document import DocumentRead
 from storage import ensure_bucket_exists, upload_file
-from validation import validate_upload
+from validation import read_upload_content, validate_upload
 
 router = APIRouter(
     prefix=(
@@ -78,7 +77,7 @@ async def upload_document(
     knowledge_base: TargetKnowledgeBase,
     file: Annotated[UploadFile, File()],
 ) -> DocumentRead:
-    content = await file.read()
+    content = await read_upload_content(file, settings.max_upload_size_bytes)
     validate_upload(file.filename, content)
 
     document_id = uuid.uuid4()

@@ -1,15 +1,19 @@
-"""Pure unit tests for validation.py (roadmap step 085) — no HTTP/DB
-needed, so the extension x content-type matrix is covered directly here
-rather than through the much slower real-upload path every case would
-otherwise need (org/workspace/knowledge base/auth per case).
+"""Pure unit tests for validation.py (roadmap steps 085 file-type,
+086 size limit) — no HTTP/DB needed, so the extension x content-type
+matrix and chunked-read edge cases are covered directly here rather than
+through the much slower real-upload path every case would otherwise
+need (org/workspace/knowledge base/auth per case).
 tests/test_document_endpoints.py separately proves the endpoint actually
-wires validate_upload in, not just that the function itself is correct.
+wires these in, not just that the functions are correct in isolation.
 """
 
-import pytest
+import io
 
-from errors import UnsupportedFileTypeError
-from validation import validate_upload
+import pytest
+from fastapi import UploadFile
+
+from errors import FileTooLargeError, UnsupportedFileTypeError
+from validation import read_upload_content, validate_upload
 
 # Minimal bytes real enough to trip filetype's actual signature check —
 # not full, parseable documents, just their magic-byte headers.
@@ -56,3 +60,37 @@ def test_non_utf8_bytes_with_txt_extension_is_rejected() -> None:
 
 def test_extension_is_case_insensitive() -> None:
     validate_upload("REPORT.PDF", _REAL_PDF_HEADER)  # does not raise
+
+
+@pytest.mark.anyio
+async def test_read_upload_content_within_limit_returns_full_content() -> None:
+    data = b"a" * 100
+    upload = UploadFile(io.BytesIO(data), filename="small.txt")
+    result = await read_upload_content(upload, max_bytes=1000)
+    assert result == data
+
+
+@pytest.mark.anyio
+async def test_read_upload_content_over_limit_raises() -> None:
+    data = b"a" * 100
+    upload = UploadFile(io.BytesIO(data), filename="big.txt")
+    with pytest.raises(FileTooLargeError):
+        await read_upload_content(upload, max_bytes=50)
+
+
+@pytest.mark.anyio
+async def test_read_upload_content_exactly_at_limit_is_accepted() -> None:
+    data = b"a" * 100
+    upload = UploadFile(io.BytesIO(data), filename="exact.txt")
+    result = await read_upload_content(upload, max_bytes=100)
+    assert result == data
+
+
+@pytest.mark.anyio
+async def test_read_upload_content_spanning_multiple_chunks_reconstructs_correctly() -> None:
+    # Bigger than validation.py's internal 1 MB chunk size, so this
+    # exercises the actual multi-read loop, not just a single read().
+    data = bytes(range(256)) * 10_000  # ~2.5 MB
+    upload = UploadFile(io.BytesIO(data), filename="multi_chunk.bin")
+    result = await read_upload_content(upload, max_bytes=len(data))
+    assert result == data

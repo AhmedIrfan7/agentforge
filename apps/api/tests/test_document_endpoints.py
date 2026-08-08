@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from config import settings
 from db import get_session, set_tenant_context
 from main import app
 from models.audit_log import AuditLog
@@ -294,5 +295,66 @@ async def test_upload_rejects_content_that_does_not_match_its_extension() -> Non
         )
         assert response.status_code == 422
     finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_upload_rejects_file_over_the_configured_size_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """validation.py's size check (step 086) is actually wired into the
+    real endpoint. Monkeypatches the limit down to a few bytes instead of
+    actually transferring settings.max_upload_size_bytes (50 MB) worth
+    of data through TestClient just to trip it."""
+
+    monkeypatch.setattr(settings, "max_upload_size_bytes", 10)
+
+    email = "endpoint-test-doc-owner-7@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("notes.txt", b"this is way more than ten bytes", "text/plain")},
+            headers=headers,
+        )
+        assert response.status_code == 413
+        assert response.json()["error"]["code"] == "file_too_large"
+
+        list_response = client.get(_docs_url(org_id, workspace_id, kb_id), headers=headers)
+        assert list_response.json()["total"] == 0
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_upload_at_exactly_the_size_limit_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+
+    monkeypatch.setattr(settings, "max_upload_size_bytes", 10)
+
+    email = "endpoint-test-doc-owner-8@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    storage_key = None
+    try:
+        content = b"exactly10b"
+        assert len(content) == 10
+        response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("notes.txt", content, "text/plain")},
+            headers=headers,
+        )
+        assert response.status_code == 201
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(response.json()["id"]))
+            assert document is not None
+            storage_key = document.storage_key
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
         await _cleanup_org(org_id)
         await _cleanup_user(email)
