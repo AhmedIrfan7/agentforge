@@ -1,0 +1,41 @@
+import uuid
+from collections.abc import Sequence
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.document import Document
+from repositories.base import TenantScopedRepository
+
+
+class DocumentRepository(TenantScopedRepository[Document]):
+    def __init__(self, session: AsyncSession, tenant_id: uuid.UUID) -> None:
+        super().__init__(session, tenant_id, Document)
+
+    async def list_for_knowledge_base(
+        self, knowledge_base_id: uuid.UUID, *, limit: int = 50, offset: int = 0
+    ) -> Sequence[Document]:
+        stmt = (
+            select(Document)
+            .where(
+                Document.tenant_id == self.tenant_id,
+                Document.knowledge_base_id == knowledge_base_id,
+            )
+            .order_by(Document.id)
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def count_for_knowledge_base(self, knowledge_base_id: uuid.UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(Document)
+            .where(
+                Document.tenant_id == self.tenant_id,
+                Document.knowledge_base_id == knowledge_base_id,
+            )
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one()

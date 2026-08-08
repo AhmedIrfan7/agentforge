@@ -5,6 +5,7 @@ from errors import register_exception_handlers
 from logging_config import configure_logging, get_logger
 from routers import (
     auth,
+    document,
     invitation,
     knowledge_base,
     mfa,
@@ -28,6 +29,7 @@ app.include_router(invitation.router)
 app.include_router(invitation.accept_router)
 app.include_router(security_settings.router)
 app.include_router(knowledge_base.router)
+app.include_router(document.router)
 
 
 @app.get("/health")

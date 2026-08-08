@@ -38,7 +38,12 @@ async def test_create_and_read_document_within_tenant_context() -> None:
         await session.flush()
 
         document = Document(
-            tenant_id=org.id, knowledge_base_id=knowledge_base.id, title="Employee Handbook.pdf"
+            tenant_id=org.id,
+            knowledge_base_id=knowledge_base.id,
+            title="Employee Handbook.pdf",
+            storage_key="document-test-org/docs/handbook.pdf",
+            content_type="application/pdf",
+            size_bytes=1024,
         )
         session.add(document)
         await session.flush()
@@ -79,6 +84,9 @@ async def test_doc_metadata_round_trips_arbitrary_json() -> None:
             title="Policy.docx",
             status="ready",
             doc_metadata={"title": "PTO Policy", "author": "HR", "language": "en"},
+            storage_key="metadata-test-org/policies/policy.docx",
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            size_bytes=2048,
         )
         session.add(document)
         await session.flush()

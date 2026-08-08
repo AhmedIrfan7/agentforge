@@ -33,6 +33,26 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # bitnami/minio, not the vanilla minio/minio image docker-compose.yml
+      # uses locally: GitHub Actions service containers can't override a
+      # command (no `command:`/`entrypoint:` key), and vanilla minio/minio
+      # needs an explicit `server /data` argument to run at all. bitnami's
+      # image runs correctly from env vars alone and can auto-create the
+      # bucket via MINIO_DEFAULT_BUCKETS, so there's no separate "create
+      # the bucket" step needed the way Postgres needs its app-role step.
+      minio:
+        image: bitnami/minio:latest
+        env:
+          MINIO_ROOT_USER: agentforge
+          MINIO_ROOT_PASSWORD: agentforge123
+          MINIO_DEFAULT_BUCKETS: agentforge-dev
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       ENVIRONMENT: test
       # Least-privilege role, actually subject to Row-Level Security — see
@@ -44,6 +64,10 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://agentforge_app:agentforge_app@localhost:5432/agentforge
       DATABASE_MIGRATIONS_URL: postgresql+asyncpg://agentforge:agentforge@localhost:5432/agentforge
       REDIS_URL: redis://localhost:6379/0
+      STORAGE_ENDPOINT_URL: http://localhost:9000
+      STORAGE_ACCESS_KEY: agentforge
+      STORAGE_SECRET_KEY: agentforge123
+      STORAGE_BUCKET: agentforge-dev
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

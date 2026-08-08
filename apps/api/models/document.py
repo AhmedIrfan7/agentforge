@@ -1,14 +1,6 @@
-"""Second model in the ingestion/RAG pipeline (roadmap step 083) — sits
-under KnowledgeBase (org -> workspace -> knowledge base -> document).
-
-Model-only step, deliberately: the next roadmap step (084, file upload)
-is what actually creates a Document — uploading a file IS how one comes
-into being in this system, not a separate "create the metadata row"
-step first. Building a throwaway JSON-only create endpoint now would
-just get replaced the moment 084 lands, so there isn't one yet. Same
-reasoning kept storage-specific columns (storage key, content type, size,
-checksum) out of this migration too — those are upload-mechanism details
-084 owns, not something to guess the shape of here.
+"""Second model in the ingestion/RAG pipeline (roadmap step 083, storage
+columns added by step 084) — sits under KnowledgeBase (org -> workspace
+-> knowledge base -> document).
 
 status is a plain str, not a DB enum — same reasoning as
 VerificationToken.purpose and Invitation's status: a new pipeline stage
@@ -23,6 +15,11 @@ extracted title/author/dates/language once step 094's metadata-
 extraction step populates it. Empty by default, not nullable — an empty
 dict and "no metadata extracted yet" are the same thing, no reason to
 also support NULL for it.
+
+storage_key/content_type/size_bytes (step 084): storage_key is the
+object's path in the bucket (storage/client.py), never returned by the
+API — an internal implementation detail, not something a client needs
+or should be able to guess/tamper with.
 """
 
 import uuid
@@ -47,3 +44,6 @@ class Document(TenantScopedEntity, TimestampMixin, Base):
     title: Mapped[str] = mapped_column(nullable=False)
     status: Mapped[str] = mapped_column(nullable=False, default="pending")
     doc_metadata: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    storage_key: Mapped[str] = mapped_column(nullable=False, unique=True)
+    content_type: Mapped[str] = mapped_column(nullable=False)
+    size_bytes: Mapped[int] = mapped_column(nullable=False)
