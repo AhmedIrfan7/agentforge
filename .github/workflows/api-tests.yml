@@ -33,26 +33,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-      # bitnami/minio, not the vanilla minio/minio image docker-compose.yml
-      # uses locally: GitHub Actions service containers can't override a
-      # command (no `command:`/`entrypoint:` key), and vanilla minio/minio
-      # needs an explicit `server /data` argument to run at all. bitnami's
-      # image runs correctly from env vars alone and can auto-create the
-      # bucket via MINIO_DEFAULT_BUCKETS, so there's no separate "create
-      # the bucket" step needed the way Postgres needs its app-role step.
-      minio:
-        image: bitnami/minio:latest
-        env:
-          MINIO_ROOT_USER: agentforge
-          MINIO_ROOT_PASSWORD: agentforge123
-          MINIO_DEFAULT_BUCKETS: agentforge-dev
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     env:
       ENVIRONMENT: test
       # Least-privilege role, actually subject to Row-Level Security — see
@@ -70,6 +50,30 @@ jobs:
       STORAGE_BUCKET: agentforge-dev
     steps:
       - uses: actions/checkout@v4
+      # MinIO isn't a `services:` container: that block can't override a
+      # container's command, and minio/minio needs an explicit
+      # `server /data` argument to run at all -- it just prints usage and
+      # exits without one. Started as a plain `docker run` step instead,
+      # using the exact same image docker-compose.yml uses locally rather
+      # than a different vendor's image behaving differently in CI than
+      # in local dev. The image bundles its own `mc` client (confirmed by
+      # docker-compose.yml's own healthcheck already relying on it), so
+      # bucket creation below runs it via `docker exec` instead of
+      # pulling in a second image just for that.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=agentforge \
+            -e MINIO_ROOT_PASSWORD=agentforge123 \
+            minio/minio:latest server /data
+      - name: Wait for MinIO and create bucket
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 1
+          done
+          docker exec minio mc alias set local http://localhost:9000 agentforge agentforge123
+          docker exec minio mc mb local/agentforge-dev --ignore-existing
       - uses: astral-sh/setup-uv@v5
         with:
           version: "latest"
