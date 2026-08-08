@@ -15,7 +15,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # length even if a dev never overrides it locally — but still obviously
 # a placeholder, and _PLACEHOLDER_SECRETS below stops it reaching prod.
 _PLACEHOLDER_SECRET = "change-me-to-a-random-value-at-least-32-bytes-long"
-_PLACEHOLDER_SECRETS = frozenset({_PLACEHOLDER_SECRET})
+
+# Must be a syntactically valid Fernet key (32 raw bytes, urlsafe-base64
+# encoded) so Fernet(mfa_encryption_key) doesn't crash at import time even
+# with the placeholder still set — this decodes to the obviously-fake
+# ASCII string "change-me-to-a-real-32-byte-key!". Generate a real one
+# with `python -c "from cryptography.fernet import Fernet;
+# print(Fernet.generate_key().decode())"`.
+_PLACEHOLDER_MFA_KEY = "Y2hhbmdlLW1lLXRvLWEtcmVhbC0zMi1ieXRlLWtleSE="
+
+_PLACEHOLDER_SECRETS = frozenset({_PLACEHOLDER_SECRET, _PLACEHOLDER_MFA_KEY})
 
 
 class Settings(BaseSettings):
@@ -80,6 +89,16 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:8000/auth/google/callback"
 
+    # MFA/TOTP (roadmap step 078). Symmetric key encrypting each user's
+    # TOTP secret at rest (auth/mfa.py) — unlike a password hash, a TOTP
+    # secret must be recoverable in plaintext to verify a code against it,
+    # so it's encrypted rather than hashed. Gated by the same placeholder
+    # check as jwt_secret/secret_key: a real secret is directly usable to
+    # decrypt every enrolled user's TOTP secret, unlike an empty Google
+    # client_secret, which can only fail.
+    mfa_encryption_key: str = _PLACEHOLDER_MFA_KEY
+    mfa_ticket_ttl_minutes: int = 10
+
     @property
     def is_development(self) -> bool:
         return self.environment == "development"
@@ -93,6 +112,10 @@ class Settings(BaseSettings):
                 raise ValueError("SECRET_KEY is still the placeholder value — set a real secret.")
             if self.jwt_secret in _PLACEHOLDER_SECRETS:
                 raise ValueError("JWT_SECRET is still the placeholder value — set a real secret.")
+            if self.mfa_encryption_key in _PLACEHOLDER_SECRETS:
+                raise ValueError(
+                    "MFA_ENCRYPTION_KEY is still the placeholder value — set a real Fernet key."
+                )
         return self
 
 

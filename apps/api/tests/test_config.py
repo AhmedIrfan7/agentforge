@@ -1,7 +1,10 @@
 import pytest
+from cryptography.fernet import Fernet
 from pydantic import ValidationError
 
 from config import Settings, get_settings
+
+_REAL_FERNET_KEY = Fernet.generate_key().decode()
 
 
 def test_settings_are_cached() -> None:
@@ -27,7 +30,20 @@ def test_placeholder_secret_key_rejected_in_production() -> None:
 
 def test_placeholder_jwt_secret_rejected_in_production() -> None:
     with pytest.raises(ValidationError, match="JWT_SECRET is still the placeholder"):
-        Settings(environment="production", secret_key="a-real-secret-that-is-long-enough")
+        Settings(
+            environment="production",
+            secret_key="a-real-secret-that-is-long-enough",
+            mfa_encryption_key=_REAL_FERNET_KEY,
+        )
+
+
+def test_placeholder_mfa_key_rejected_in_production() -> None:
+    with pytest.raises(ValidationError, match="MFA_ENCRYPTION_KEY is still the placeholder"):
+        Settings(
+            environment="production",
+            secret_key="a-real-secret-that-is-long-enough",
+            jwt_secret="another-real-secret-that-is-long-enough",
+        )
 
 
 def test_real_secrets_accepted_in_production() -> None:
@@ -35,5 +51,6 @@ def test_real_secrets_accepted_in_production() -> None:
         environment="production",
         secret_key="a-real-secret-that-is-long-enough",
         jwt_secret="another-real-secret-that-is-long-enough",
+        mfa_encryption_key=_REAL_FERNET_KEY,
     )
     assert settings.environment == "production"

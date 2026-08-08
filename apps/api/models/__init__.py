@@ -4,6 +4,7 @@ for Alembic autogenerate — see migrations/env.py."""
 from models.audit_log import AuditLog
 from models.invitation import Invitation
 from models.membership import Membership
+from models.mfa_backup_code import MfaBackupCode
 from models.oauth_identity import OAuthIdentity
 from models.organization import Organization
 from models.permission import Permission, RolePermission
@@ -17,6 +18,7 @@ __all__ = [
     "AuditLog",
     "Invitation",
     "Membership",
+    "MfaBackupCode",
     "OAuthIdentity",
     "Organization",
     "Permission",

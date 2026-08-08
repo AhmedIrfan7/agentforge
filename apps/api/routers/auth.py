@@ -14,12 +14,18 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth.jwt import create_access_token, generate_refresh_token, hash_refresh_token
+from auth.jwt import (
+    create_access_token,
+    create_mfa_ticket,
+    generate_refresh_token,
+    hash_refresh_token,
+)
 from auth.passwords import hash_password, needs_rehash, verify_password
 from auth.verification import generate_verification_token, hash_verification_token
 from config import settings
 from dependencies.db import get_db
 from errors import ConflictError, UnauthorizedError
+from models.user import User
 from notifications.email import send_email
 from rate_limit import rate_limit
 from repositories.session import SessionRepository
@@ -30,6 +36,7 @@ from schemas.auth import (
     LogoutRequest,
     MagicLinkRequest,
     MagicLinkVerifyRequest,
+    MfaRequiredResponse,
     PasswordResetConfirmRequest,
     PasswordResetRequest,
     RefreshRequest,
@@ -45,10 +52,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 async def issue_tokens(
     session: AsyncSession, user_id: uuid.UUID, request: Request
 ) -> TokenResponse:
-    """Shared by every "this login attempt just succeeded" endpoint —
-    password login, refresh rotation, magic-link verify, and Google OAuth
-    (routers/oauth.py) — issuing an access token plus a new Session row
-    is identical regardless of how the user proved who they are."""
+    """Mints real tokens unconditionally — used by refresh rotation
+    (which never re-checks MFA; the original login already did) and by
+    complete_login below once MFA is either satisfied or not required."""
     access_token = create_access_token(user_id)
     raw_refresh_token, refresh_token_hash, expires_at = generate_refresh_token()
 
@@ -62,6 +68,21 @@ async def issue_tokens(
     )
 
     return TokenResponse(access_token=access_token, refresh_token=raw_refresh_token)
+
+
+async def complete_login(
+    session: AsyncSession, user: User, request: Request
+) -> TokenResponse | MfaRequiredResponse:
+    """The shared "first factor just succeeded" completion point for
+    password login, magic-link verify, and Google OAuth
+    (routers/oauth.py) — refresh rotation does NOT go through this, since
+    MFA already gated whichever login originally issued the refresh
+    token. If MFA is enabled, hands back a short-lived ticket instead of
+    real tokens; POST /auth/mfa/verify (routers/mfa.py) redeems it for
+    the real ones after checking the second factor."""
+    if user.mfa_enabled:
+        return MfaRequiredResponse(mfa_ticket=create_mfa_ticket(user.id))
+    return await issue_tokens(session, user.id, request)
 
 
 async def _send_verification_email(session: AsyncSession, user_id: uuid.UUID, email: str) -> None:
@@ -130,12 +151,12 @@ async def verify_email(
 
 @router.post(
     "/login",
-    response_model=TokenResponse,
+    response_model=TokenResponse | MfaRequiredResponse,
     dependencies=[Depends(rate_limit(key_prefix="login", limit=10, window_seconds=300))],
 )
 async def login(
     body: LoginRequest, request: Request, session: Annotated[AsyncSession, Depends(get_db)]
-) -> TokenResponse:
+) -> TokenResponse | MfaRequiredResponse:
     user_repo = UserRepository(session)
     user = await user_repo.get_by_email(body.email)
 
@@ -150,7 +171,7 @@ async def login(
     if needs_rehash(user.hashed_password):
         user.hashed_password = hash_password(body.password)
 
-    return await issue_tokens(session, user.id, request)
+    return await complete_login(session, user, request)
 
 
 @router.post(
@@ -229,7 +250,7 @@ async def request_magic_link(
 
 @router.post(
     "/magic-link/verify",
-    response_model=TokenResponse,
+    response_model=TokenResponse | MfaRequiredResponse,
     dependencies=[
         Depends(rate_limit(key_prefix="magic-link-verify", limit=20, window_seconds=3600))
     ],
@@ -238,7 +259,7 @@ async def verify_magic_link(
     body: MagicLinkVerifyRequest,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
-) -> TokenResponse:
+) -> TokenResponse | MfaRequiredResponse:
     token_repo = VerificationTokenRepository(session)
     token_hash = hash_verification_token(body.token)
     token = await token_repo.get_valid(token_hash=token_hash, purpose="magic_link")
@@ -251,8 +272,12 @@ async def verify_magic_link(
     if token.expires_at < datetime.now(UTC):
         raise invalid_token
 
+    user = await UserRepository(session).get(token.user_id)
+    if user is None:
+        raise invalid_token
+
     await token_repo.mark_used(token)
-    return await issue_tokens(session, token.user_id, request)
+    return await complete_login(session, user, request)
 
 
 @router.post(

@@ -26,8 +26,8 @@ from errors import NotFoundError, UnauthorizedError
 from rate_limit import rate_limit
 from repositories.oauth_identity import OAuthIdentityRepository
 from repositories.user import UserRepository
-from routers.auth import issue_tokens
-from schemas.auth import TokenResponse
+from routers.auth import complete_login
+from schemas.auth import MfaRequiredResponse, TokenResponse
 
 router = APIRouter(prefix="/auth/{provider}", tags=["auth"])
 
@@ -70,7 +70,7 @@ def oauth_login(provider: str) -> Response:
 
 @router.get(
     "/callback",
-    response_model=TokenResponse,
+    response_model=TokenResponse | MfaRequiredResponse,
     dependencies=[Depends(rate_limit(key_prefix="oauth-callback", limit=10, window_seconds=300))],
 )
 async def oauth_callback(
@@ -80,7 +80,7 @@ async def oauth_callback(
     session: Annotated[AsyncSession, Depends(get_db)],
     code: Annotated[str, Query()],
     state: Annotated[str, Query()],
-) -> TokenResponse:
+) -> TokenResponse | MfaRequiredResponse:
     provider_impl = _get_provider(provider)
 
     # Best-effort: only actually reaches the client on the success path
@@ -134,4 +134,4 @@ async def oauth_callback(
             email=oauth_user.email,
         )
 
-    return await issue_tokens(session, user.id, request)
+    return await complete_login(session, user, request)

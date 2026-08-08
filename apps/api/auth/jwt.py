@@ -68,6 +68,41 @@ def decode_access_token(token: str) -> uuid.UUID:
         raise TokenError("Invalid or expired token.") from exc
 
 
+def create_mfa_ticket(user_id: uuid.UUID) -> str:
+    """A short-lived, single-purpose JWT proving "the password (or
+    magic-link/OAuth) step already succeeded for this user" — issued
+    instead of real tokens when routers/auth.py:login (or magic-link
+    verify, or oauth_callback) finds mfa_enabled=True, and redeemed by
+    POST /auth/mfa/verify for the real access+refresh tokens. type
+    "mfa_pending" (not "access") means decode_access_token rejects it
+    outright — this ticket alone must never work as a bearer credential
+    for anything but completing MFA."""
+    now = datetime.now(UTC)
+    payload: dict[str, Any] = {
+        "sub": str(user_id),
+        "type": "mfa_pending",
+        "jti": str(uuid.uuid4()),
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.mfa_ticket_ttl_minutes),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=_ALGORITHM)
+
+
+def decode_mfa_ticket(token: str) -> uuid.UUID:
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[_ALGORITHM])
+    except jwt.PyJWTError as exc:
+        raise TokenError("Invalid or expired sign-in attempt.") from exc
+
+    if payload.get("type") != "mfa_pending":
+        raise TokenError("Invalid or expired sign-in attempt.")
+
+    try:
+        return uuid.UUID(payload["sub"])
+    except (KeyError, ValueError) as exc:
+        raise TokenError("Invalid or expired sign-in attempt.") from exc
+
+
 def generate_refresh_token() -> tuple[str, str, datetime]:
     """Returns (raw_token, hash_for_storage, expires_at). Give the raw
     token to the client, store only the hash."""
