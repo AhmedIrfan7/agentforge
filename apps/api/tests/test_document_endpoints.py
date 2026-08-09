@@ -182,6 +182,138 @@ async def test_upload_document_as_org_owner_stores_in_minio() -> None:
 
 
 @pytest.mark.anyio
+async def test_get_document_status_returns_status_and_updated_at() -> None:
+    """Roadmap step 088's polling endpoint -- a smaller view of the same
+    document, not a new capability (see test_document_status_requires_
+    document_read_not_a_new_permission below)."""
+    email = "endpoint-test-doc-owner-10@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("status-check.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+
+        response = client.get(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/status"), headers=headers
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["id"] == document_id
+        assert body["status"] == "pending"
+        assert set(body.keys()) == {"id", "status", "updated_at"}  # not the full document
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_document_status_not_visible_under_a_different_knowledge_base() -> None:
+    email = "endpoint-test-doc-owner-11@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("scoped-status.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+
+        other_kb_response = client.post(
+            f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases",
+            json={"name": "Other Status KB", "slug": "endpoint-test-doc-status-other-kb"},
+            headers=headers,
+        )
+        other_kb_id = uuid.UUID(other_kb_response.json()["id"])
+
+        response = client.get(
+            _docs_url(org_id, workspace_id, other_kb_id, f"/{document_id}/status"), headers=headers
+        )
+        assert response.status_code == 404
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_end_user_role_cannot_poll_document_status() -> None:
+    """document:read (same permission the full GET already requires) --
+    proves this isn't a new, unguarded capability."""
+    owner_email = "endpoint-test-doc-owner-12@example.com"
+    org_id, workspace_id, kb_id, owner_headers = _new_org_with_kb(owner_email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("guarded.txt", b"content", "text/plain")},
+            headers=owner_headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+
+        member_token = signup_and_login(
+            client,
+            email="endpoint-test-doc-status-member@example.com",
+            password="correct horse battery staple",
+            full_name="Status Poll Member",
+        )
+        async with get_session() as session:
+            result = await session.execute(
+                select(User).where(User.email == "endpoint-test-doc-status-member@example.com")
+            )
+            member_user = result.scalar_one()
+            role_result = await session.execute(select(Role).where(Role.name == "end_user"))
+            end_user_role = role_result.scalar_one()
+            await set_tenant_context(session, org_id)
+            session.add(
+                Membership(
+                    tenant_id=org_id,
+                    user_id=member_user.id,
+                    workspace_id=None,
+                    role_id=end_user_role.id,
+                )
+            )
+            await session.commit()
+
+        response = client.get(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/status"),
+            headers=auth_headers(member_token),
+        )
+        assert response.status_code == 403
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user("endpoint-test-doc-status-member@example.com")
+
+
+@pytest.mark.anyio
 async def test_upload_rejects_infected_file() -> None:
     """antivirus.py's scan (step 087) is actually wired into the real
     endpoint, not just correct in isolation (see test_antivirus.py). Uses

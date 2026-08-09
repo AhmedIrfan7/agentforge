@@ -7,7 +7,12 @@ Deliberately narrow scope, matching what this step actually asks for:
   (step 086, validation.py), and a virus/malware scan (step 087,
   antivirus.py) all run before anything is stored.
 - No processing pipeline (steps 090+) -- status starts and stays
-  "pending" after upload; nothing dispatches extraction yet.
+  "pending" after upload; nothing dispatches extraction yet, so
+  get_document_status (step 088) has nothing but "pending" to ever
+  report until that lands. It's still real, useful surface area now:
+  the polling contract a client can already integrate against, and
+  every future pipeline stage just needs to set document.status to a
+  new value for it to show up here, no route changes required.
 - No delete endpoint -- step 116 ("tenant-scoped document deletion")
   owns that, and it needs to cascade chunks/embeddings that don't exist
   yet either. A bare delete now would just be replaced.
@@ -36,7 +41,7 @@ from models.knowledge_base import KnowledgeBase
 from repositories.document import DocumentRepository
 from repositories.knowledge_base import KnowledgeBaseRepository
 from schemas.common import Page, PaginationParams
-from schemas.document import DocumentRead
+from schemas.document import DocumentRead, DocumentStatusRead
 from storage import ensure_bucket_exists, upload_file
 from validation import read_upload_content, validate_upload
 
@@ -150,3 +155,26 @@ async def get_document(
     if document is None or document.knowledge_base_id != knowledge_base.id:
         raise NotFoundError(f"Document {document_id} not found.")
     return DocumentRead.model_validate(document)
+
+
+@router.get(
+    "/{document_id}/status",
+    response_model=DocumentStatusRead,
+    dependencies=[Depends(require_permission("document:read"))],
+)
+async def get_document_status(
+    document_id: uuid.UUID,
+    session: TenantDb,
+    tenant_id: TenantId,
+    knowledge_base: TargetKnowledgeBase,
+) -> DocumentStatusRead:
+    """Roadmap step 088 -- a cheap endpoint for a client to poll after
+    upload, separate from get_document above so repeated polling doesn't
+    re-fetch title/doc_metadata/content_type/etc. on every tick. No new
+    permission: reading a document's status is the same capability as
+    reading the document itself, just a smaller view of it."""
+    repo = DocumentRepository(session, tenant_id)
+    document = await repo.get(document_id)
+    if document is None or document.knowledge_base_id != knowledge_base.id:
+        raise NotFoundError(f"Document {document_id} not found.")
+    return DocumentStatusRead.model_validate(document)

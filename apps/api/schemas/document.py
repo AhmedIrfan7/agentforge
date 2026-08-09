@@ -17,3 +17,16 @@ class DocumentRead(BaseModel):
     size_bytes: int
     created_at: datetime
     updated_at: datetime
+
+
+class DocumentStatusRead(BaseModel):
+    """Deliberately smaller than DocumentRead (roadmap step 088) -- a
+    client polling for upload/processing progress doesn't need title,
+    doc_metadata, content_type, etc. re-sent on every poll tick, only
+    whether status has changed."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    status: str
+    updated_at: datetime
