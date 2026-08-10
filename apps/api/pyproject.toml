@@ -10,6 +10,7 @@ dependencies = [
     "anyio>=4.14.2",
     "argon2-cffi>=25.1.0",
     "asyncpg>=0.31.0",
+    "celery>=5.6.3",
     "cryptography>=50.0.0",
     "email-validator>=2.3.0",
     "fastapi>=0.141.1",
@@ -69,4 +70,10 @@ ignore_missing_imports = true
 # roadmap step 085).
 [[tool.mypy.overrides]]
 module = ["filetype.*"]
+ignore_missing_imports = true
+
+# Same gap as aioboto3/botocore above, for celery (celery_app.py,
+# roadmap step 089).
+[[tool.mypy.overrides]]
+module = ["celery.*"]
 ignore_missing_imports = true
