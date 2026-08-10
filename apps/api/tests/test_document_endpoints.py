@@ -182,6 +182,46 @@ async def test_upload_document_as_org_owner_stores_in_minio() -> None:
 
 
 @pytest.mark.anyio
+async def test_upload_dispatches_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """extraction.py:dispatch_extraction (step 090) is actually called by
+    the real endpoint, with the right document/tenant ids -- its own
+    routing/status-transition logic is covered separately in
+    test_extraction.py against real Postgres/MinIO, so this only needs
+    to prove the wiring, not re-run that logic. Monkeypatches .delay
+    itself rather than letting a real task hit the broker: nothing here
+    needs (or should depend on) a live worker actually consuming it."""
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "routers.document.dispatch_extraction.delay",
+        lambda document_id, tenant_id: calls.append((document_id, tenant_id)),
+    )
+
+    email = "endpoint-test-doc-owner-13@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("dispatch-me.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+
+        assert calls == [(document_id, str(org_id))]
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
 async def test_get_document_status_returns_status_and_updated_at() -> None:
     """Roadmap step 088's polling endpoint -- a smaller view of the same
     document, not a new capability (see test_document_status_requires_

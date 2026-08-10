@@ -47,8 +47,12 @@ _TEXT_EXTENSIONS = frozenset({"csv", "txt", "md", "html", "json", "xml"})
 _SIGNATURE_EXTENSIONS = frozenset({"pdf", "docx", "pptx", "xlsx"})
 
 
+def get_extension(filename: str | None) -> str:
+    return filename.rsplit(".", 1)[-1].lower() if filename and "." in filename else ""
+
+
 def validate_upload(filename: str | None, content: bytes) -> None:
-    extension = filename.rsplit(".", 1)[-1].lower() if filename and "." in filename else ""
+    extension = get_extension(filename)
     if extension not in ALLOWED_EXTENSIONS:
         raise UnsupportedFileTypeError(
             f"'.{extension}' is not an allowed file type. Allowed types: "

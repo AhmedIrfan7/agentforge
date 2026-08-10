@@ -20,6 +20,15 @@ storage_key/content_type/size_bytes (step 084): storage_key is the
 object's path in the bucket (storage/client.py), never returned by the
 API — an internal implementation detail, not something a client needs
 or should be able to guess/tamper with.
+
+extracted_text (step 090): plain text produced by extraction.py's
+dispatch_extraction task, nullable -- null until extraction actually
+runs (or forever, for a status that never resolves past
+"extraction_unsupported"). Postgres TEXT, not object storage: chunking
+(steps 098+) will read this repeatedly and cheaply from the same query
+that already loads the Document row, and TEXT/TOAST handles even a
+large document's extracted text fine without a second storage round
+trip for every read.
 """
 
 import uuid
@@ -47,3 +56,4 @@ class Document(TenantScopedEntity, TimestampMixin, Base):
     storage_key: Mapped[str] = mapped_column(nullable=False, unique=True)
     content_type: Mapped[str] = mapped_column(nullable=False)
     size_bytes: Mapped[int] = mapped_column(nullable=False)
+    extracted_text: Mapped[str | None] = mapped_column(nullable=True, default=None)

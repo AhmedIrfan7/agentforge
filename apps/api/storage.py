@@ -54,3 +54,10 @@ async def upload_file(*, key: str, content: bytes, content_type: str) -> None:
         await client.put_object(
             Bucket=settings.storage_bucket, Key=key, Body=content, ContentType=content_type
         )
+
+
+async def download_file(key: str) -> bytes:
+    async with _client_context() as client:
+        response = await client.get_object(Bucket=settings.storage_bucket, Key=key)
+        body: bytes = await response["Body"].read()
+        return body

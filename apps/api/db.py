@@ -57,6 +57,32 @@ async def get_session() -> AsyncGenerator[AsyncSession]:
         yield session
 
 
+# Celery tasks (extraction.py onward) bridge into this async DB layer via
+# asyncio.run() once per task invocation -- each call creates a brand
+# new event loop. A connection from the pooled `engine` above gets bound
+# to whichever event loop first used it; a later task's *different*
+# event loop reusing that same pooled connection is the identical
+# "Event loop is closed" failure class this module already avoids for
+# pytest via NullPool, for the identical underlying reason (caught live
+# running two sequential tasks through one worker process: the second
+# crashed deep in asyncpg/proactor internals). The pooled `engine` above
+# stays correct and desirable for the FastAPI process itself, which runs
+# on one single, persistent event loop for its whole lifetime -- only a
+# process that creates a new loop per unit of work needs this.
+worker_engine: AsyncEngine = create_async_engine(settings.database_url, poolclass=NullPool)
+
+worker_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+    bind=worker_engine,
+    expire_on_commit=False,
+)
+
+
+@asynccontextmanager
+async def get_worker_session() -> AsyncGenerator[AsyncSession]:
+    async with worker_session_factory() as session:
+        yield session
+
+
 async def set_tenant_context(session: AsyncSession, tenant_id: uuid.UUID) -> None:
     """Set the Postgres session variable Row-Level Security policies check
     (models/mixins.py:TenantScopedMixin, migrations/rls.py). Only lasts for

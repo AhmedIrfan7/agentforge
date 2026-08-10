@@ -1,10 +1,22 @@
 """Celery application (roadmap step 089) -- the worker process's
-entrypoint and task registry. No real tasks yet: step 090 (content
-extraction dispatcher) defines the first one. `ping` below exists only
-to prove broker + worker + result-backend wiring actually works, not as
-product functionality -- covered by test_celery_app.py and live-verified
+entrypoint and task registry. `ping` below exists only to prove broker +
+worker + result-backend wiring actually works, not as product
+functionality -- covered by test_celery_app.py and live-verified
 against a real worker process and real Redis, same as every other piece
 of infrastructure in this project.
+
+conf.imports lists every other module that defines a @celery_app.task --
+extraction.py (step 090) so far. A worker process only knows about tasks
+from modules it has actually imported; `-A celery_app worker` alone only
+imports this file, so without this, a task defined in extraction.py
+would be invisible to the worker (real KeyError caught live: 'dispatch_
+extraction' -- the task existed in the API process, which does import
+extraction.py, but not in the separate worker process, which didn't).
+Not a direct `from extraction import dispatch_extraction` here instead,
+because extraction.py itself imports celery_app from this module --
+conf.imports sidesteps that circular import by deferring the actual
+import until Celery's own worker bootstrap, after celery_app already
+exists.
 
 Shares config.redis_url with redis_client.py's cache/rate-limiter
 connection (see config.py's own docstring: "cache, Celery
@@ -36,6 +48,7 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
+    imports=("extraction",),
 )
 
 

@@ -6,13 +6,14 @@ Deliberately narrow scope, matching what this step actually asks for:
 - File-type allow-list validation (step 085), size-limit enforcement
   (step 086, validation.py), and a virus/malware scan (step 087,
   antivirus.py) all run before anything is stored.
-- No processing pipeline (steps 090+) -- status starts and stays
-  "pending" after upload; nothing dispatches extraction yet, so
-  get_document_status (step 088) has nothing but "pending" to ever
-  report until that lands. It's still real, useful surface area now:
-  the polling contract a client can already integrate against, and
-  every future pipeline stage just needs to set document.status to a
-  new value for it to show up here, no route changes required.
+- Processing pipeline (steps 090+): upload_document dispatches
+  extraction.py:dispatch_extraction as its very last step, after the
+  Document row and audit log entry are both written. get_document_status
+  (step 088) reports whatever that task sets -- "processing" while it
+  runs, then "extracted"/"extraction_unsupported"/"extraction_failed"
+  depending on outcome. Only plain-text extensions (csv/txt/json/xml)
+  have a real handler as of step 090; pdf/docx/pptx/xlsx/html/md land on
+  "extraction_unsupported" until steps 091-093 register theirs.
 - No delete endpoint -- step 116 ("tenant-scoped document deletion")
   owns that, and it needs to cascade chunks/embeddings that don't exist
   yet either. A bare delete now would just be replaced.
@@ -37,6 +38,7 @@ from config import settings
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from errors import NotFoundError
+from extraction import dispatch_extraction
 from models.knowledge_base import KnowledgeBase
 from repositories.document import DocumentRepository
 from repositories.knowledge_base import KnowledgeBaseRepository
@@ -112,6 +114,9 @@ async def upload_document(
         resource_type="document",
         resource_id=document.id,
     )
+
+    dispatch_extraction.delay(str(document.id), str(tenant_id))
+
     return DocumentRead.model_validate(document)
 
 
