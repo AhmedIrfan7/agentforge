@@ -10,9 +10,12 @@ routers/document.py:upload_document is covered by live verification
 instead, same split step 089 used.
 """
 
+import io
 import uuid
 
 import pytest
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import Paragraph, SimpleDocTemplate
 from sqlalchemy import select
 
 from db import get_session, set_tenant_context
@@ -83,8 +86,8 @@ async def _cleanup(tenant_id: uuid.UUID, storage_key: str | None = None) -> None
         await session.commit()
 
 
-def test_plain_text_extensions_are_registered() -> None:
-    assert set(HANDLERS.keys()) == {"csv", "txt", "json", "xml"}
+def test_expected_extensions_are_registered() -> None:
+    assert set(HANDLERS.keys()) == {"csv", "txt", "json", "xml", "pdf"}
 
 
 def test_markdown_is_deliberately_not_registered_yet() -> None:
@@ -118,12 +121,13 @@ async def test_supported_type_extracts_and_marks_extracted() -> None:
 
 @pytest.mark.anyio
 async def test_unsupported_type_marks_extraction_unsupported() -> None:
+    # docx, not pdf -- pdf has had a real handler since step 091.
     tenant_id, kb_id = await _new_org_workspace_kb("extract-unsupported")
     storage_key = None
     try:
-        content = b"%PDF-1.4\nnot a real pdf body"
+        content = b"PK\x03\x04not a real docx body"
         document_id, storage_key = await _create_document(
-            tenant_id, kb_id, title="report.pdf", content=content
+            tenant_id, kb_id, title="report.docx", content=content
         )
 
         await _run_extraction(document_id, tenant_id)
@@ -146,3 +150,42 @@ async def test_missing_document_raises_not_found_yet() -> None:
             await _run_extraction(uuid.uuid4(), tenant_id)
     finally:
         await _cleanup(tenant_id)
+
+
+@pytest.mark.anyio
+async def test_pdf_document_extracts_through_the_real_dispatcher() -> None:
+    """extraction_pdf.py's own logic is unit-tested directly in
+    test_extraction_pdf.py -- this only needs to prove HANDLERS["pdf"] is
+    actually wired to it end-to-end through _run_extraction, real
+    Postgres + real MinIO included."""
+    buf = io.BytesIO()
+    styles = getSampleStyleSheet()
+    SimpleDocTemplate(buf).build(
+        [
+            Paragraph("Wired Up", styles["Title"]),
+            Paragraph("This came from a real PDF through the real dispatcher.", styles["Normal"]),
+        ]
+    )
+    pdf_bytes = buf.getvalue()
+
+    tenant_id, kb_id = await _new_org_workspace_kb("extract-pdf")
+    storage_key = None
+    try:
+        document_id, storage_key = await _create_document(
+            tenant_id, kb_id, title="wired.pdf", content=pdf_bytes
+        )
+
+        await _run_extraction(document_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            document = await session.get(Document, document_id)
+            assert document is not None
+            assert document.status == "extracted"
+            assert document.extracted_text is not None
+            assert "# Wired Up" in document.extracted_text
+            assert "This came from a real PDF through the real dispatcher." in (
+                document.extracted_text
+            )
+    finally:
+        await _cleanup(tenant_id, storage_key)

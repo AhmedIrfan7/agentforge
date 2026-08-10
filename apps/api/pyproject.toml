@@ -16,6 +16,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "filetype>=1.2.0",
     "httpx>=0.28.1",
+    "pdfplumber>=0.11.10",
     "pydantic-settings>=2.14.2",
     "pyjwt>=2.13.0",
     "pyotp>=2.10.0",
@@ -30,6 +31,7 @@ dependencies = [
 dev = [
     "mypy>=2.3.0",
     "pytest>=9.1.1",
+    "reportlab>=5.0.0",
     "ruff>=0.16.1",
 ]
 
@@ -76,4 +78,11 @@ ignore_missing_imports = true
 # roadmap step 089).
 [[tool.mypy.overrides]]
 module = ["celery.*"]
+ignore_missing_imports = true
+
+# reportlab is dev-only (test fixtures for extraction_pdf.py, roadmap
+# step 091 — generates real PDFs to test against, never imported by
+# application code) and ships no type stubs.
+[[tool.mypy.overrides]]
+module = ["reportlab.*"]
 ignore_missing_imports = true

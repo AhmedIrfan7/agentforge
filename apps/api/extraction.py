@@ -4,18 +4,19 @@ handler by extension, same registry-of-handlers shape as
 auth/oauth.py:PROVIDERS (a plain dict, not a decorator-based registration
 mechanism -- there's no reason for more machinery than that yet).
 
-HANDLERS only covers four plain-text extensions today: csv/txt/json/xml
-(md is deliberately NOT here -- markdown gets real structure-aware
-extraction in step 093, not treated as opaque plain text). Decoding as
-UTF-8 -- already-validated bytes, validate_upload (step 085) already
-proved every stored file under these four extensions decodes cleanly --
-genuinely IS the full extraction for them: there's no further structure
-to pull out of a CSV/plain-text/JSON/XML file the way there is from a
-PDF's headings or a DOCX's tables. pdf/docx/pptx/xlsx/html/md stay
-unregistered until steps 091-093 land; a document of one of those types
-lands on "extraction_unsupported", which is the honest state today, not
-a bug -- it stops being reachable for each type exactly as its step
-registers a real handler here.
+HANDLERS covers four plain-text extensions (csv/txt/json/xml) plus pdf
+as of step 091. Decoding as UTF-8 -- already-validated bytes,
+validate_upload (step 085) already proved every stored file under the
+plain-text extensions decodes cleanly -- genuinely IS the full
+extraction for those: there's no further structure to pull out of a
+CSV/plain-text/JSON/XML file the way there is from a PDF's headings or
+tables (extraction_pdf.py). md is deliberately NOT here yet -- markdown
+gets real structure-aware extraction in step 093, not treated as opaque
+plain text. docx/pptx/xlsx/html/md stay unregistered until steps
+092-093 land; a document of one of those types lands on
+"extraction_unsupported", which is the honest state today, not a bug --
+it stops being reachable for each type exactly as its step registers a
+real handler here.
 
 dispatch_extraction is dispatched from routers/document.py:upload_document
 via .delay() from inside the route body, which runs *before* the
@@ -34,6 +35,7 @@ from typing import Any
 
 from celery_app import celery_app
 from db import get_worker_session, set_tenant_context
+from extraction_pdf import extract_pdf
 from repositories.document import DocumentRepository
 from storage import download_file
 from validation import get_extension
@@ -50,6 +52,7 @@ HANDLERS: dict[str, ExtractionHandler] = {
     "txt": _extract_plain_text,
     "json": _extract_plain_text,
     "xml": _extract_plain_text,
+    "pdf": extract_pdf,
 }
 
 

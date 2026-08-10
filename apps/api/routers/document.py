@@ -11,9 +11,9 @@ Deliberately narrow scope, matching what this step actually asks for:
   Document row and audit log entry are both written. get_document_status
   (step 088) reports whatever that task sets -- "processing" while it
   runs, then "extracted"/"extraction_unsupported"/"extraction_failed"
-  depending on outcome. Only plain-text extensions (csv/txt/json/xml)
-  have a real handler as of step 090; pdf/docx/pptx/xlsx/html/md land on
-  "extraction_unsupported" until steps 091-093 register theirs.
+  depending on outcome. Plain-text extensions (csv/txt/json/xml) and pdf
+  have a real handler as of step 091; docx/pptx/xlsx/html/md land on
+  "extraction_unsupported" until steps 092-093 register theirs.
 - No delete endpoint -- step 116 ("tenant-scoped document deletion")
   owns that, and it needs to cascade chunks/embeddings that don't exist
   yet either. A bare delete now would just be replaced.
