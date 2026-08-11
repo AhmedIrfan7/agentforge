@@ -9,7 +9,7 @@ from pptx import Presentation
 from pptx.presentation import Presentation as PresentationType
 from pptx.util import Inches
 
-from extraction_pptx import extract_pptx
+from extraction_pptx import extract_pptx, extract_pptx_metadata
 
 
 def _build_pptx(build: Callable[[PresentationType], None]) -> bytes:
@@ -77,3 +77,15 @@ def test_empty_presentation_does_not_crash() -> None:
 
     content = _build_pptx(build)
     assert isinstance(extract_pptx(content), str)
+
+
+def test_metadata_reads_real_core_properties() -> None:
+    def build(p: PresentationType) -> None:
+        p.core_properties.title = "Explicit Deck Title"
+        p.core_properties.author = "Real Presenter"
+        p.core_properties.language = "fr-FR"
+
+    metadata = extract_pptx_metadata(_build_pptx(build))
+    assert metadata["title"] == "Explicit Deck Title"
+    assert metadata["author"] == "Real Presenter"
+    assert metadata["language"] == "fr-FR"

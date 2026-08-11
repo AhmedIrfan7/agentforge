@@ -33,11 +33,23 @@ the same order as the original page, not "all text, then all tables."
 """
 
 import io
+import re
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta, timezone
 
 import pdfplumber
 
 from extraction_tables import rows_to_markdown
+
+# PDF's own date format (ISO 32000 section 7.9.4), e.g.
+# "D:20260811143855+05'00'" -- not ISO 8601, has to be parsed by hand.
+# Every component after the year is optional per spec; verified against
+# a real reportlab-generated PDF's actual CreationDate/ModDate strings
+# before trusting the shape.
+_PDF_DATE = re.compile(
+    r"D:(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?"
+    r"(?:([+\-Z])(\d{2})?'?(\d{2})?'?)?"
+)
 
 # A line's font size relative to the page's dominant (body-text) size,
 # above which it's treated as a heading. Two tiers, not a single cutoff
@@ -93,6 +105,46 @@ def _format_line(line: _Line, body_size: float) -> str:
     if body_size > 0 and line.size >= body_size * _H2_SIZE_RATIO:
         return f"## {line.text}"
     return line.text
+
+
+def _parse_pdf_date(value: str) -> datetime | None:
+    match = _PDF_DATE.match(value)
+    if not match:
+        return None
+    year, month, day, hour, minute, second, sign, tz_hour, tz_minute = match.groups()
+    dt = datetime(
+        int(year),
+        int(month or 1),
+        int(day or 1),
+        int(hour or 0),
+        int(minute or 0),
+        int(second or 0),
+    )
+    if sign in ("+", "-"):
+        offset = timedelta(hours=int(tz_hour or 0), minutes=int(tz_minute or 0))
+        dt = dt.replace(tzinfo=timezone(-offset if sign == "-" else offset))
+    elif sign == "Z":
+        dt = dt.replace(tzinfo=UTC)
+    return dt
+
+
+def extract_pdf_metadata(content: bytes) -> dict[str, object]:
+    """Raw PDF Info-dictionary values, uncleaned -- see
+    extraction_metadata.py for why cleaning is centralized there instead
+    of here. No language field: unlike docx/pptx/xlsx's core properties,
+    the classic PDF Info dictionary has no standard language entry (that
+    lives in newer XMP metadata this doesn't read) -- pdf relies on
+    content-based detection only, same as every plain-text extension."""
+    with pdfplumber.open(io.BytesIO(content)) as pdf:
+        info = pdf.metadata
+    created = _parse_pdf_date(info["CreationDate"]) if info.get("CreationDate") else None
+    modified = _parse_pdf_date(info["ModDate"]) if info.get("ModDate") else None
+    return {
+        "title": info.get("Title"),
+        "author": info.get("Author"),
+        "created_at": created.isoformat() if created else None,
+        "modified_at": modified.isoformat() if modified else None,
+    }
 
 
 def extract_pdf(content: bytes) -> str:

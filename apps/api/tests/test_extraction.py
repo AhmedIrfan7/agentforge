@@ -131,6 +131,39 @@ async def test_supported_type_extracts_and_marks_extracted() -> None:
 
 
 @pytest.mark.anyio
+async def test_plain_text_document_gets_language_detected_through_the_real_dispatcher() -> None:
+    """Plain-text extensions have no format-level metadata source (see
+    extraction_metadata.py's module docstring) -- language detection
+    from the extracted text is the only doc_metadata field that ever
+    populates for them, proven here end-to-end rather than assumed from
+    test_extraction_metadata.py's direct unit coverage of detect_language
+    alone."""
+    tenant_id, kb_id = await _new_org_workspace_kb("extract-language")
+    storage_key = None
+    try:
+        content = (
+            b"This is a genuinely ordinary English paragraph about quarterly "
+            b"revenue, written with enough real words for confident language "
+            b"detection to work reliably."
+        )
+        document_id, storage_key = await _create_document(
+            tenant_id, kb_id, title="report.txt", content=content
+        )
+
+        await _run_extraction(document_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            document = await session.get(Document, document_id)
+            assert document is not None
+            assert document.status == "extracted"
+            assert document.doc_metadata["language"] == "en"
+            assert document.doc_metadata["title"] is None
+    finally:
+        await _cleanup(tenant_id, storage_key)
+
+
+@pytest.mark.anyio
 async def test_unsupported_type_marks_extraction_unsupported() -> None:
     # Every extension validation.py:ALLOWED_EXTENSIONS accepts has a
     # real handler as of step 093 -- "extraction_unsupported" is no
@@ -207,8 +240,14 @@ async def test_pdf_document_extracts_through_the_real_dispatcher() -> None:
 async def test_docx_document_extracts_through_the_real_dispatcher() -> None:
     """extraction_docx.py's own logic is unit-tested directly in
     test_extraction_docx.py -- this only needs to prove HANDLERS["docx"]
-    is actually wired to it end-to-end through _run_extraction."""
+    is actually wired to it end-to-end through _run_extraction, and
+    (roadmap step 094) that doc_metadata gets populated in the same
+    pass -- covered here rather than in every other format's wiring
+    test, since extraction_metadata.py's own merge/cleaning logic is
+    already covered directly in test_extraction_metadata.py."""
     document = docx.Document()
+    document.core_properties.title = "Wired Doc Title"
+    document.core_properties.author = "Wired Author"
     document.add_paragraph("This came from a real DOCX through the real dispatcher.")
     buf = io.BytesIO()
     document.save(buf)
@@ -230,6 +269,8 @@ async def test_docx_document_extracts_through_the_real_dispatcher() -> None:
             assert fetched.extracted_text == (
                 "This came from a real DOCX through the real dispatcher."
             )
+            assert fetched.doc_metadata["title"] == "Wired Doc Title"
+            assert fetched.doc_metadata["author"] == "Wired Author"
     finally:
         await _cleanup(tenant_id, storage_key)
 

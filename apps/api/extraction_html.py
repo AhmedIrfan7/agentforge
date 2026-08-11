@@ -40,3 +40,33 @@ def extract_html(content: bytes) -> str:
     for tag in soup.find_all(_STRUCTURAL_NOISE_TAGS):
         tag.decompose()
     return str(markdownify(str(soup), heading_style="ATX", table_infer_header=True)).strip()
+
+
+def _meta_content(soup: BeautifulSoup, name: str) -> str | None:
+    tag = soup.find("meta", attrs={"name": name})
+    content = tag.get("content") if tag else None
+    return content if isinstance(content, str) else None
+
+
+def extract_html_metadata(content: bytes) -> dict[str, object]:
+    """Raw <title>/<meta>/<html lang> values, uncleaned -- see
+    extraction_metadata.py for why cleaning is centralized there instead
+    of here. No modified_at: unlike title/author/date, there's no
+    common-enough HTML convention for "last modified" worth reading --
+    <meta name="date"> is at least a widely-used de facto pattern for a
+    single date; deeper conventions (OpenGraph, Dublin Core, schema.org
+    microdata) are real but a much bigger surface than this step takes
+    on. created_at here is the meta tag's raw content string, unlike
+    every other format's created_at -- HTML has no structured date
+    encoding the way OOXML/PDF do, so there's nothing to reliably parse
+    it INTO; a page author could write "2026-05-01", "May 1, 2026", or
+    anything else in that attribute."""
+    soup = BeautifulSoup(content.decode("utf-8"), "html.parser")
+    title = soup.title.string if soup.title and soup.title.string else None
+    lang = soup.html.get("lang") if soup.html else None
+    return {
+        "title": title,
+        "author": _meta_content(soup, "author"),
+        "created_at": _meta_content(soup, "date"),
+        "language": lang if isinstance(lang, str) else None,
+    }

@@ -41,6 +41,20 @@ def _heading_prefix(style_name: str) -> str | None:
     return None
 
 
+def extract_docx_metadata(content: bytes) -> dict[str, object]:
+    """Raw core_properties values, uncleaned -- extraction_metadata.py
+    centralizes filtering blank strings and the "python-docx" default-
+    author sentinel, not duplicated here."""
+    props = docx.Document(io.BytesIO(content)).core_properties
+    return {
+        "title": props.title,
+        "author": props.author,
+        "created_at": props.created.isoformat() if props.created else None,
+        "modified_at": props.modified.isoformat() if props.modified else None,
+        "language": props.language,
+    }
+
+
 def extract_docx(content: bytes) -> str:
     document = docx.Document(io.BytesIO(content))
     parts: list[str] = []

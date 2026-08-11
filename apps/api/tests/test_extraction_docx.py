@@ -4,13 +4,14 @@ no separate fixture-generation dependency is needed the way reportlab
 was for PDF).
 """
 
+import datetime
 import io
 from collections.abc import Callable
 
 import docx
 from docx.document import Document
 
-from extraction_docx import extract_docx
+from extraction_docx import extract_docx, extract_docx_metadata
 
 
 def _build_docx(build: Callable[[Document], None]) -> bytes:
@@ -91,3 +92,27 @@ def test_empty_document_does_not_crash() -> None:
 
     content = _build_docx(build)
     assert isinstance(extract_docx(content), str)
+
+
+def test_metadata_reads_real_core_properties() -> None:
+    def build(d: Document) -> None:
+        d.core_properties.title = "Explicit Title"
+        d.core_properties.author = "Real Author"
+        d.core_properties.created = datetime.datetime(2026, 1, 15, 10, 0, 0)
+        d.core_properties.language = "en-US"
+
+    metadata = extract_docx_metadata(_build_docx(build))
+    assert metadata["title"] == "Explicit Title"
+    assert metadata["author"] == "Real Author"
+    assert metadata["created_at"] is not None and "2026-01-15" in str(metadata["created_at"])
+    assert metadata["language"] == "en-US"
+
+
+def test_metadata_on_a_never_annotated_document_reports_library_default_author() -> None:
+    # Raw values, uncleaned -- extraction_metadata.py is what filters
+    # the "python-docx" default-author sentinel, not this function.
+    def build(d: Document) -> None:
+        pass
+
+    metadata = extract_docx_metadata(_build_docx(build))
+    assert metadata["author"] == "python-docx"

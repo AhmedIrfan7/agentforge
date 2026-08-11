@@ -15,7 +15,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
 
-from extraction_pdf import extract_pdf
+from extraction_pdf import extract_pdf, extract_pdf_metadata
 
 _STYLES = getSampleStyleSheet()
 
@@ -99,3 +99,32 @@ def test_headings_and_body_stay_in_reading_order() -> None:
 def test_empty_document_does_not_crash() -> None:
     pdf = _build_pdf([Paragraph("", _STYLES["Normal"])])
     assert isinstance(extract_pdf(pdf), str)
+
+
+def test_metadata_reads_real_info_dictionary() -> None:
+    buf = io.BytesIO()
+    SimpleDocTemplate(buf, pagesize=letter, title="Explicit PDF Title", author="Real Author").build(
+        [Paragraph("Body.", _STYLES["Normal"])]
+    )
+    metadata = extract_pdf_metadata(buf.getvalue())
+    assert metadata["title"] == "Explicit PDF Title"
+    assert metadata["author"] == "Real Author"
+    # reportlab stamps CreationDate/ModDate with the real build time --
+    # just confirm a real ISO 8601 string came back, not reportlab's
+    # own "D:..." format leaking through unparsed.
+    assert metadata["created_at"] is not None
+    assert str(metadata["created_at"]).count("-") >= 2
+
+
+def test_metadata_with_title_author_unset_returns_reportlabs_raw_default() -> None:
+    # Not this project's sentinel to filter -- reportlab is a PDF-
+    # generation library used here only to build test fixtures, not a
+    # tool real end users author uploaded documents with the way
+    # python-docx/openpyxl plausibly are, so "(anonymous)" isn't in
+    # extraction_metadata.py's _AUTHOR_SENTINELS. This just documents
+    # extract_pdf_metadata's own "raw, uncleaned" contract: whatever the
+    # Info dictionary says comes back as-is.
+    pdf = _build_pdf([Paragraph("No metadata set.", _STYLES["Normal"])])
+    metadata = extract_pdf_metadata(pdf)
+    assert metadata["title"] == "(anonymous)"
+    assert metadata["author"] == "(anonymous)"

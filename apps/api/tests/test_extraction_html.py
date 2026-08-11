@@ -3,7 +3,7 @@ strings, no fixture-generation library needed since HTML is authored
 directly as text.
 """
 
-from extraction_html import extract_html
+from extraction_html import extract_html, extract_html_metadata
 
 
 def test_plain_paragraph_extracts_as_plain_text() -> None:
@@ -79,3 +79,25 @@ def test_nav_header_footer_aside_content_is_excluded() -> None:
 
 def test_empty_html_does_not_crash() -> None:
     assert isinstance(extract_html(b""), str)
+
+
+def test_metadata_reads_title_meta_author_and_lang_attribute() -> None:
+    html = (
+        b'<html lang="fr-FR"><head><title>Explicit Page Title</title>'
+        b'<meta name="author" content="Real Web Author">'
+        b'<meta name="date" content="2026-05-01">'
+        b"</head><body><p>content</p></body></html>"
+    )
+    metadata = extract_html_metadata(html)
+    assert metadata["title"] == "Explicit Page Title"
+    assert metadata["author"] == "Real Web Author"
+    assert metadata["created_at"] == "2026-05-01"
+    assert metadata["language"] == "fr-FR"
+
+
+def test_metadata_with_no_head_returns_all_none() -> None:
+    metadata = extract_html_metadata(b"<body><p>just body content</p></body>")
+    assert metadata["title"] is None
+    assert metadata["author"] is None
+    assert metadata["created_at"] is None
+    assert metadata["language"] is None

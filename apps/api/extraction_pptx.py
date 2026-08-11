@@ -31,6 +31,19 @@ def _is_title_shape(shape: BaseShape) -> bool:
     return bool(shape.is_placeholder and shape.placeholder_format.type in _TITLE_PLACEHOLDER_TYPES)
 
 
+def extract_pptx_metadata(content: bytes) -> dict[str, object]:
+    """Raw core_properties values, uncleaned -- see extraction_metadata.py
+    for why cleaning is centralized there instead of here."""
+    props = Presentation(io.BytesIO(content)).core_properties
+    return {
+        "title": props.title,
+        "author": props.author,
+        "created_at": props.created.isoformat() if props.created else None,
+        "modified_at": props.modified.isoformat() if props.modified else None,
+        "language": props.language,
+    }
+
+
 def extract_pptx(content: bytes) -> str:
     presentation = Presentation(io.BytesIO(content))
     slide_texts: list[str] = []

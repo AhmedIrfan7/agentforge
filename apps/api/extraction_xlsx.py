@@ -38,3 +38,23 @@ def extract_xlsx(content: bytes) -> str:
         return "\n\n".join(sheet_texts)
     finally:
         workbook.close()
+
+
+def extract_xlsx_metadata(content: bytes) -> dict[str, object]:
+    """Raw workbook.properties values, uncleaned -- see
+    extraction_metadata.py for why cleaning is centralized there instead
+    of here. Note the field is `creator`, not `author` like docx/pptx --
+    normalized to a common "author" key here so callers don't need to
+    know the per-format field name."""
+    workbook = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
+    try:
+        props = workbook.properties
+        return {
+            "title": props.title,
+            "author": props.creator,
+            "created_at": props.created.isoformat() if props.created else None,
+            "modified_at": props.modified.isoformat() if props.modified else None,
+            "language": props.language,
+        }
+    finally:
+        workbook.close()

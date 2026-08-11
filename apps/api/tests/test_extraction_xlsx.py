@@ -8,7 +8,7 @@ from collections.abc import Callable
 import openpyxl
 from openpyxl import Workbook
 
-from extraction_xlsx import extract_xlsx
+from extraction_xlsx import extract_xlsx, extract_xlsx_metadata
 
 
 def _build_xlsx(build: Callable[[Workbook], None]) -> bytes:
@@ -68,3 +68,23 @@ def test_zero_and_false_cell_values_are_not_blanked_out() -> None:
 def test_empty_workbook_does_not_crash() -> None:
     content = _build_xlsx(lambda wb: None)
     assert isinstance(extract_xlsx(content), str)
+
+
+def test_metadata_reads_real_workbook_properties() -> None:
+    def build(wb: Workbook) -> None:
+        wb.properties.title = "Explicit Sheet Title"
+        wb.properties.creator = "Real Creator"
+        wb.properties.language = "de-DE"
+
+    metadata = extract_xlsx_metadata(_build_xlsx(build))
+    assert metadata["title"] == "Explicit Sheet Title"
+    # xlsx's own field is `creator`, normalized to a common "author" key.
+    assert metadata["author"] == "Real Creator"
+    assert metadata["language"] == "de-DE"
+
+
+def test_metadata_on_a_never_annotated_workbook_reports_library_default_creator() -> None:
+    # Raw values, uncleaned -- extraction_metadata.py is what filters
+    # the "openpyxl" default-creator sentinel, not this function.
+    metadata = extract_xlsx_metadata(_build_xlsx(lambda wb: None))
+    assert metadata["author"] == "openpyxl"
