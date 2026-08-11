@@ -51,6 +51,11 @@ and "document_type_signals" to doc_metadata -- same reasoning as
 metadata extraction: it's a real analysis step, not free-standing
 product surface, so it belongs in this same task rather than a separate
 dispatch that would need to re-fetch content that's already in memory.
+
+As of step 096, the same pass also runs quality.py:assess_quality,
+adding "quality": {"is_empty", "has_broken_formatting"} to doc_metadata
+and setting Document.content_hash (its own indexed column, not JSONB --
+step 117's duplicate-detection lookup needs to query it efficiently).
 """
 
 import asyncio
@@ -67,6 +72,7 @@ from extraction_metadata import build_doc_metadata
 from extraction_pdf import extract_pdf
 from extraction_pptx import extract_pptx
 from extraction_xlsx import extract_xlsx
+from quality import assess_quality
 from repositories.document import DocumentRepository
 from storage import download_file
 from validation import get_extension
@@ -131,6 +137,11 @@ async def _run_extraction(document_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
             analysis = _document_analysis_agent.analyze(extracted_text)
             doc_metadata["document_type"] = analysis.document_type
             doc_metadata["document_type_signals"] = analysis.matched_keywords
+            quality = assess_quality(content, extracted_text)
+            doc_metadata["quality"] = {
+                "is_empty": quality.is_empty,
+                "has_broken_formatting": quality.has_broken_formatting,
+            }
         except Exception:
             document.status = "extraction_failed"
             await session.commit()
@@ -139,6 +150,7 @@ async def _run_extraction(document_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
         document.status = "extracted"
         document.extracted_text = extracted_text
         document.doc_metadata = doc_metadata
+        document.content_hash = quality.content_hash
         await session.commit()
 
 

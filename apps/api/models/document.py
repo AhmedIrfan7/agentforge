@@ -29,6 +29,16 @@ runs (or forever, for a status that never resolves past
 that already loads the Document row, and TEXT/TOAST handles even a
 large document's extracted text fine without a second storage round
 trip for every read.
+
+content_hash (step 096): SHA-256 of the raw uploaded bytes, indexed but
+not unique -- duplicates are expected to exist and aren't rejected or
+even flagged here, only made cheaply findable. Step 117 ("duplicate-
+document detection within a knowledge base") owns deciding what to
+actually DO with a duplicate; this step only computes and stores the
+signal it needs, the same "build the primitive now, the feature that
+uses it later" split already used for extracted_text itself (090)
+versus chunking (098+). Nullable for the same reason extracted_text is
+-- populated once quality.py's checks actually run, during extraction.
 """
 
 import uuid
@@ -57,3 +67,4 @@ class Document(TenantScopedEntity, TimestampMixin, Base):
     content_type: Mapped[str] = mapped_column(nullable=False)
     size_bytes: Mapped[int] = mapped_column(nullable=False)
     extracted_text: Mapped[str | None] = mapped_column(nullable=True, default=None)
+    content_hash: Mapped[str | None] = mapped_column(nullable=True, default=None, index=True)

@@ -10,6 +10,7 @@ routers/document.py:upload_document is covered by live verification
 instead, same split step 089 used.
 """
 
+import hashlib
 import io
 import uuid
 
@@ -423,5 +424,33 @@ async def test_document_type_is_populated_through_the_real_dispatcher() -> None:
             signals = fetched.doc_metadata["document_type_signals"]
             assert isinstance(signals, list)
             assert "frequently asked questions" in signals
+    finally:
+        await _cleanup(tenant_id, storage_key)
+
+
+@pytest.mark.anyio
+async def test_quality_signals_are_populated_through_the_real_dispatcher() -> None:
+    """quality.py's own checks are unit-tested directly in
+    test_quality.py -- this only needs to prove _run_extraction actually
+    calls assess_quality and stores content_hash + the quality flags."""
+    content = b"Real, clean content for the quality-signal wiring test."
+
+    tenant_id, kb_id = await _new_org_workspace_kb("extract-quality")
+    storage_key = None
+    try:
+        document_id, storage_key = await _create_document(
+            tenant_id, kb_id, title="wired.txt", content=content
+        )
+
+        await _run_extraction(document_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            fetched = await session.get(Document, document_id)
+            assert fetched is not None
+            assert fetched.status == "extracted"
+            assert fetched.content_hash == hashlib.sha256(content).hexdigest()
+            quality = fetched.doc_metadata["quality"]
+            assert quality == {"is_empty": False, "has_broken_formatting": False}
     finally:
         await _cleanup(tenant_id, storage_key)
