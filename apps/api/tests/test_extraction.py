@@ -90,14 +90,22 @@ async def _cleanup(tenant_id: uuid.UUID, storage_key: str | None = None) -> None
 
 
 def test_expected_extensions_are_registered() -> None:
-    assert set(HANDLERS.keys()) == {"csv", "txt", "json", "xml", "pdf", "docx", "pptx", "xlsx"}
-
-
-def test_markdown_is_deliberately_not_registered_yet() -> None:
-    # Real structure-aware markdown extraction is step 093's job, not a
-    # plain-text passthrough -- this guards against someone "helpfully"
-    # adding it here by analogy to the other text types.
-    assert "md" not in HANDLERS
+    # Every extension validation.py:ALLOWED_EXTENSIONS accepts now has a
+    # real handler (step 093) -- see extraction.py's own module
+    # docstring for why md ended up grouped with the plain-text
+    # extensions rather than getting its own transformation.
+    assert set(HANDLERS.keys()) == {
+        "csv",
+        "txt",
+        "json",
+        "xml",
+        "md",
+        "pdf",
+        "docx",
+        "pptx",
+        "xlsx",
+        "html",
+    }
 
 
 @pytest.mark.anyio
@@ -124,14 +132,18 @@ async def test_supported_type_extracts_and_marks_extracted() -> None:
 
 @pytest.mark.anyio
 async def test_unsupported_type_marks_extraction_unsupported() -> None:
-    # html -- docx/pptx/xlsx all gained real handlers in step 092; pdf's
-    # was step 091. html/md stay unregistered until step 093.
+    # Every extension validation.py:ALLOWED_EXTENSIONS accepts has a
+    # real handler as of step 093 -- "extraction_unsupported" is no
+    # longer reachable through any upload the API actually allows, but
+    # _run_extraction doesn't re-check ALLOWED_EXTENSIONS itself, only
+    # HANDLERS, so this constructs a document with an extension no real
+    # upload could ever carry to exercise that fallback path directly.
     tenant_id, kb_id = await _new_org_workspace_kb("extract-unsupported")
     storage_key = None
     try:
-        content = b"<html><body>not extracted yet</body></html>"
+        content = b"whatever content, never reaches a handler"
         document_id, storage_key = await _create_document(
-            tenant_id, kb_id, title="page.html", content=content
+            tenant_id, kb_id, title="mystery.notarealext", content=content
         )
 
         await _run_extraction(document_id, tenant_id)
@@ -283,5 +295,62 @@ async def test_xlsx_document_extracts_through_the_real_dispatcher() -> None:
             assert fetched.extracted_text is not None
             assert "# Data" in fetched.extracted_text
             assert "| Alice | 95 |" in fetched.extracted_text
+    finally:
+        await _cleanup(tenant_id, storage_key)
+
+
+@pytest.mark.anyio
+async def test_html_document_extracts_through_the_real_dispatcher() -> None:
+    """extraction_html.py's own logic is unit-tested directly in
+    test_extraction_html.py -- this only needs to prove HANDLERS["html"]
+    is actually wired to it end-to-end through _run_extraction."""
+    content = b"<h1>Wired Up</h1><p>This came from real HTML through the real dispatcher.</p>"
+
+    tenant_id, kb_id = await _new_org_workspace_kb("extract-html")
+    storage_key = None
+    try:
+        document_id, storage_key = await _create_document(
+            tenant_id, kb_id, title="wired.html", content=content
+        )
+
+        await _run_extraction(document_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            fetched = await session.get(Document, document_id)
+            assert fetched is not None
+            assert fetched.status == "extracted"
+            assert fetched.extracted_text is not None
+            assert "# Wired Up" in fetched.extracted_text
+            assert "This came from real HTML through the real dispatcher." in (
+                fetched.extracted_text
+            )
+    finally:
+        await _cleanup(tenant_id, storage_key)
+
+
+@pytest.mark.anyio
+async def test_md_document_extracts_through_the_real_dispatcher_as_is() -> None:
+    """md is registered to the same plain-text passthrough as csv/txt/
+    json/xml (see extraction.py's module docstring for why) -- this
+    proves HANDLERS["md"] is wired to it, and that an uploaded markdown
+    file's bytes come back completely unchanged, not reformatted."""
+    content = b"# Already Markdown\n\nThis file is already in the target format."
+
+    tenant_id, kb_id = await _new_org_workspace_kb("extract-md")
+    storage_key = None
+    try:
+        document_id, storage_key = await _create_document(
+            tenant_id, kb_id, title="wired.md", content=content
+        )
+
+        await _run_extraction(document_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            fetched = await session.get(Document, document_id)
+            assert fetched is not None
+            assert fetched.status == "extracted"
+            assert fetched.extracted_text == content.decode("utf-8")
     finally:
         await _cleanup(tenant_id, storage_key)

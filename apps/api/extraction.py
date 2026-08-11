@@ -4,22 +4,26 @@ handler by extension, same registry-of-handlers shape as
 auth/oauth.py:PROVIDERS (a plain dict, not a decorator-based registration
 mechanism -- there's no reason for more machinery than that yet).
 
-HANDLERS covers four plain-text extensions (csv/txt/json/xml) plus
-pdf/docx/pptx/xlsx as of step 092. Decoding as UTF-8 -- already-
-validated bytes, validate_upload (step 085) already proved every stored
-file under the plain-text extensions decodes cleanly -- genuinely IS
-the full extraction for those: there's no further structure to pull out
-of a CSV/plain-text/JSON/XML file the way there is from a PDF's
-headings, a DOCX's styled paragraphs, a PPTX's slides, or an XLSX's
-sheets (extraction_pdf.py, extraction_docx.py, extraction_pptx.py,
-extraction_xlsx.py -- extraction_tables.py holds the rows-to-markdown
-conversion all four table-producing formats share). md is deliberately
-NOT here yet -- markdown gets real structure-aware extraction in step
-093, not treated as opaque plain text. html/md stay unregistered until
-step 093 lands; a document of one of those types lands on
-"extraction_unsupported", which is the honest state today, not a bug --
-it stops being reachable for each type exactly as its step registers a
-real handler here.
+HANDLERS covers all ten allowed extensions (validation.py:
+ALLOWED_EXTENSIONS) as of step 093. Five extensions decode as UTF-8 and
+stop there -- csv/txt/json/xml (since step 090) and, as of this step,
+md too. Earlier docstrings here said markdown would get "real
+structure-aware extraction," expecting it to need the same kind of
+transformation pdf/docx/pptx/xlsx do; reconsidered once this step
+actually arrived: markdown is already this pipeline's own target output
+format (every other extractor produces it), so an uploaded .md file's
+bytes already ARE the extracted content -- there's nothing to pull out
+that isn't already there, the same way there's nothing to pull out of a
+CSV. The remaining five formats (pdf, docx, pptx, xlsx, html) need a
+real transformation to reach that same markdown shape
+(extraction_pdf.py, extraction_docx.py, extraction_pptx.py,
+extraction_xlsx.py, extraction_html.py -- extraction_tables.py holds
+the rows-to-markdown conversion the four table-producing ones share).
+Every allowed extension now has a real handler, so
+"extraction_unsupported" is no longer reachable through any upload this
+API currently accepts -- it stays defined for the day a new extension
+is added to ALLOWED_EXTENSIONS before this dict grows to match, rather
+than an upload silently sitting at "processing" forever.
 
 dispatch_extraction is dispatched from routers/document.py:upload_document
 via .delay() from inside the route body, which runs *before* the
@@ -39,6 +43,7 @@ from typing import Any
 from celery_app import celery_app
 from db import get_worker_session, set_tenant_context
 from extraction_docx import extract_docx
+from extraction_html import extract_html
 from extraction_pdf import extract_pdf
 from extraction_pptx import extract_pptx
 from extraction_xlsx import extract_xlsx
@@ -58,10 +63,12 @@ HANDLERS: dict[str, ExtractionHandler] = {
     "txt": _extract_plain_text,
     "json": _extract_plain_text,
     "xml": _extract_plain_text,
+    "md": _extract_plain_text,
     "pdf": extract_pdf,
     "docx": extract_docx,
     "pptx": extract_pptx,
     "xlsx": extract_xlsx,
+    "html": extract_html,
 }
 
 

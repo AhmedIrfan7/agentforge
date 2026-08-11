@@ -11,9 +11,10 @@ Deliberately narrow scope, matching what this step actually asks for:
   Document row and audit log entry are both written. get_document_status
   (step 088) reports whatever that task sets -- "processing" while it
   runs, then "extracted"/"extraction_unsupported"/"extraction_failed"
-  depending on outcome. Plain-text extensions (csv/txt/json/xml) and
-  pdf/docx/pptx/xlsx have a real handler as of step 092; html/md land on
-  "extraction_unsupported" until step 093 registers theirs.
+  depending on outcome. As of step 093, every extension this endpoint
+  will accept (validation.py:ALLOWED_EXTENSIONS) has a real extraction
+  handler -- "extraction_unsupported" is defined but not currently
+  reachable through any upload this API accepts.
 - No delete endpoint -- step 116 ("tenant-scoped document deletion")
   owns that, and it needs to cascade chunks/embeddings that don't exist
   yet either. A bare delete now would just be replaced.
