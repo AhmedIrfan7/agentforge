@@ -56,6 +56,14 @@ As of step 096, the same pass also runs quality.py:assess_quality,
 adding "quality": {"is_empty", "has_broken_formatting"} to doc_metadata
 and setting Document.content_hash (its own indexed column, not JSONB --
 step 117's duplicate-detection lookup needs to query it efficiently).
+
+As of step 097, the same pass also runs agents/chunking_recommendation.py's
+ChunkingRecommendationAgent, adding "chunking_recommendation":
+{"strategy", "scores", "reasoning"} to doc_metadata. None of the five
+strategies it recommends among have a real chunker yet (steps 098-102)
+-- the recommendation itself is this step's deliverable, ready for step
+103's override endpoint (and whichever step eventually dispatches real
+chunking) to read.
 """
 
 import asyncio
@@ -63,6 +71,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from agents.chunking_recommendation import ChunkingRecommendationAgent
 from agents.document_analysis import DocumentAnalysisAgent
 from celery_app import celery_app
 from db import get_worker_session, set_tenant_context
@@ -85,6 +94,7 @@ def _extract_plain_text(content: bytes) -> str:
 
 
 _document_analysis_agent = DocumentAnalysisAgent()
+_chunking_recommendation_agent = ChunkingRecommendationAgent()
 
 HANDLERS: dict[str, ExtractionHandler] = {
     "csv": _extract_plain_text,
@@ -141,6 +151,12 @@ async def _run_extraction(document_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
             doc_metadata["quality"] = {
                 "is_empty": quality.is_empty,
                 "has_broken_formatting": quality.has_broken_formatting,
+            }
+            chunking_recommendation = _chunking_recommendation_agent.recommend(extracted_text)
+            doc_metadata["chunking_recommendation"] = {
+                "strategy": chunking_recommendation.strategy,
+                "scores": chunking_recommendation.scores,
+                "reasoning": chunking_recommendation.reasoning,
             }
         except Exception:
             document.status = "extraction_failed"

@@ -23,6 +23,8 @@ by construction, not a fabricated confidence score standing in for one.
 
 from dataclasses import dataclass, field
 
+from agents.base import Agent
+
 _KEYWORDS: dict[str, tuple[str, ...]] = {
     "faq": (
         "frequently asked questions",
@@ -83,7 +85,7 @@ class DocumentAnalysisResult:
     matched_keywords: list[str] = field(default_factory=list)
 
 
-class DocumentAnalysisAgent:
+class DocumentAnalysisAgent(Agent):
     name = "document_analysis"
 
     def analyze(self, text: str) -> DocumentAnalysisResult:

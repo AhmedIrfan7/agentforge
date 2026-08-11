@@ -454,3 +454,45 @@ async def test_quality_signals_are_populated_through_the_real_dispatcher() -> No
             assert quality == {"is_empty": False, "has_broken_formatting": False}
     finally:
         await _cleanup(tenant_id, storage_key)
+
+
+@pytest.mark.anyio
+async def test_chunking_recommendation_is_populated_through_the_real_dispatcher() -> None:
+    """agents/chunking_recommendation.py's own scoring logic is
+    unit-tested directly in test_chunking_recommendation_agent.py --
+    this only needs to prove _run_extraction actually calls it and
+    stores the result in doc_metadata."""
+    content = (
+        b"# Title\n\n## Section One\n\nBody one.\n\n"
+        b"## Section Two\n\nBody two.\n\n## Section Three\n\nBody three."
+    )
+
+    tenant_id, kb_id = await _new_org_workspace_kb("extract-chunkrec")
+    storage_key = None
+    try:
+        document_id, storage_key = await _create_document(
+            tenant_id, kb_id, title="wired.txt", content=content
+        )
+
+        await _run_extraction(document_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            fetched = await session.get(Document, document_id)
+            assert fetched is not None
+            assert fetched.status == "extracted"
+            recommendation = fetched.doc_metadata["chunking_recommendation"]
+            assert isinstance(recommendation, dict)
+            assert recommendation["strategy"] == "markdown_heading"
+            scores = recommendation["scores"]
+            assert isinstance(scores, dict)
+            assert set(scores.keys()) == {
+                "fixed_size",
+                "sentence_paragraph",
+                "markdown_heading",
+                "table_aware",
+                "recursive_hybrid",
+            }
+            assert "markdown_heading" in recommendation["reasoning"]
+    finally:
+        await _cleanup(tenant_id, storage_key)
