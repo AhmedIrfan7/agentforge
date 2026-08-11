@@ -44,6 +44,13 @@ the same except block, marks "extraction_failed") -- deliberately not a
 separate partial-success state; nothing about this pipeline has needed
 that distinction yet, and inventing it now would be solving a problem
 that hasn't actually occurred.
+
+As of step 095, the same pass also runs agents/document_analysis.py's
+DocumentAnalysisAgent against extracted_text, adding "document_type"
+and "document_type_signals" to doc_metadata -- same reasoning as
+metadata extraction: it's a real analysis step, not free-standing
+product surface, so it belongs in this same task rather than a separate
+dispatch that would need to re-fetch content that's already in memory.
 """
 
 import asyncio
@@ -51,6 +58,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from agents.document_analysis import DocumentAnalysisAgent
 from celery_app import celery_app
 from db import get_worker_session, set_tenant_context
 from extraction_docx import extract_docx
@@ -69,6 +77,8 @@ ExtractionHandler = Callable[[bytes], str]
 def _extract_plain_text(content: bytes) -> str:
     return content.decode("utf-8")
 
+
+_document_analysis_agent = DocumentAnalysisAgent()
 
 HANDLERS: dict[str, ExtractionHandler] = {
     "csv": _extract_plain_text,
@@ -118,6 +128,9 @@ async def _run_extraction(document_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
         try:
             extracted_text = handler(content)
             doc_metadata = build_doc_metadata(extension, content, extracted_text)
+            analysis = _document_analysis_agent.analyze(extracted_text)
+            doc_metadata["document_type"] = analysis.document_type
+            doc_metadata["document_type_signals"] = analysis.matched_keywords
         except Exception:
             document.status = "extraction_failed"
             await session.commit()

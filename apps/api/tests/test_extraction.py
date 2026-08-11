@@ -395,3 +395,33 @@ async def test_md_document_extracts_through_the_real_dispatcher_as_is() -> None:
             assert fetched.extracted_text == content.decode("utf-8")
     finally:
         await _cleanup(tenant_id, storage_key)
+
+
+@pytest.mark.anyio
+async def test_document_type_is_populated_through_the_real_dispatcher() -> None:
+    """agents/document_analysis.py's own classification logic is
+    unit-tested directly in test_document_analysis_agent.py -- this only
+    needs to prove _run_extraction actually calls it and stores the
+    result in doc_metadata."""
+    content = b"# Frequently Asked Questions\n\nQ: How do I reset my password?\nA: Click the link."
+
+    tenant_id, kb_id = await _new_org_workspace_kb("extract-doctype")
+    storage_key = None
+    try:
+        document_id, storage_key = await _create_document(
+            tenant_id, kb_id, title="wired.txt", content=content
+        )
+
+        await _run_extraction(document_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            fetched = await session.get(Document, document_id)
+            assert fetched is not None
+            assert fetched.status == "extracted"
+            assert fetched.doc_metadata["document_type"] == "faq"
+            signals = fetched.doc_metadata["document_type_signals"]
+            assert isinstance(signals, list)
+            assert "frequently asked questions" in signals
+    finally:
+        await _cleanup(tenant_id, storage_key)
