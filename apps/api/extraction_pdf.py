@@ -37,6 +37,8 @@ from dataclasses import dataclass
 
 import pdfplumber
 
+from extraction_tables import rows_to_markdown
+
 # A line's font size relative to the page's dominant (body-text) size,
 # above which it's treated as a heading. Two tiers, not a single cutoff
 # -- a document's actual title is usually rendered noticeably larger
@@ -93,19 +95,6 @@ def _format_line(line: _Line, body_size: float) -> str:
     return line.text
 
 
-def _table_to_markdown(rows: list[list[str | None]]) -> str:
-    if not rows:
-        return ""
-    cleaned = [[(cell or "").replace("\n", " ").strip() for cell in row] for row in rows]
-    header, *body = cleaned
-    lines = [
-        "| " + " | ".join(header) + " |",
-        "| " + " | ".join("---" for _ in header) + " |",
-    ]
-    lines.extend("| " + " | ".join(row) + " |" for row in body)
-    return "\n".join(lines)
-
-
 def extract_pdf(content: bytes) -> str:
     page_texts: list[str] = []
     with pdfplumber.open(io.BytesIO(content)) as pdf:
@@ -128,7 +117,7 @@ def extract_pdf(content: bytes) -> str:
                 (line.top, _format_line(line, body_size))
                 for line in _group_words_into_lines(body_words)
             ]
-            items.extend((table.bbox[1], _table_to_markdown(table.extract())) for table in tables)
+            items.extend((table.bbox[1], rows_to_markdown(table.extract())) for table in tables)
             items.sort(key=lambda item: item[0])
             page_text = "\n\n".join(text for _, text in items if text)
             if page_text:

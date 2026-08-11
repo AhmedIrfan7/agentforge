@@ -4,16 +4,19 @@ handler by extension, same registry-of-handlers shape as
 auth/oauth.py:PROVIDERS (a plain dict, not a decorator-based registration
 mechanism -- there's no reason for more machinery than that yet).
 
-HANDLERS covers four plain-text extensions (csv/txt/json/xml) plus pdf
-as of step 091. Decoding as UTF-8 -- already-validated bytes,
-validate_upload (step 085) already proved every stored file under the
-plain-text extensions decodes cleanly -- genuinely IS the full
-extraction for those: there's no further structure to pull out of a
-CSV/plain-text/JSON/XML file the way there is from a PDF's headings or
-tables (extraction_pdf.py). md is deliberately NOT here yet -- markdown
-gets real structure-aware extraction in step 093, not treated as opaque
-plain text. docx/pptx/xlsx/html/md stay unregistered until steps
-092-093 land; a document of one of those types lands on
+HANDLERS covers four plain-text extensions (csv/txt/json/xml) plus
+pdf/docx/pptx/xlsx as of step 092. Decoding as UTF-8 -- already-
+validated bytes, validate_upload (step 085) already proved every stored
+file under the plain-text extensions decodes cleanly -- genuinely IS
+the full extraction for those: there's no further structure to pull out
+of a CSV/plain-text/JSON/XML file the way there is from a PDF's
+headings, a DOCX's styled paragraphs, a PPTX's slides, or an XLSX's
+sheets (extraction_pdf.py, extraction_docx.py, extraction_pptx.py,
+extraction_xlsx.py -- extraction_tables.py holds the rows-to-markdown
+conversion all four table-producing formats share). md is deliberately
+NOT here yet -- markdown gets real structure-aware extraction in step
+093, not treated as opaque plain text. html/md stay unregistered until
+step 093 lands; a document of one of those types lands on
 "extraction_unsupported", which is the honest state today, not a bug --
 it stops being reachable for each type exactly as its step registers a
 real handler here.
@@ -35,7 +38,10 @@ from typing import Any
 
 from celery_app import celery_app
 from db import get_worker_session, set_tenant_context
+from extraction_docx import extract_docx
 from extraction_pdf import extract_pdf
+from extraction_pptx import extract_pptx
+from extraction_xlsx import extract_xlsx
 from repositories.document import DocumentRepository
 from storage import download_file
 from validation import get_extension
@@ -53,6 +59,9 @@ HANDLERS: dict[str, ExtractionHandler] = {
     "json": _extract_plain_text,
     "xml": _extract_plain_text,
     "pdf": extract_pdf,
+    "docx": extract_docx,
+    "pptx": extract_pptx,
+    "xlsx": extract_xlsx,
 }
 
 

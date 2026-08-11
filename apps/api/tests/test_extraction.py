@@ -13,7 +13,10 @@ instead, same split step 089 used.
 import io
 import uuid
 
+import docx
+import openpyxl
 import pytest
+from pptx import Presentation
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate
 from sqlalchemy import select
@@ -87,7 +90,7 @@ async def _cleanup(tenant_id: uuid.UUID, storage_key: str | None = None) -> None
 
 
 def test_expected_extensions_are_registered() -> None:
-    assert set(HANDLERS.keys()) == {"csv", "txt", "json", "xml", "pdf"}
+    assert set(HANDLERS.keys()) == {"csv", "txt", "json", "xml", "pdf", "docx", "pptx", "xlsx"}
 
 
 def test_markdown_is_deliberately_not_registered_yet() -> None:
@@ -121,13 +124,14 @@ async def test_supported_type_extracts_and_marks_extracted() -> None:
 
 @pytest.mark.anyio
 async def test_unsupported_type_marks_extraction_unsupported() -> None:
-    # docx, not pdf -- pdf has had a real handler since step 091.
+    # html -- docx/pptx/xlsx all gained real handlers in step 092; pdf's
+    # was step 091. html/md stay unregistered until step 093.
     tenant_id, kb_id = await _new_org_workspace_kb("extract-unsupported")
     storage_key = None
     try:
-        content = b"PK\x03\x04not a real docx body"
+        content = b"<html><body>not extracted yet</body></html>"
         document_id, storage_key = await _create_document(
-            tenant_id, kb_id, title="report.docx", content=content
+            tenant_id, kb_id, title="page.html", content=content
         )
 
         await _run_extraction(document_id, tenant_id)
@@ -183,9 +187,101 @@ async def test_pdf_document_extracts_through_the_real_dispatcher() -> None:
             assert document is not None
             assert document.status == "extracted"
             assert document.extracted_text is not None
-            assert "# Wired Up" in document.extracted_text
-            assert "This came from a real PDF through the real dispatcher." in (
-                document.extracted_text
+    finally:
+        await _cleanup(tenant_id, storage_key)
+
+
+@pytest.mark.anyio
+async def test_docx_document_extracts_through_the_real_dispatcher() -> None:
+    """extraction_docx.py's own logic is unit-tested directly in
+    test_extraction_docx.py -- this only needs to prove HANDLERS["docx"]
+    is actually wired to it end-to-end through _run_extraction."""
+    document = docx.Document()
+    document.add_paragraph("This came from a real DOCX through the real dispatcher.")
+    buf = io.BytesIO()
+    document.save(buf)
+
+    tenant_id, kb_id = await _new_org_workspace_kb("extract-docx")
+    storage_key = None
+    try:
+        document_id, storage_key = await _create_document(
+            tenant_id, kb_id, title="wired.docx", content=buf.getvalue()
+        )
+
+        await _run_extraction(document_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            fetched = await session.get(Document, document_id)
+            assert fetched is not None
+            assert fetched.status == "extracted"
+            assert fetched.extracted_text == (
+                "This came from a real DOCX through the real dispatcher."
             )
+    finally:
+        await _cleanup(tenant_id, storage_key)
+
+
+@pytest.mark.anyio
+async def test_pptx_document_extracts_through_the_real_dispatcher() -> None:
+    """extraction_pptx.py's own logic is unit-tested directly in
+    test_extraction_pptx.py -- this only needs to prove HANDLERS["pptx"]
+    is actually wired to it end-to-end through _run_extraction."""
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+    slide.shapes.title.text = "Wired Up"
+    buf = io.BytesIO()
+    presentation.save(buf)
+
+    tenant_id, kb_id = await _new_org_workspace_kb("extract-pptx")
+    storage_key = None
+    try:
+        document_id, storage_key = await _create_document(
+            tenant_id, kb_id, title="wired.pptx", content=buf.getvalue()
+        )
+
+        await _run_extraction(document_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            fetched = await session.get(Document, document_id)
+            assert fetched is not None
+            assert fetched.status == "extracted"
+            assert fetched.extracted_text == "# Wired Up"
+    finally:
+        await _cleanup(tenant_id, storage_key)
+
+
+@pytest.mark.anyio
+async def test_xlsx_document_extracts_through_the_real_dispatcher() -> None:
+    """extraction_xlsx.py's own logic is unit-tested directly in
+    test_extraction_xlsx.py -- this only needs to prove HANDLERS["xlsx"]
+    is actually wired to it end-to-end through _run_extraction."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Data"
+    sheet.append(["Name", "Score"])
+    sheet.append(["Alice", 95])
+    buf = io.BytesIO()
+    workbook.save(buf)
+
+    tenant_id, kb_id = await _new_org_workspace_kb("extract-xlsx")
+    storage_key = None
+    try:
+        document_id, storage_key = await _create_document(
+            tenant_id, kb_id, title="wired.xlsx", content=buf.getvalue()
+        )
+
+        await _run_extraction(document_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            fetched = await session.get(Document, document_id)
+            assert fetched is not None
+            assert fetched.status == "extracted"
+            assert fetched.extracted_text is not None
+            assert "# Data" in fetched.extracted_text
+            assert "| Alice | 95 |" in fetched.extracted_text
     finally:
         await _cleanup(tenant_id, storage_key)
