@@ -22,18 +22,10 @@ technique so a fact sitting right at a chunk boundary isn't truncated
 away for every retrieval that touches it.
 """
 
-from dataclasses import dataclass
+from chunking_types import Chunk
 
 CHUNK_SIZE = 1000
 OVERLAP = 200
-
-
-@dataclass
-class Chunk:
-    text: str
-    start: int
-    end: int
-    index: int
 
 
 def _snap_to_whitespace(text: str, boundary: int, lookback_limit: int) -> int:
