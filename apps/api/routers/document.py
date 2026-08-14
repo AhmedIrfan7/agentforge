@@ -18,6 +18,12 @@ Deliberately narrow scope, matching what this step actually asks for:
 - No delete endpoint -- step 116 ("tenant-scoped document deletion")
   owns that, and it needs to cascade chunks/embeddings that don't exist
   yet either. A bare delete now would just be replaced.
+- override_chunking_strategy (step 103) is document:update -- this
+  project's first document-mutation permission beyond create, same tier
+  as document:create/read (org_owner/admin/manager). Records the
+  decision in doc_metadata only; step 104 promotes it to real Document
+  columns, and nothing dispatches real chunking against it yet (step
+  105 creates the Chunk model first).
 
 get_target_knowledge_base cross-checks the URL's knowledge_base_id (and
 transitively, via get_target_workspace-equivalent logic inlined here,
@@ -33,18 +39,24 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agents.chunking_recommendation import STRATEGY_NAMES
 from antivirus import scan_for_viruses
 from audit import write_audit_log
 from config import settings
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
-from errors import NotFoundError
+from errors import InvalidChunkingStrategyError, NotFoundError
 from extraction import dispatch_extraction
 from models.knowledge_base import KnowledgeBase
 from repositories.document import DocumentRepository
 from repositories.knowledge_base import KnowledgeBaseRepository
 from schemas.common import Page, PaginationParams
-from schemas.document import DocumentRead, DocumentStatusRead
+from schemas.document import (
+    ChunkingDecisionRead,
+    ChunkingStrategyOverrideRequest,
+    DocumentRead,
+    DocumentStatusRead,
+)
 from storage import ensure_bucket_exists, upload_file
 from validation import read_upload_content, validate_upload
 
@@ -184,3 +196,75 @@ async def get_document_status(
     if document is None or document.knowledge_base_id != knowledge_base.id:
         raise NotFoundError(f"Document {document_id} not found.")
     return DocumentStatusRead.model_validate(document)
+
+
+@router.patch(
+    "/{document_id}/chunking-strategy",
+    response_model=ChunkingDecisionRead,
+    dependencies=[Depends(require_permission("document:update"))],
+)
+async def override_chunking_strategy(
+    document_id: uuid.UUID,
+    body: ChunkingStrategyOverrideRequest,
+    session: TenantDb,
+    tenant_id: TenantId,
+    knowledge_base: TargetKnowledgeBase,
+) -> ChunkingDecisionRead:
+    """Roadmap step 103 -- one endpoint covers both "accept" and
+    "override": the caller always states the strategy they want, and
+    whichever one they send is compared against agents/chunking_
+    recommendation.py's own recommendation (if one exists yet) to decide
+    source ("accepted" vs "override") in the stored decision. Only
+    validates the strategy name and records the decision in doc_metadata
+    -- step 104 promotes this into real, dedicated Document columns;
+    nothing downstream reads or acts on this choice yet, since real
+    chunking dispatch doesn't exist until the Chunk model itself does
+    (step 105)."""
+    if body.strategy not in STRATEGY_NAMES:
+        raise InvalidChunkingStrategyError(
+            f"'{body.strategy}' is not a recognized chunking strategy. "
+            f"Allowed strategies: {', '.join(STRATEGY_NAMES)}."
+        )
+
+    repo = DocumentRepository(session, tenant_id)
+    document = await repo.get(document_id)
+    if document is None or document.knowledge_base_id != knowledge_base.id:
+        raise NotFoundError(f"Document {document_id} not found.")
+
+    existing_recommendation = document.doc_metadata.get("chunking_recommendation")
+    recommended_strategy: object = None
+    recommended_reasoning = ""
+    if isinstance(existing_recommendation, dict):
+        recommended_strategy = existing_recommendation.get("strategy")
+        recommended_reasoning = str(existing_recommendation.get("reasoning", ""))
+
+    if body.strategy == recommended_strategy:
+        source = "accepted"
+        reasoning = recommended_reasoning
+    else:
+        source = "override"
+        reasoning = (
+            f"Manually set to '{body.strategy}', overriding the recommended "
+            f"'{recommended_strategy}'."
+            if recommended_strategy is not None
+            else f"Manually set to '{body.strategy}' (no recommendation existed yet)."
+        )
+
+    decision = {"strategy": body.strategy, "source": source, "reasoning": reasoning}
+    # New dict, not an in-place mutation of the existing one -- doc_metadata
+    # isn't wrapped in sqlalchemy.ext.mutable's MutableDict, so SQLAlchemy
+    # wouldn't detect an in-place `dict[key] = value` change and the
+    # UPDATE would silently never happen. extraction.py's own writes to
+    # doc_metadata follow this same "always reassign a fresh dict" rule.
+    document.doc_metadata = {**document.doc_metadata, "chunking_decision": decision}
+    await session.flush()
+
+    await write_audit_log(
+        session,
+        tenant_id=tenant_id,
+        action="document.chunking_strategy_override",
+        resource_type="document",
+        resource_id=document.id,
+    )
+
+    return ChunkingDecisionRead(**decision)

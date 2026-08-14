@@ -557,3 +557,254 @@ async def test_upload_at_exactly_the_size_limit_succeeds(
             await _cleanup_storage(storage_key)
         await _cleanup_org(org_id)
         await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_override_chunking_strategy_with_no_recommendation_yet() -> None:
+    """No worker runs during pytest (roadmap step 089's own test split),
+    so a just-uploaded document's doc_metadata never gains a real
+    chunking_recommendation here -- this is the genuinely common case
+    the endpoint has to handle honestly: a caller can still set a
+    strategy before extraction has ever run, and it's correctly recorded
+    as an override with no recommendation to compare against."""
+    email = "endpoint-test-doc-owner-14@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("notes.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+
+        response = client.patch(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/chunking-strategy"),
+            json={"strategy": "table_aware"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["strategy"] == "table_aware"
+        assert body["source"] == "override"
+        assert "no recommendation existed yet" in body["reasoning"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            fetched = await session.get(Document, uuid.UUID(document_id))
+            assert fetched is not None
+            stored = fetched.doc_metadata["chunking_decision"]
+            assert isinstance(stored, dict)
+            assert stored["strategy"] == "table_aware"
+            assert stored["source"] == "override"
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_override_chunking_strategy_matching_recommendation_is_accepted() -> None:
+    email = "endpoint-test-doc-owner-15@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("notes.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        # Simulate extraction having already run and produced a real
+        # recommendation, without needing a live Celery worker in this
+        # HTTP-level test (extraction.py's own dispatch logic is tested
+        # for real elsewhere -- test_extraction.py, live verification).
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+            document.doc_metadata = {
+                **document.doc_metadata,
+                "chunking_recommendation": {
+                    "strategy": "markdown_heading",
+                    "scores": {},
+                    "reasoning": "Recommended 'markdown_heading' (score 0.80): test fixture.",
+                },
+            }
+            await session.commit()
+
+        response = client.patch(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/chunking-strategy"),
+            json={"strategy": "markdown_heading"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["strategy"] == "markdown_heading"
+        assert body["source"] == "accepted"
+        assert body["reasoning"] == "Recommended 'markdown_heading' (score 0.80): test fixture."
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_override_chunking_strategy_different_from_recommendation() -> None:
+    email = "endpoint-test-doc-owner-16@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("notes.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+            document.doc_metadata = {
+                **document.doc_metadata,
+                "chunking_recommendation": {
+                    "strategy": "fixed_size",
+                    "scores": {},
+                    "reasoning": "Recommended 'fixed_size' (score 0.20): test fixture.",
+                },
+            }
+            await session.commit()
+
+        response = client.patch(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/chunking-strategy"),
+            json={"strategy": "recursive_hybrid"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["strategy"] == "recursive_hybrid"
+        assert body["source"] == "override"
+        assert "overriding the recommended 'fixed_size'" in body["reasoning"]
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_override_chunking_strategy_rejects_unknown_strategy_name() -> None:
+    email = "endpoint-test-doc-owner-17@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("notes.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+
+        response = client.patch(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/chunking-strategy"),
+            json={"strategy": "not_a_real_strategy"},
+            headers=headers,
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "validation_error"
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_override_chunking_strategy_for_nonexistent_document_returns_404() -> None:
+    email = "endpoint-test-doc-owner-18@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        response = client.patch(
+            _docs_url(org_id, workspace_id, kb_id, f"/{uuid.uuid4()}/chunking-strategy"),
+            json={"strategy": "fixed_size"},
+            headers=headers,
+        )
+        assert response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_end_user_role_cannot_override_chunking_strategy() -> None:
+    owner_email = "endpoint-test-doc-owner-19@example.com"
+    org_id, workspace_id, kb_id, owner_headers = _new_org_with_kb(owner_email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("notes.txt", b"content", "text/plain")},
+            headers=owner_headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+
+        member_token = signup_and_login(
+            client,
+            email="endpoint-test-doc-chunk-member@example.com",
+            password="correct horse battery staple",
+            full_name="Chunking Override Member",
+        )
+        async with get_session() as session:
+            result = await session.execute(
+                select(User).where(User.email == "endpoint-test-doc-chunk-member@example.com")
+            )
+            member_user = result.scalar_one()
+            role_result = await session.execute(select(Role).where(Role.name == "end_user"))
+            end_user_role = role_result.scalar_one()
+            await set_tenant_context(session, org_id)
+            session.add(
+                Membership(
+                    tenant_id=org_id,
+                    user_id=member_user.id,
+                    workspace_id=None,
+                    role_id=end_user_role.id,
+                )
+            )
+            await session.commit()
+
+        response = client.patch(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/chunking-strategy"),
+            json={"strategy": "fixed_size"},
+            headers=auth_headers(member_token),
+        )
+        assert response.status_code == 403
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user("endpoint-test-doc-chunk-member@example.com")

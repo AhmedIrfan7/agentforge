@@ -116,8 +116,11 @@ def _score_recursive_hybrid(
 
 # Deterministic tie-break order, same reasoning as document_analysis.py's
 # _CATEGORY_ORDER -- not relying on dict-iteration-order matching
-# insertion order implicitly for a decision this visible.
-_STRATEGY_ORDER = (
+# insertion order implicitly for a decision this visible. Public (not
+# underscore-prefixed) since step 103's override endpoint validates a
+# caller-supplied strategy name against this same tuple -- one source
+# of truth for "what counts as a real strategy name," not duplicated.
+STRATEGY_NAMES = (
     "fixed_size",
     "sentence_paragraph",
     "markdown_heading",
@@ -160,12 +163,12 @@ class ChunkingRecommendationAgent(Agent):
         # every other strategy's, so its "beat the max of table/heading"
         # bonus (_score_recursive_hybrid above) gets clipped away right
         # when it matters most: a genuinely mixed document where both
-        # underlying scores are already near the ceiling. _STRATEGY_ORDER
+        # underlying scores are already near the ceiling. STRATEGY_NAMES
         # deliberately lists recursive_hybrid last so it wins exactly
         # that tie -- a tie against the strategies it was built to beat
         # is itself the signal that the hybrid approach is warranted.
-        best_strategy = _STRATEGY_ORDER[0]
-        for name in _STRATEGY_ORDER:
+        best_strategy = STRATEGY_NAMES[0]
+        for name in STRATEGY_NAMES:
             if scores[name] >= scores[best_strategy]:
                 best_strategy = name
 

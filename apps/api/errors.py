@@ -77,6 +77,15 @@ class InfectedFileError(AppError):
     code = "infected_file"
 
 
+class InvalidChunkingStrategyError(AppError):
+    # Same code as UnsupportedFileTypeError -- an unrecognized strategy
+    # name is the same broad category of problem ("the value you sent
+    # isn't valid") as a rejected file type, not a distinct one worth
+    # its own client-facing code.
+    status_code = 422
+    code = "validation_error"
+
+
 def _error_response(
     status_code: int, code: str, message: str, details: object = None
 ) -> JSONResponse:

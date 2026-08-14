@@ -63,6 +63,7 @@ EXPECTED_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "knowledge_base:delete",
         "document:create",
         "document:read",
+        "document:update",
     },
     "admin": {
         "organization:read",
@@ -80,6 +81,7 @@ EXPECTED_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "knowledge_base:delete",
         "document:create",
         "document:read",
+        "document:update",
     },
     "manager": {
         "organization:read",
@@ -94,6 +96,7 @@ EXPECTED_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "knowledge_base:delete",
         "document:create",
         "document:read",
+        "document:update",
     },
     "knowledge_manager": {"organization:read", "workspace:read"},
     "developer": {"organization:read", "workspace:read"},

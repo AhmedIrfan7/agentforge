@@ -30,3 +30,19 @@ class DocumentStatusRead(BaseModel):
     id: uuid.UUID
     status: str
     updated_at: datetime
+
+
+class ChunkingStrategyOverrideRequest(BaseModel):
+    """roadmap step 103 -- strategy is plain str, not a pydantic Literal:
+    validated against agents/chunking_recommendation.py:STRATEGY_NAMES
+    in the router instead, so the error message can list the actual
+    allowed values the same way UnsupportedFileTypeError (validation.py,
+    step 085) does, rather than Literal's generic mismatch message."""
+
+    strategy: str
+
+
+class ChunkingDecisionRead(BaseModel):
+    strategy: str
+    source: str  # "accepted" (matches the agent's own recommendation) or "override"
+    reasoning: str
