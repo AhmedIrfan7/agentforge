@@ -29,6 +29,7 @@ plain markdown file.
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from agents.base import Agent
 
@@ -144,7 +145,11 @@ class ChunkingRecommendation:
     reasoning: str
 
 
-class ChunkingRecommendationAgent(Agent):
+class ChunkingRecommendationAgent(Agent[Any, Any]):
+    """Agent[Any, Any] -- doesn't participate in the run() input/output
+    contract (agents/base.py, step 138); its own real API is
+    .recommend(), called directly, not through a graph node."""
+
     name = "chunking_recommendation"
 
     def recommend(self, text: str) -> ChunkingRecommendation:

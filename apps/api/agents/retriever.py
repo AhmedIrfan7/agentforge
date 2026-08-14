@@ -99,6 +99,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from agents.base import Agent
 from embeddings.base import EmbeddingProvider
@@ -146,7 +147,13 @@ def _log_retrieval(
     )
 
 
-class RetrieverAgent(Agent):
+class RetrieverAgent(Agent[Any, Any]):
+    """Agent[Any, Any] -- doesn't participate in the run() input/output
+    contract (agents/base.py, step 138); its own real API is search_*/
+    rerank/expand_to_parent, called directly, not through a graph node.
+    Defines its own __init__ (never calls super().__init__()), so it
+    never gets a .config attribute -- fine, since nothing reads one."""
+
     name = "retriever"
 
     def __init__(self, embedding_provider: EmbeddingProvider, vector_store: VectorStore) -> None:

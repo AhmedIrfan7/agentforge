@@ -22,6 +22,7 @@ by construction, not a fabricated confidence score standing in for one.
 """
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from agents.base import Agent
 
@@ -85,7 +86,11 @@ class DocumentAnalysisResult:
     matched_keywords: list[str] = field(default_factory=list)
 
 
-class DocumentAnalysisAgent(Agent):
+class DocumentAnalysisAgent(Agent[Any, Any]):
+    """Agent[Any, Any] -- doesn't participate in the run() input/output
+    contract (agents/base.py, step 138); its own real API is
+    .analyze(), called directly, not through a graph node."""
+
     name = "document_analysis"
 
     def analyze(self, text: str) -> DocumentAnalysisResult:
