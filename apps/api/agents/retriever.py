@@ -83,6 +83,16 @@ multi-query retrieval is an orthogonal axis to WHICH mechanism runs
 (dense, keyword, or even hybrid), so this method has no business
 picking one itself; a caller passes e.g. `lambda q: agent.search_dense
 (tenant_id, kb_id, q, top_k=N)`.
+
+As of step 131, `expand_to_parent()` adds parent-child chunk retrieval
+-- another separate, opt-in stage (same "independent stage" shape as
+`rerank()`), not folded into search_dense/search_keyword/search_hybrid:
+forcing every search result to fetch its expanded context would be a
+real behavior/performance change nobody asked for. Thin wrapper over
+`repositories/chunk.py:ChunkRepository.get_expanded_context()`, which
+owns the real "chunk window expansion" logic (see its own docstring
+for why this reconstructs a parent context from existing chunk
+neighbors rather than needing a new stored-parent-chunk schema).
 """
 
 import time
@@ -329,3 +339,8 @@ class RetrieverAgent(Agent):
             latency_ms=round((time.perf_counter() - start) * 1000, 2),
         )
         return mapped
+
+    async def expand_to_parent(
+        self, chunk_repo: ChunkRepository, chunk_id: uuid.UUID, *, window: int = 1
+    ) -> str:
+        return await chunk_repo.get_expanded_context(chunk_id, window=window)

@@ -94,6 +94,43 @@ class ChunkRepository(TenantScopedRepository[Chunk]):
             for chunk, score in result.all()
         ]
 
+    async def get_expanded_context(self, chunk_id: uuid.UUID, *, window: int = 1) -> str:
+        """Roadmap step 131 -- parent-child chunk retrieval, the
+        "chunk window expansion" variant: rather than a separately
+        stored, differently-sized "parent" chunk (a genuine schema
+        change nothing else in this roadmap ever needs -- checked
+        before choosing this), a matched chunk's "parent" context is
+        reconstructed on the fly from its own real neighbors, using
+        Chunk.index (the sequential position within its document,
+        populated by every chunking strategy since step 105) and
+        Chunk.document_id -- both already real, correct data, not new
+        machinery. `window` chunks on each side, ordered back into
+        their original document sequence and joined with a blank line,
+        approximates the wider context a small, precisely-matched
+        child chunk was originally embedded from.
+
+        Raises for a nonexistent chunk_id rather than silently
+        returning an empty string -- same "fail loud on a caller bug"
+        precedent as citations.py's own dict-indexing choice (step 127)
+        and PgVectorStore.upsert()'s (step 119)."""
+        chunk = await self.get(chunk_id)
+        if chunk is None:
+            raise ValueError(f"cannot expand context for chunk {chunk_id}: it does not exist")
+
+        stmt = (
+            select(Chunk)
+            .where(
+                Chunk.tenant_id == self.tenant_id,
+                Chunk.document_id == chunk.document_id,
+                Chunk.index >= chunk.index - window,
+                Chunk.index <= chunk.index + window,
+            )
+            .order_by(Chunk.index)
+        )
+        result = await self.session.execute(stmt)
+        neighbors = result.scalars().all()
+        return "\n\n".join(neighbor.text for neighbor in neighbors)
+
     async def count_embedded_for_document(self, document_id: uuid.UUID) -> int:
         stmt = (
             select(func.count())

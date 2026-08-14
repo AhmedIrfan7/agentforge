@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 
 import pytest
 import structlog
+from sqlalchemy import select
 
 from agents.retriever import RetrievedChunk, RetrieverAgent
 from db import get_session, set_tenant_context
@@ -474,3 +475,48 @@ async def test_search_multi_query_logs_a_retrieval_quality_event() -> None:
     assert len(events) == 1
     assert events[0]["variant_count"] == 3
     assert events[0]["result_count"] == 0
+
+
+@pytest.mark.anyio
+async def test_expand_to_parent_delegates_to_the_chunk_repository() -> None:
+    """A thin wrapper (roadmap step 131) -- the real expansion logic is
+    already tested directly against Postgres in test_chunk_repository_
+    expanded_context.py; this just proves the agent wires through to it."""
+    tenant_id, kb_id, document_id = await _new_org_workspace_kb_document("retr-agent-parent")
+    agent = RetrieverAgent(_FakeEmbeddingProvider(), _FakeVectorStore())
+
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        session.add_all(
+            [
+                Chunk(
+                    tenant_id=tenant_id,
+                    document_id=document_id,
+                    text="first chunk",
+                    start=0,
+                    end=1,
+                    index=0,
+                ),
+                Chunk(
+                    tenant_id=tenant_id,
+                    document_id=document_id,
+                    text="second chunk",
+                    start=1,
+                    end=2,
+                    index=1,
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        result = await session.execute(
+            select(Chunk).where(Chunk.tenant_id == tenant_id, Chunk.index == 0)
+        )
+        first_chunk_id = result.scalar_one().id
+
+        repo = ChunkRepository(session, tenant_id)
+        context = await agent.expand_to_parent(repo, first_chunk_id, window=1)
+
+    assert context == "first chunk\n\nsecond chunk"
