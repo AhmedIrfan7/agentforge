@@ -4,6 +4,9 @@ results" -- test_run_parallel_actually_runs_concurrently_not_sequentially
 uses real asyncio.sleep() delays and wall-clock timing to distinguish
 run_parallel from a sequential loop that would happen to produce the
 same return value.
+
+As of step 155, also covers gather_partial -- the partial-result-
+degradation half of that step's own failure-handling scope.
 """
 
 import asyncio
@@ -15,7 +18,7 @@ import pytest
 import structlog.testing
 
 from agents.base import Agent
-from agents.parallel import run_parallel
+from agents.parallel import gather_partial, run_parallel
 
 
 class _DelayedEchoAgent(Agent[str, str]):
@@ -89,3 +92,35 @@ async def test_run_parallel_propagates_a_failure_from_any_step() -> None:
                 (_FailingAgent(), "b"),
             ]
         )
+
+
+@pytest.mark.anyio
+async def test_gather_partial_returns_ok_and_failed_results_for_the_same_batch() -> None:
+    results = await gather_partial(
+        [
+            (_DelayedEchoAgent("first", 0), "a"),
+            (_FailingAgent(), "b"),
+            (_DelayedEchoAgent("third", 0), "c"),
+        ]
+    )
+
+    assert [r.status for r in results] == ["ok", "failed", "ok"]
+    assert results[0].agent_name == "first"
+    assert results[0].output == "first: a"
+    assert results[0].error is None
+    assert results[1].agent_name == "failing"
+    assert results[1].output is None
+    assert results[1].error == "boom"
+    assert results[2].output == "third: c"
+
+
+@pytest.mark.anyio
+async def test_gather_partial_reports_all_ok_when_nothing_fails() -> None:
+    results = await gather_partial(
+        [
+            (_DelayedEchoAgent("first", 0), "a"),
+            (_DelayedEchoAgent("second", 0), "b"),
+        ]
+    )
+
+    assert all(r.status == "ok" for r in results)
