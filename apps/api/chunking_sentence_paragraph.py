@@ -22,22 +22,22 @@ and decimals ("3.14") correctly, but a genuine, known limitation is
 mid-sentence abbreviations ("Dr. Smith" splits after "Dr."). This
 doesn't meaningfully hurt chunking quality in practice -- a mis-split
 abbreviation just becomes a very short unit that gets packed back in
-with its neighbors during the packing pass below, same as any other
-short sentence would be.
+with its neighbors during packing (chunking_packing.py), same as any
+other short sentence would be.
 
 Packing is unit-level (whole paragraphs/sentences), not character-
-level: units are greedily accumulated into a chunk up to chunk_size,
-and overlap re-includes whichever trailing units of the finished chunk
-add up to at least `overlap` characters, starting the next chunk from
-there. A chunk made of a single oversized unit has no smaller natural
-piece to overlap with without violating the whole point of this
-strategy (never splitting a sentence/paragraph mid-unit) -- an honest,
-inherent trade-off of unit-level overlap, not a bug.
+level -- chunking_packing.py:pack_units (promoted to shared in step 100
+once chunking_markdown_heading.py needed the identical packing logic).
+A chunk made of a single oversized unit has no smaller natural piece to
+overlap with without violating the whole point of this strategy (never
+splitting a sentence/paragraph mid-unit) -- an honest, inherent
+trade-off of unit-level overlap, not a bug.
 """
 
 import re
 
 from chunking_fixed_size import chunk_fixed_size
+from chunking_packing import pack_units
 from chunking_types import Chunk
 
 CHUNK_SIZE = 1000
@@ -95,42 +95,6 @@ def _build_units(text: str, chunk_size: int) -> list[_Span]:
     return units
 
 
-def _pack_units(text: str, units: list[_Span], chunk_size: int, overlap: int) -> list[Chunk]:
-    if not units:
-        return []
-
-    chunks: list[Chunk] = []
-    index = 0
-    i = 0
-    unit_count = len(units)
-    while i < unit_count:
-        chunk_start = units[i][0]
-        j = i
-        chunk_end = units[j][1]
-        while j + 1 < unit_count and (units[j + 1][1] - chunk_start) <= chunk_size:
-            j += 1
-            chunk_end = units[j][1]
-
-        chunks.append(
-            Chunk(text=text[chunk_start:chunk_end], start=chunk_start, end=chunk_end, index=index)
-        )
-        index += 1
-        if j == unit_count - 1:
-            break
-
-        # Walk backward from the last included unit to find how many
-        # trailing units are needed to cover at least `overlap`
-        # characters -- those repeat at the start of the next chunk.
-        k = j
-        while k > i and (chunk_end - units[k][0]) < overlap:
-            k -= 1
-        # max(..., i + 1): guarantees forward progress -- a chunk made
-        # of one oversized unit (k == i == j) has no trailing unit to
-        # overlap with (see module docstring).
-        i = max(k, i + 1)
-    return chunks
-
-
 def chunk_sentence_paragraph(
     text: str, *, chunk_size: int = CHUNK_SIZE, overlap: int = OVERLAP
 ) -> list[Chunk]:
@@ -139,4 +103,4 @@ def chunk_sentence_paragraph(
     if not text:
         return []
     units = _build_units(text, chunk_size)
-    return _pack_units(text, units, chunk_size, overlap)
+    return pack_units(text, units, chunk_size, overlap)
