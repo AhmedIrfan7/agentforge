@@ -68,15 +68,32 @@ all three search_* methods (identical shape each time), not
 duplicated three times, since `rerank()`'s own event has a genuinely
 different field set (no `knowledge_base_id`, no query embedding step)
 and stays separate.
+
+As of step 130, `search_multi_query()` adds multi-query retrieval:
+expands a query into variants (multi_query.py:expand_query, a real
+deterministic heuristic, not an LLM call -- no chat/generation step
+exists yet, see multi_query.py's own docstring), runs a caller-
+supplied single-query search closure once per variant, and fuses the
+per-variant result lists with the same reciprocal_rank_fusion already
+trusted by search_hybrid. `search: Callable[[str], Awaitable[list[
+RetrievedChunk]]]` is a query-only closure, the same "caller binds its
+own mechanism-specific collaborators before passing a plain closure
+in" pattern eval/harness.py already established at step 128 --
+multi-query retrieval is an orthogonal axis to WHICH mechanism runs
+(dense, keyword, or even hybrid), so this method has no business
+picking one itself; a caller passes e.g. `lambda q: agent.search_dense
+(tenant_id, kb_id, q, top_k=N)`.
 """
 
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from agents.base import Agent
 from embeddings.base import EmbeddingProvider
 from logging_config import get_logger
+from multi_query import expand_query
 from repositories.chunk import ChunkRepository
 from rerankers.base import RerankCandidate, RerankerProvider
 from retrieval_fusion import reciprocal_rank_fusion
@@ -274,3 +291,41 @@ class RetrieverAgent(Agent):
             latency_ms=round((time.perf_counter() - start) * 1000, 2),
         )
         return reranked
+
+    async def search_multi_query(
+        self,
+        query: str,
+        search: Callable[[str], Awaitable[list[RetrievedChunk]]],
+        *,
+        top_k: int = 10,
+    ) -> list[RetrievedChunk]:
+        start = time.perf_counter()
+        variants = expand_query(query)
+        variant_results = [await search(variant) for variant in variants]
+
+        fused_scores = reciprocal_rank_fusion(
+            [[r.chunk_id for r in results] for results in variant_results]
+        )
+        lookup: dict[uuid.UUID, RetrievedChunk] = {}
+        for results in variant_results:
+            lookup.update({r.chunk_id: r for r in results})
+
+        ranked_ids = sorted(fused_scores, key=lambda chunk_id: fused_scores[chunk_id], reverse=True)
+        mapped = [
+            RetrievedChunk(
+                chunk_id=chunk_id,
+                document_id=lookup[chunk_id].document_id,
+                text=lookup[chunk_id].text,
+                score=fused_scores[chunk_id],
+            )
+            for chunk_id in ranked_ids[:top_k]
+        ]
+        logger.info(
+            "retrieval_multi_query_search",
+            query=query,
+            variant_count=len(variants),
+            result_count=len(mapped),
+            scores=[r.score for r in mapped],
+            latency_ms=round((time.perf_counter() - start) * 1000, 2),
+        )
+        return mapped

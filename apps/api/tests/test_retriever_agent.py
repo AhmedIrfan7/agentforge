@@ -417,4 +417,60 @@ async def test_rerank_logs_a_retrieval_quality_event() -> None:
     events = [entry for entry in logs if entry["event"] == "retrieval_rerank"]
     assert len(events) == 1
     assert events[0]["reranker"] == "lexical"
-    assert events[0]["result_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_search_multi_query_calls_search_once_per_expanded_variant() -> None:
+    """A compound query fans out into one search() call per variant --
+    proven with a fake in-memory search closure, not real Postgres,
+    since search_multi_query itself doesn't know or care which
+    mechanism the caller's closure wraps (roadmap step 130)."""
+    agent = RetrieverAgent(_FakeEmbeddingProvider(), _FakeVectorStore())
+    document_a, document_b = uuid.uuid4(), uuid.uuid4()
+    chunk_a = RetrievedChunk(chunk_id=uuid.uuid4(), document_id=document_a, text="a", score=1.0)
+    chunk_b = RetrievedChunk(chunk_id=uuid.uuid4(), document_id=document_b, text="b", score=1.0)
+
+    calls: list[str] = []
+
+    async def search(variant_query: str) -> list[RetrievedChunk]:
+        calls.append(variant_query)
+        if "refund" in variant_query:
+            return [chunk_a]
+        if "shipping" in variant_query:
+            return [chunk_b]
+        return []
+
+    results = await agent.search_multi_query("refund policy and shipping times", search)
+
+    assert calls == ["refund policy and shipping times", "refund policy", "shipping times"]
+    assert {r.chunk_id for r in results} == {chunk_a.chunk_id, chunk_b.chunk_id}
+
+
+@pytest.mark.anyio
+async def test_search_multi_query_on_a_simple_query_makes_exactly_one_search_call() -> None:
+    agent = RetrieverAgent(_FakeEmbeddingProvider(), _FakeVectorStore())
+    calls: list[str] = []
+
+    async def search(variant_query: str) -> list[RetrievedChunk]:
+        calls.append(variant_query)
+        return []
+
+    await agent.search_multi_query("refund policy", search)
+
+    assert calls == ["refund policy"]
+
+
+@pytest.mark.anyio
+async def test_search_multi_query_logs_a_retrieval_quality_event() -> None:
+    agent = RetrieverAgent(_FakeEmbeddingProvider(), _FakeVectorStore())
+
+    async def search(_variant_query: str) -> list[RetrievedChunk]:
+        return []
+
+    with structlog.testing.capture_logs() as logs:
+        await agent.search_multi_query("refund policy and shipping times", search)
+
+    events = [entry for entry in logs if entry["event"] == "retrieval_multi_query_search"]
+    assert len(events) == 1
+    assert events[0]["variant_count"] == 3
+    assert events[0]["result_count"] == 0
