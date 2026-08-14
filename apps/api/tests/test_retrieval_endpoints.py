@@ -1,5 +1,5 @@
 """Integration tests against the real FastAPI app for
-routers/retrieval.py (roadmap step 120).
+routers/retrieval.py (roadmap steps 120-122: dense, keyword, hybrid).
 
 Real org/workspace/knowledge-base/document setup through the real HTTP
 endpoints, real Chunk rows with real embeddings added directly via the
@@ -110,6 +110,12 @@ def _search_url(org_id: uuid.UUID, workspace_id: uuid.UUID, kb_id: uuid.UUID) ->
 def _keyword_search_url(org_id: uuid.UUID, workspace_id: uuid.UUID, kb_id: uuid.UUID) -> str:
     return (
         f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/search/keyword"
+    )
+
+
+def _hybrid_search_url(org_id: uuid.UUID, workspace_id: uuid.UUID, kb_id: uuid.UUID) -> str:
+    return (
+        f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/search/hybrid"
     )
 
 
@@ -439,3 +445,156 @@ async def test_end_user_role_cannot_keyword_search() -> None:
         await _cleanup_user(owner_email)
         await _cleanup_user("endpoint-test-retrieval-kw-member@example.com")
         await _cleanup_user("endpoint-test-retrieval-member@example.com")
+
+
+@pytest.mark.anyio
+async def test_hybrid_search_ranks_a_chunk_matching_both_signals_above_one_matching_only_dense(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real point of hybrid search: a chunk present in BOTH the
+    dense and keyword result lists should outrank one that only
+    appears in dense, even when that dense-only chunk ranks a close
+    second on cosine similarity alone -- proves retrieval_fusion.py's
+    RRF is actually driving the endpoint's real ranking, not just that
+    both underlying calls happen."""
+    monkeypatch.setattr(
+        "routers.retrieval._embedding_provider",
+        _FakeEmbeddingProvider(vectors_by_text={"refund policy": _vector(lead=1.0)}),
+    )
+
+    email = "endpoint-test-retrieval-owner-10@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        document_response = client.post(
+            f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/documents",
+            files={"file": ("doc.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = uuid.UUID(document_response.json()["id"])
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            session.add_all(
+                [
+                    Chunk(
+                        tenant_id=org_id,
+                        document_id=document_id,
+                        text="Our refund policy is generous",
+                        start=0,
+                        end=1,
+                        index=0,
+                        embedding=_vector(lead=1.0),
+                    ),
+                    Chunk(
+                        tenant_id=org_id,
+                        document_id=document_id,
+                        text="The weather today is sunny and warm",
+                        start=1,
+                        end=2,
+                        index=1,
+                        embedding=_vector(lead=0.99),
+                    ),
+                ]
+            )
+            await session.commit()
+
+        response = client.post(
+            _hybrid_search_url(org_id, workspace_id, kb_id),
+            json={"query": "refund policy", "top_k": 5},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body) == 2
+        assert body[0]["text"] == "Our refund policy is generous"
+        assert body[0]["score"] > body[1]["score"]
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_hybrid_search_respects_top_k(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "routers.retrieval._embedding_provider",
+        _FakeEmbeddingProvider(vectors_by_text={"query": _vector(lead=0.0)}),
+    )
+
+    email = "endpoint-test-retrieval-owner-11@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        document_response = client.post(
+            f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/documents",
+            files={"file": ("doc.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = uuid.UUID(document_response.json()["id"])
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            session.add_all(
+                [
+                    Chunk(
+                        tenant_id=org_id,
+                        document_id=document_id,
+                        text=f"query chunk {i}",
+                        start=i,
+                        end=i + 1,
+                        index=i,
+                        embedding=_vector(lead=float(i)),
+                    )
+                    for i in range(5)
+                ]
+            )
+            await session.commit()
+
+        response = client.post(
+            _hybrid_search_url(org_id, workspace_id, kb_id),
+            json={"query": "query", "top_k": 2},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert len(response.json()) == 2
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_hybrid_search_on_empty_knowledge_base_returns_empty_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "routers.retrieval._embedding_provider",
+        _FakeEmbeddingProvider(vectors_by_text={"query": _vector(lead=0.0)}),
+    )
+
+    email = "endpoint-test-retrieval-owner-12@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        response = client.post(
+            _hybrid_search_url(org_id, workspace_id, kb_id),
+            json={"query": "query"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert response.json() == []
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_hybrid_search_for_nonexistent_knowledge_base_returns_404() -> None:
+    email = "endpoint-test-retrieval-owner-13@example.com"
+    org_id, workspace_id, _kb_id, headers = _new_org_with_kb(email)
+    try:
+        response = client.post(
+            _hybrid_search_url(org_id, workspace_id, uuid.uuid4()),
+            json={"query": "query"},
+            headers=headers,
+        )
+        assert response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
