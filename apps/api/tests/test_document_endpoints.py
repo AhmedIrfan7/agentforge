@@ -20,6 +20,7 @@ from db import get_session, set_tenant_context
 from main import app
 from models.audit_log import AuditLog
 from models.document import Document
+from models.document_version import DocumentVersion
 from models.knowledge_base import KnowledgeBase
 from models.membership import Membership
 from models.organization import Organization
@@ -1047,3 +1048,223 @@ async def test_end_user_role_cannot_reindex_document() -> None:
         await _cleanup_org(org_id)
         await _cleanup_user(owner_email)
         await _cleanup_user("endpoint-test-doc-reindex-member@example.com")
+
+
+@pytest.mark.anyio
+async def test_replace_document_content_snapshots_old_version_and_dispatches_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Roadmap step 115 -- "replace preserves history": the OLD content
+    becomes a real DocumentVersion row, the document itself moves on to
+    the NEW content and a fresh processing cycle. Same "monkeypatch
+    .delay itself" reasoning test_upload_dispatches_extraction already
+    established -- extraction.py's own dispatch logic is covered
+    elsewhere."""
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "routers.document.dispatch_extraction.delay",
+        lambda document_id, tenant_id: calls.append((document_id, tenant_id)),
+    )
+
+    email = "endpoint-test-doc-owner-24@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    old_storage_key = None
+    new_storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("original.txt", b"original content", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            old_storage_key = document.storage_key
+            # Simulate a completed extraction, same as
+            # test_override_chunking_strategy_matching_recommendation_
+            # is_accepted already does -- proves the snapshot captures
+            # real processing state, not just the freshly-uploaded
+            # pending state.
+            document.status = "embedded"
+            document.extracted_text = "original content"
+            document.chunking_strategy = "fixed_size"
+            document.chunking_strategy_source = "recommended"
+            document.chunking_strategy_reasoning = "test setup"
+            await session.commit()
+
+        replace_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/versions"),
+            files={"file": ("replacement.txt", b"brand new content", "text/plain")},
+            headers=headers,
+        )
+        assert replace_response.status_code == 201
+        body = replace_response.json()
+        assert body["id"] == document_id
+        assert body["title"] == "replacement.txt"
+        assert body["size_bytes"] == len(b"brand new content")
+        assert body["status"] == "pending"
+        assert body["chunking_strategy"] is None
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            new_storage_key = document.storage_key
+            assert new_storage_key != old_storage_key
+            assert document.extracted_text is None
+
+            result = await session.execute(
+                select(DocumentVersion).where(DocumentVersion.document_id == uuid.UUID(document_id))
+            )
+            versions = result.scalars().all()
+            assert len(versions) == 1
+            version = versions[0]
+            assert version.version_number == 1
+            assert version.title == "original.txt"
+            assert version.storage_key == old_storage_key
+            assert version.extracted_text == "original content"
+            assert version.chunking_strategy == "fixed_size"
+
+        # Two calls: the original upload dispatches extraction too --
+        # this only needs to confirm the replace endpoint dispatches a
+        # SECOND real one, not that it's the only dispatch that ever
+        # happened.
+        assert calls == [(document_id, str(org_id)), (document_id, str(org_id))]
+    finally:
+        if old_storage_key is not None:
+            await _cleanup_storage(old_storage_key)
+        if new_storage_key is not None:
+            await _cleanup_storage(new_storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_list_document_versions_returns_history_newest_first() -> None:
+    email = "endpoint-test-doc-owner-25@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    storage_keys: list[str] = []
+    document_id: str | None = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("v0.txt", b"version zero", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_keys.append(document.storage_key)
+
+        for filename, content in [("v1.txt", b"version one"), ("v2.txt", b"version two")]:
+            replace_response = client.post(
+                _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/versions"),
+                files={"file": (filename, content, "text/plain")},
+                headers=headers,
+            )
+            assert replace_response.status_code == 201
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_keys.append(document.storage_key)
+
+        list_response = client.get(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/versions"), headers=headers
+        )
+        assert list_response.status_code == 200
+        body = list_response.json()
+        assert body["total"] == 2
+        assert [item["version_number"] for item in body["items"]] == [2, 1]
+        assert [item["title"] for item in body["items"]] == ["v1.txt", "v0.txt"]
+    finally:
+        if document_id is not None:
+            async with get_session() as session:
+                await set_tenant_context(session, org_id)
+                document = await session.get(Document, uuid.UUID(document_id))
+                if document is not None:
+                    storage_keys.append(document.storage_key)
+        for key in set(storage_keys):
+            await _cleanup_storage(key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_replace_document_content_for_nonexistent_document_returns_404() -> None:
+    email = "endpoint-test-doc-owner-26@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        response = client.post(
+            _docs_url(org_id, workspace_id, kb_id, f"/{uuid.uuid4()}/versions"),
+            files={"file": ("notes.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        assert response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_end_user_role_cannot_replace_document_content() -> None:
+    owner_email = "endpoint-test-doc-owner-27@example.com"
+    org_id, workspace_id, kb_id, owner_headers = _new_org_with_kb(owner_email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("notes.txt", b"content", "text/plain")},
+            headers=owner_headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+
+        member_token = signup_and_login(
+            client,
+            email="endpoint-test-doc-replace-member@example.com",
+            password="correct horse battery staple",
+            full_name="Replace Member",
+        )
+        async with get_session() as session:
+            result = await session.execute(
+                select(User).where(User.email == "endpoint-test-doc-replace-member@example.com")
+            )
+            member_user = result.scalar_one()
+            role_result = await session.execute(select(Role).where(Role.name == "end_user"))
+            end_user_role = role_result.scalar_one()
+            await set_tenant_context(session, org_id)
+            session.add(
+                Membership(
+                    tenant_id=org_id,
+                    user_id=member_user.id,
+                    workspace_id=None,
+                    role_id=end_user_role.id,
+                )
+            )
+            await session.commit()
+
+        response = client.post(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/versions"),
+            files={"file": ("replacement.txt", b"new content", "text/plain")},
+            headers=auth_headers(member_token),
+        )
+        assert response.status_code == 403
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user("endpoint-test-doc-replace-member@example.com")

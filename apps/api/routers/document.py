@@ -51,6 +51,7 @@ from models.knowledge_base import KnowledgeBase
 from pipeline_status import compute_pipeline_stages
 from repositories.chunk import ChunkRepository
 from repositories.document import DocumentRepository
+from repositories.document_version import DocumentVersionRepository
 from repositories.knowledge_base import KnowledgeBaseRepository
 from schemas.common import Page, PaginationParams
 from schemas.document import (
@@ -59,6 +60,7 @@ from schemas.document import (
     DocumentPipelineStatusRead,
     DocumentRead,
     DocumentStatusRead,
+    DocumentVersionRead,
     PipelineStageRead,
 )
 from storage import ensure_bucket_exists, upload_file
@@ -362,3 +364,138 @@ async def reindex_document(
 
     dispatch_embedding_generation.delay(str(document.id), str(tenant_id))
     return DocumentStatusRead.model_validate(document)
+
+
+@router.post(
+    "/{document_id}/versions",
+    response_model=DocumentRead,
+    status_code=201,
+    dependencies=[Depends(require_permission("document:update"))],
+)
+async def replace_document_content(
+    document_id: uuid.UUID,
+    session: TenantDb,
+    tenant_id: TenantId,
+    knowledge_base: TargetKnowledgeBase,
+    file: Annotated[UploadFile, File()],
+) -> DocumentRead:
+    """Roadmap step 115 -- uploading here REPLACES the document's
+    current content; its previous state is snapshotted into a new
+    DocumentVersion row first, not discarded ("replace preserves
+    history"). Same validation/antivirus pipeline as the original
+    upload (upload_document above) -- a replacement file is exactly as
+    untrusted as a first-time one.
+
+    The snapshot copies Document's own fields (title/storage_key/
+    content_type/size_bytes/doc_metadata/extracted_text/content_hash/
+    chunking decision) -- not Chunk rows. Chunks belong to whatever
+    content is CURRENT (step 114 already established a document has
+    exactly one live chunk set at a time); the new upload's extraction
+    will naturally replace them once it completes, the same
+    dispatch_extraction -> dispatch_embedding_generation chain every
+    upload goes through.
+
+    The new file gets a fresh, randomized storage_key rather than
+    reusing upload_document's own {tenant}/{kb}/{document_id}/{filename}
+    convention -- reusing that pattern here (same document_id, likely
+    same filename) would overwrite the OLD object in MinIO/S3, defeating
+    "preserves history" at the storage layer before a version row could
+    even point at it."""
+    repo = DocumentRepository(session, tenant_id)
+    document = await repo.get(document_id)
+    if document is None or document.knowledge_base_id != knowledge_base.id:
+        raise NotFoundError(f"Document {document_id} not found.")
+
+    content = await read_upload_content(file, settings.max_upload_size_bytes)
+    validate_upload(file.filename, content)
+    await scan_for_viruses(content)
+
+    version_repo = DocumentVersionRepository(session, tenant_id)
+    next_version_number = await version_repo.count_for_document(document_id) + 1
+    await version_repo.create(
+        document_id=document.id,
+        version_number=next_version_number,
+        title=document.title,
+        storage_key=document.storage_key,
+        content_type=document.content_type,
+        size_bytes=document.size_bytes,
+        doc_metadata=document.doc_metadata,
+        extracted_text=document.extracted_text,
+        content_hash=document.content_hash,
+        chunking_strategy=document.chunking_strategy,
+        chunking_strategy_source=document.chunking_strategy_source,
+        chunking_strategy_reasoning=document.chunking_strategy_reasoning,
+    )
+
+    new_storage_key = (
+        f"{tenant_id}/{knowledge_base.id}/{document_id}/{uuid.uuid4()}/{file.filename}"
+    )
+    await ensure_bucket_exists()
+    await upload_file(
+        key=new_storage_key,
+        content=content,
+        content_type=file.content_type or "application/octet-stream",
+    )
+
+    document.title = file.filename or document.title
+    document.storage_key = new_storage_key
+    document.content_type = file.content_type or "application/octet-stream"
+    document.size_bytes = len(content)
+    document.status = "pending"
+    document.doc_metadata = {}
+    document.extracted_text = None
+    document.content_hash = None
+    document.chunking_strategy = None
+    document.chunking_strategy_source = None
+    document.chunking_strategy_reasoning = None
+    await session.flush()
+    # updated_at is server-computed (onupdate=func.now(), models/mixins.py)
+    # -- unlike upload_document's freshly-INSERTed Document, whose defaults
+    # populate automatically, an UPDATEd row's onupdate value isn't known
+    # in-memory after flush() alone. Without this, DocumentRead.model_
+    # validate(document) below tries to lazily reload it outside the
+    # active async context and raises MissingGreenlet (caught live while
+    # writing this endpoint, not assumed).
+    await session.refresh(document)
+
+    await write_audit_log(
+        session,
+        tenant_id=tenant_id,
+        action="document.replace",
+        resource_type="document",
+        resource_id=document.id,
+    )
+
+    dispatch_extraction.delay(str(document.id), str(tenant_id))
+
+    return DocumentRead.model_validate(document)
+
+
+@router.get(
+    "/{document_id}/versions",
+    response_model=Page[DocumentVersionRead],
+    dependencies=[Depends(require_permission("document:read"))],
+)
+async def list_document_versions(
+    document_id: uuid.UUID,
+    session: TenantDb,
+    tenant_id: TenantId,
+    knowledge_base: TargetKnowledgeBase,
+    pagination: Annotated[PaginationParams, Depends()],
+) -> Page[DocumentVersionRead]:
+    repo = DocumentRepository(session, tenant_id)
+    document = await repo.get(document_id)
+    if document is None or document.knowledge_base_id != knowledge_base.id:
+        raise NotFoundError(f"Document {document_id} not found.")
+
+    version_repo = DocumentVersionRepository(session, tenant_id)
+    versions = await version_repo.list_for_document(
+        document_id, limit=pagination.limit, offset=pagination.offset
+    )
+    total = await version_repo.count_for_document(document_id)
+    return Page(
+        items=[DocumentVersionRead.model_validate(v) for v in versions],
+        limit=pagination.limit,
+        offset=pagination.offset,
+        total=total,
+    )

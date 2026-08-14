@@ -76,3 +76,24 @@ class DocumentPipelineStatusRead(BaseModel):
     chunk_count: int
     embedded_chunk_count: int
     updated_at: datetime
+
+
+class DocumentVersionRead(BaseModel):
+    """Roadmap step 115 -- a snapshot of what a document used to be,
+    right before a new upload replaced its content. Same restraint as
+    DocumentRead: no storage_key (internal), no extracted_text/
+    content_hash (too large / purely a dedup signal) -- a version
+    listing shows what changed, not a second way to dump raw content."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    version_number: int
+    title: str
+    content_type: str
+    size_bytes: int
+    doc_metadata: dict[str, object]
+    chunking_strategy: str | None
+    chunking_strategy_source: str | None
+    chunking_strategy_reasoning: str | None
+    created_at: datetime
