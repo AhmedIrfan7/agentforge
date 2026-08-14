@@ -1,8 +1,8 @@
-"""Tests for orchestrator.py (roadmap steps 140-141) -- proves the real
+"""Tests for orchestrator.py (roadmap steps 140-142) -- proves the real
 LangGraph plumbing behind Orchestrator.handle() actually works end to
 end, that it's a genuine service holding a real AgentRegistry
 dependency (not a bare function), and that the real intent-analysis
-node (141) correctly sets internal graph state.
+(141) and planning (142) nodes correctly set internal graph state.
 """
 
 import pytest
@@ -54,7 +54,7 @@ async def test_the_graph_sets_document_search_intent_for_a_real_query() -> None:
     orchestrator = Orchestrator(AgentRegistry())
 
     result = await orchestrator._graph.ainvoke(
-        {"query": "find the refund policy", "intent": "", "response": ""}
+        {"query": "find the refund policy", "intent": "", "agent_names": [], "response": ""}
     )
 
     assert result["intent"] == "document_search"
@@ -64,6 +64,30 @@ async def test_the_graph_sets_document_search_intent_for_a_real_query() -> None:
 async def test_the_graph_sets_empty_intent_for_a_blank_query() -> None:
     orchestrator = Orchestrator(AgentRegistry())
 
-    result = await orchestrator._graph.ainvoke({"query": "   ", "intent": "", "response": ""})
+    result = await orchestrator._graph.ainvoke(
+        {"query": "   ", "intent": "", "agent_names": [], "response": ""}
+    )
 
     assert result["intent"] == "empty"
+
+
+@pytest.mark.anyio
+async def test_the_graph_plans_to_run_the_retriever_for_a_real_query() -> None:
+    orchestrator = Orchestrator(AgentRegistry())
+
+    result = await orchestrator._graph.ainvoke(
+        {"query": "find the refund policy", "intent": "", "agent_names": [], "response": ""}
+    )
+
+    assert result["agent_names"] == ["retriever"]
+
+
+@pytest.mark.anyio
+async def test_the_graph_plans_no_agents_for_a_blank_query() -> None:
+    orchestrator = Orchestrator(AgentRegistry())
+
+    result = await orchestrator._graph.ainvoke(
+        {"query": "   ", "intent": "", "agent_names": [], "response": ""}
+    )
+
+    assert result["agent_names"] == []

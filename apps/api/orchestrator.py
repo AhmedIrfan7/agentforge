@@ -33,6 +33,18 @@ one real way this system knows how to handle a query. `intent` stays
 internal graph state, not part of `handle()`'s own external `str`
 contract -- nothing outside the graph consumes it yet; step 142's
 Planning Agent is the real, first consumer.
+
+As of step 142, `_planning_node` calls `agents/planning.py:
+PlanningAgent` for real, storing its `Plan.agent_names` into a new
+`agent_names` state field -- a genuine, justified addition now that
+planning actually produces it (same "add the field when the step that
+needs it lands" discipline the rest of this state schema already
+follows). `agent_names` currently names an agent nothing can execute
+yet (`agents/registry.py:AgentRegistry` has nothing real registered --
+step 143's own job); deciding what SHOULD run and being able to
+actually run it are two different, deliberately separate concerns.
+`_echo_node` doesn't read `agent_names` yet -- it stays the same
+placeholder until 143 gives it something real to call.
 """
 
 from typing import TypedDict, cast
@@ -40,12 +52,16 @@ from typing import TypedDict, cast
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from agents.planning import PlanningAgent
 from agents.registry import AgentRegistry
+
+_planning_agent = PlanningAgent()
 
 
 class OrchestratorState(TypedDict):
     query: str
     intent: str
+    agent_names: list[str]
     response: str
 
 
@@ -57,6 +73,11 @@ def _classify_intent(query: str) -> str:
 
 async def _intent_analysis_node(state: OrchestratorState) -> dict[str, str]:
     return {"intent": _classify_intent(state["query"])}
+
+
+async def _planning_node(state: OrchestratorState) -> dict[str, list[str]]:
+    plan = await _planning_agent.run(state["intent"])
+    return {"agent_names": plan.agent_names}
 
 
 async def _echo_node(state: OrchestratorState) -> dict[str, str]:
@@ -73,9 +94,11 @@ class Orchestrator:
     ) -> CompiledStateGraph[OrchestratorState, None, OrchestratorState, OrchestratorState]:
         builder = StateGraph(OrchestratorState)
         builder.add_node("intent_analysis", _intent_analysis_node)
+        builder.add_node("planning", _planning_node)
         builder.add_node("echo", _echo_node)
         builder.add_edge(START, "intent_analysis")
-        builder.add_edge("intent_analysis", "echo")
+        builder.add_edge("intent_analysis", "planning")
+        builder.add_edge("planning", "echo")
         builder.add_edge("echo", END)
         return builder.compile()
 
@@ -85,6 +108,8 @@ class Orchestrator:
         # shape back to OrchestratorState (matching _build_graph()'s
         # own state schema) rather than letting Any leak into handle()'s
         # own real str return type.
-        raw_result = await self._graph.ainvoke({"query": query, "intent": "", "response": ""})
+        raw_result = await self._graph.ainvoke(
+            {"query": query, "intent": "", "agent_names": [], "response": ""}
+        )
         result = cast(OrchestratorState, raw_result)
         return result["response"]
