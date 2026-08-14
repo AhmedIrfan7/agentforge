@@ -18,12 +18,11 @@ Deliberately narrow scope, matching what this step actually asks for:
 - No delete endpoint -- step 116 ("tenant-scoped document deletion")
   owns that, and it needs to cascade chunks/embeddings that don't exist
   yet either. A bare delete now would just be replaced.
-- override_chunking_strategy (step 103) is document:update -- this
-  project's first document-mutation permission beyond create, same tier
-  as document:create/read (org_owner/admin/manager). Records the
-  decision in doc_metadata only; step 104 promotes it to real Document
-  columns, and nothing dispatches real chunking against it yet (step
-  105 creates the Chunk model first).
+- override_chunking_strategy (step 103, real Document columns as of
+  step 104) is document:update -- this project's first document-
+  mutation permission beyond create, same tier as document:create/read
+  (org_owner/admin/manager). Nothing dispatches real chunking against
+  this choice yet -- step 105 creates the Chunk model first.
 
 get_target_knowledge_base cross-checks the URL's knowledge_base_id (and
 transitively, via get_target_workspace-equivalent logic inlined here,
@@ -210,16 +209,16 @@ async def override_chunking_strategy(
     tenant_id: TenantId,
     knowledge_base: TargetKnowledgeBase,
 ) -> ChunkingDecisionRead:
-    """Roadmap step 103 -- one endpoint covers both "accept" and
-    "override": the caller always states the strategy they want, and
-    whichever one they send is compared against agents/chunking_
-    recommendation.py's own recommendation (if one exists yet) to decide
-    source ("accepted" vs "override") in the stored decision. Only
-    validates the strategy name and records the decision in doc_metadata
-    -- step 104 promotes this into real, dedicated Document columns;
-    nothing downstream reads or acts on this choice yet, since real
-    chunking dispatch doesn't exist until the Chunk model itself does
-    (step 105)."""
+    """Roadmap step 103 (endpoint), step 104 (real columns instead of
+    doc_metadata) -- one endpoint covers both "accept" and "override":
+    the caller always states the strategy they want, and whichever one
+    they send is compared against doc_metadata["chunking_recommendation"]
+    (extraction.py's own recommendation, if one exists yet -- the
+    ORIGINAL recommendation, which never changes, not the current
+    chunking_strategy column value, which does as overrides happen; that
+    distinction is what keeps a second override still correctly naming
+    what was actually recommended) to decide source ("accepted" vs
+    "override")."""
     if body.strategy not in STRATEGY_NAMES:
         raise InvalidChunkingStrategyError(
             f"'{body.strategy}' is not a recognized chunking strategy. "
@@ -250,13 +249,9 @@ async def override_chunking_strategy(
             else f"Manually set to '{body.strategy}' (no recommendation existed yet)."
         )
 
-    decision = {"strategy": body.strategy, "source": source, "reasoning": reasoning}
-    # New dict, not an in-place mutation of the existing one -- doc_metadata
-    # isn't wrapped in sqlalchemy.ext.mutable's MutableDict, so SQLAlchemy
-    # wouldn't detect an in-place `dict[key] = value` change and the
-    # UPDATE would silently never happen. extraction.py's own writes to
-    # doc_metadata follow this same "always reassign a fresh dict" rule.
-    document.doc_metadata = {**document.doc_metadata, "chunking_decision": decision}
+    document.chunking_strategy = body.strategy
+    document.chunking_strategy_source = source
+    document.chunking_strategy_reasoning = reasoning
     await session.flush()
 
     await write_audit_log(
@@ -267,4 +262,4 @@ async def override_chunking_strategy(
         resource_id=document.id,
     )
 
-    return ChunkingDecisionRead(**decision)
+    return ChunkingDecisionRead(strategy=body.strategy, source=source, reasoning=reasoning)

@@ -59,11 +59,24 @@ step 117's duplicate-detection lookup needs to query it efficiently).
 
 As of step 097, the same pass also runs agents/chunking_recommendation.py's
 ChunkingRecommendationAgent, adding "chunking_recommendation":
-{"strategy", "scores", "reasoning"} to doc_metadata. None of the five
-strategies it recommends among have a real chunker yet (steps 098-102)
--- the recommendation itself is this step's deliverable, ready for step
-103's override endpoint (and whichever step eventually dispatches real
-chunking) to read.
+{"strategy", "scores", "reasoning"} to doc_metadata -- the full
+per-strategy scores stay JSONB diagnostic data, not worth their own
+columns. None of the five strategies it recommends among have a real
+chunker yet (steps 098-102) -- the recommendation itself is this step's
+deliverable.
+
+As of step 104, the recommendation ALSO sets a real default on
+Document's own chunking_strategy/chunking_strategy_source (="recommended")
+/chunking_strategy_reasoning columns -- unlike the diagnostic scores,
+the single chosen strategy is something step 105+ needs to read cheaply
+and reliably, not dig out of doc_metadata. routers/document.py's
+override endpoint (step 103) updates these same columns to "accepted"/
+"override" on an explicit call, comparing against doc_metadata's own
+["chunking_recommendation"]["strategy"] (the ORIGINAL recommendation,
+which never changes) rather than the current column value (which does,
+as overrides happen) -- so overriding a document more than once still
+correctly names what was actually recommended, not whatever the
+previous decision happened to be.
 """
 
 import asyncio
@@ -167,6 +180,9 @@ async def _run_extraction(document_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
         document.extracted_text = extracted_text
         document.doc_metadata = doc_metadata
         document.content_hash = quality.content_hash
+        document.chunking_strategy = chunking_recommendation.strategy
+        document.chunking_strategy_source = "recommended"
+        document.chunking_strategy_reasoning = chunking_recommendation.reasoning
         await session.commit()
 
 

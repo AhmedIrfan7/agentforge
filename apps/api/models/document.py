@@ -39,6 +39,25 @@ signal it needs, the same "build the primitive now, the feature that
 uses it later" split already used for extracted_text itself (090)
 versus chunking (098+). Nullable for the same reason extracted_text is
 -- populated once quality.py's checks actually run, during extraction.
+
+chunking_strategy/chunking_strategy_source/chunking_strategy_reasoning
+(step 104): promoted out of doc_metadata["chunking_decision"] (step
+103) into real columns -- unlike doc_metadata['chunking_recommendation']
+(step 097), which stays JSONB because it's genuinely multi-field
+diagnostic data (a score per candidate strategy), the final DECISION is
+a single strategy name a later step (105+) needs to read cheaply and
+reliably, not dig out of a JSONB blob. chunking_strategy_source is
+"recommended" (extraction.py set it automatically, nobody's reviewed
+it), "accepted" (a caller explicitly confirmed the recommendation), or
+"override" (a caller explicitly chose differently) -- three states, not
+two, because "nobody has looked at this yet" is meaningfully different
+from "a human confirmed the algorithm's guess," e.g. for an eventual
+admin review queue. extraction.py sets all three to a real default
+(source="recommended") the moment a chunking_recommendation exists;
+routers/document.py's override endpoint (step 103) updates them to
+"accepted"/"override" on an explicit call. All nullable -- extraction
+that never completes (extraction_unsupported/extraction_failed) never
+gets a recommendation to base a default on either.
 """
 
 import uuid
@@ -68,3 +87,6 @@ class Document(TenantScopedEntity, TimestampMixin, Base):
     size_bytes: Mapped[int] = mapped_column(nullable=False)
     extracted_text: Mapped[str | None] = mapped_column(nullable=True, default=None)
     content_hash: Mapped[str | None] = mapped_column(nullable=True, default=None, index=True)
+    chunking_strategy: Mapped[str | None] = mapped_column(nullable=True, default=None)
+    chunking_strategy_source: Mapped[str | None] = mapped_column(nullable=True, default=None)
+    chunking_strategy_reasoning: Mapped[str | None] = mapped_column(nullable=True, default=None)

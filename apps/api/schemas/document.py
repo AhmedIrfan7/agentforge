@@ -15,6 +15,17 @@ class DocumentRead(BaseModel):
     doc_metadata: dict[str, object]
     content_type: str
     size_bytes: int
+    # Real Document columns as of step 104 -- unlike extracted_text/
+    # content_hash (deliberately NOT exposed here: too large, or purely
+    # an internal dedup signal), the current chunking strategy is
+    # genuinely useful for a client to see without a separate call, and
+    # there's no dedicated GET for just the decision -- the override
+    # endpoint (step 103) is PATCH-only, doubling as read+write for
+    # whatever it just set, not a way to read the current state without
+    # changing it.
+    chunking_strategy: str | None
+    chunking_strategy_source: str | None
+    chunking_strategy_reasoning: str | None
     created_at: datetime
     updated_at: datetime
 

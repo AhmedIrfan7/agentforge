@@ -599,10 +599,8 @@ async def test_override_chunking_strategy_with_no_recommendation_yet() -> None:
             await set_tenant_context(session, org_id)
             fetched = await session.get(Document, uuid.UUID(document_id))
             assert fetched is not None
-            stored = fetched.doc_metadata["chunking_decision"]
-            assert isinstance(stored, dict)
-            assert stored["strategy"] == "table_aware"
-            assert stored["source"] == "override"
+            assert fetched.chunking_strategy == "table_aware"
+            assert fetched.chunking_strategy_source == "override"
     finally:
         if storage_key is not None:
             await _cleanup_storage(storage_key)

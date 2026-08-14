@@ -460,8 +460,9 @@ async def test_quality_signals_are_populated_through_the_real_dispatcher() -> No
 async def test_chunking_recommendation_is_populated_through_the_real_dispatcher() -> None:
     """agents/chunking_recommendation.py's own scoring logic is
     unit-tested directly in test_chunking_recommendation_agent.py --
-    this only needs to prove _run_extraction actually calls it and
-    stores the result in doc_metadata."""
+    this only needs to prove _run_extraction actually calls it, stores
+    the full diagnostic result in doc_metadata, and (step 104) sets a
+    real default on Document's own chunking_strategy columns."""
     content = (
         b"# Title\n\n## Section One\n\nBody one.\n\n"
         b"## Section Two\n\nBody two.\n\n## Section Three\n\nBody three."
@@ -494,5 +495,8 @@ async def test_chunking_recommendation_is_populated_through_the_real_dispatcher(
                 "recursive_hybrid",
             }
             assert "markdown_heading" in recommendation["reasoning"]
+            assert fetched.chunking_strategy == "markdown_heading"
+            assert fetched.chunking_strategy_source == "recommended"
+            assert fetched.chunking_strategy_reasoning == recommendation["reasoning"]
     finally:
         await _cleanup(tenant_id, storage_key)
