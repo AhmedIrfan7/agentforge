@@ -892,3 +892,158 @@ async def test_end_user_role_cannot_override_chunking_strategy() -> None:
         await _cleanup_org(org_id)
         await _cleanup_user(owner_email)
         await _cleanup_user("endpoint-test-doc-chunk-member@example.com")
+
+
+@pytest.mark.anyio
+async def test_reindex_dispatches_embedding_generation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Roadmap step 114 -- proves the wiring (right task, right ids),
+    not embeddings_pipeline.py's own chunk/embedding logic, which
+    test_embeddings_pipeline.py already covers against real Postgres.
+    Same "monkeypatch .delay itself" reasoning
+    test_upload_dispatches_extraction already established."""
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "routers.document.dispatch_embedding_generation.delay",
+        lambda document_id, tenant_id: calls.append((document_id, tenant_id)),
+    )
+
+    email = "endpoint-test-doc-owner-20@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("notes.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+            # A real chunking_strategy has to exist for reindex to be a
+            # valid action -- simulated the same way
+            # test_override_chunking_strategy_matching_recommendation_
+            # is_accepted already does, without needing a live worker.
+            document.chunking_strategy = "fixed_size"
+            document.chunking_strategy_source = "recommended"
+            document.chunking_strategy_reasoning = "test setup"
+            await session.commit()
+
+        response = client.post(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/reindex"), headers=headers
+        )
+        assert response.status_code == 202
+        assert response.json()["id"] == document_id
+        assert calls == [(document_id, str(org_id))]
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_reindex_without_a_chunking_strategy_returns_409() -> None:
+    email = "endpoint-test-doc-owner-21@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("notes.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+
+        response = client.post(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/reindex"), headers=headers
+        )
+        assert response.status_code == 409
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_reindex_for_nonexistent_document_returns_404() -> None:
+    email = "endpoint-test-doc-owner-22@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        response = client.post(
+            _docs_url(org_id, workspace_id, kb_id, f"/{uuid.uuid4()}/reindex"), headers=headers
+        )
+        assert response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_end_user_role_cannot_reindex_document() -> None:
+    owner_email = "endpoint-test-doc-owner-23@example.com"
+    org_id, workspace_id, kb_id, owner_headers = _new_org_with_kb(owner_email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("notes.txt", b"content", "text/plain")},
+            headers=owner_headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+            document.chunking_strategy = "fixed_size"
+            document.chunking_strategy_source = "recommended"
+            document.chunking_strategy_reasoning = "test setup"
+            await session.commit()
+
+        member_token = signup_and_login(
+            client,
+            email="endpoint-test-doc-reindex-member@example.com",
+            password="correct horse battery staple",
+            full_name="Reindex Member",
+        )
+        async with get_session() as session:
+            result = await session.execute(
+                select(User).where(User.email == "endpoint-test-doc-reindex-member@example.com")
+            )
+            member_user = result.scalar_one()
+            role_result = await session.execute(select(Role).where(Role.name == "end_user"))
+            end_user_role = role_result.scalar_one()
+            await set_tenant_context(session, org_id)
+            session.add(
+                Membership(
+                    tenant_id=org_id,
+                    user_id=member_user.id,
+                    workspace_id=None,
+                    role_id=end_user_role.id,
+                )
+            )
+            await session.commit()
+
+        response = client.post(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/reindex"),
+            headers=auth_headers(member_token),
+        )
+        assert response.status_code == 403
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user("endpoint-test-doc-reindex-member@example.com")

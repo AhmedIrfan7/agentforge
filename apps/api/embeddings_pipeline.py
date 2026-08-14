@@ -51,12 +51,28 @@ extraction.py's own step-112 retry addition: this doesn't distinguish a
 transient failure (worth retrying) from a permanent one (an invalid
 API key, which will fail identically every retry) -- it burns the full
 retry budget either way before landing on "embedding_failed".
+
+As of step 114, _run_embedding_generation deletes any existing Chunk
+rows for the document right before inserting the new ones -- the same
+task now safely handles being dispatched a SECOND time for a document
+that already has chunks (routers/document.py's new reindex endpoint is
+what makes that reachable), rather than crashing on the (document_id,
+index) unique constraint. Deletion happens only once the new
+embeddings are already computed and ready to insert, in the same
+commit as the insert -- if the embedding call itself fails, the OLD
+chunks are untouched, so a failed re-index attempt never leaves a
+document with zero chunks. This also closes a real, previously
+documented tension: overriding a document's chunking_strategy (step
+103) never used to actually regenerate its chunks -- that gap is
+finally closeable now, via the reindex endpoint, not automatically.
 """
 
 import asyncio
 import uuid
 from collections.abc import Callable
 from typing import Any
+
+from sqlalchemy import delete
 
 from celery_app import celery_app
 from chunking_fixed_size import chunk_fixed_size
@@ -123,6 +139,15 @@ async def _run_embedding_generation(document_id: uuid.UUID, tenant_id: uuid.UUID
             await session.commit()
             raise
 
+        # Delete any existing chunks only now that the new ones are
+        # actually ready to replace them (step 114's re-index endpoint
+        # is what makes this path reachable a second time for the same
+        # document) -- deleting first and only then discovering the
+        # embedding call above had failed would leave the document with
+        # zero chunks, worse off than before the re-index was attempted.
+        await session.execute(
+            delete(Chunk).where(Chunk.document_id == document_id, Chunk.tenant_id == tenant_id)
+        )
         session.add_all(
             Chunk(
                 tenant_id=tenant_id,

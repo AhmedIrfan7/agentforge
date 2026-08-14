@@ -182,3 +182,88 @@ async def test_raises_when_document_has_no_chunking_strategy() -> None:
 
 def test_embedding_batch_size_is_positive() -> None:
     assert EMBEDDING_BATCH_SIZE > 0
+
+
+@pytest.mark.anyio
+async def test_rerunning_replaces_old_chunks_not_duplicates_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Roadmap step 114 -- the reindex endpoint dispatches this exact
+    task a second time for a document that already has chunks. Without
+    deleting the old rows first, the second run's inserts would collide
+    on (document_id, index) instead of replacing anything."""
+    monkeypatch.setattr("embeddings_pipeline._embedding_provider", _FakeEmbeddingProvider())
+
+    tenant_id, document_id = await _new_document(
+        "embed-rerun", extracted_text="First sentence here. Second sentence follows."
+    )
+    await _run_embedding_generation(document_id, tenant_id)
+
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        result = await session.execute(
+            select(Chunk).where(Chunk.document_id == document_id).order_by(Chunk.index)
+        )
+        first_run_ids = [c.id for c in result.scalars().all()]
+
+    await _run_embedding_generation(document_id, tenant_id)
+
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        document = await session.get(Document, document_id)
+        assert document is not None
+        assert document.status == "embedded"
+
+        result = await session.execute(
+            select(Chunk).where(Chunk.document_id == document_id).order_by(Chunk.index)
+        )
+        chunks = result.scalars().all()
+        assert [c.index for c in chunks] == list(range(len(chunks)))
+        # Genuinely replaced, not appended to -- same count, different
+        # row identities.
+        assert len(chunks) == len(first_run_ids)
+        assert [c.id for c in chunks] != first_run_ids
+
+
+@pytest.mark.anyio
+async def test_failed_rerun_leaves_old_chunks_intact(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A re-index attempt that fails during embedding must not delete
+    the still-working chunks from the previous successful run -- deleting
+    first and only then discovering the new embeddings failed would leave
+    the document with zero chunks, worse than before the retry."""
+    monkeypatch.setattr("embeddings_pipeline._embedding_provider", _FakeEmbeddingProvider())
+    tenant_id, document_id = await _new_document(
+        "embed-rerun-fail", extracted_text="First sentence here. Second sentence follows."
+    )
+    await _run_embedding_generation(document_id, tenant_id)
+
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        result = await session.execute(
+            select(Chunk).where(Chunk.document_id == document_id).order_by(Chunk.index)
+        )
+        original_ids = [c.id for c in result.scalars().all()]
+        assert len(original_ids) >= 1
+
+    class _FailingProvider:
+        name = "failing"
+        dimensions = 1536
+
+        async def embed(self, texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("provider exploded on rerun")
+
+    monkeypatch.setattr("embeddings_pipeline._embedding_provider", _FailingProvider())
+    with pytest.raises(RuntimeError):
+        await _run_embedding_generation(document_id, tenant_id)
+
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        document = await session.get(Document, document_id)
+        assert document is not None
+        assert document.status == "embedding_failed"
+
+        result = await session.execute(
+            select(Chunk).where(Chunk.document_id == document_id).order_by(Chunk.index)
+        )
+        chunks = result.scalars().all()
+        assert [c.id for c in chunks] == original_ids

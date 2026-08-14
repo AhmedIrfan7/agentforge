@@ -44,7 +44,8 @@ from audit import write_audit_log
 from config import settings
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
-from errors import InvalidChunkingStrategyError, NotFoundError
+from embeddings_pipeline import dispatch_embedding_generation
+from errors import ConflictError, InvalidChunkingStrategyError, NotFoundError
 from extraction import dispatch_extraction
 from models.knowledge_base import KnowledgeBase
 from pipeline_status import compute_pipeline_stages
@@ -303,3 +304,61 @@ async def override_chunking_strategy(
     )
 
     return ChunkingDecisionRead(strategy=body.strategy, source=source, reasoning=reasoning)
+
+
+@router.post(
+    "/{document_id}/reindex",
+    response_model=DocumentStatusRead,
+    status_code=202,
+    dependencies=[Depends(require_permission("document:update"))],
+)
+async def reindex_document(
+    document_id: uuid.UUID,
+    session: TenantDb,
+    tenant_id: TenantId,
+    knowledge_base: TargetKnowledgeBase,
+) -> DocumentStatusRead:
+    """Roadmap step 114 -- re-runs chunk generation + embedding
+    generation (embeddings_pipeline.py:dispatch_embedding_generation,
+    unchanged, reused as-is) against the document's CURRENT
+    chunking_strategy. Closes a real, previously documented tension:
+    overriding chunking_strategy (step 103) never used to actually
+    regenerate a document's chunks -- this is that missing trigger,
+    explicit rather than automatic, so a caller reviews/overrides first
+    (103) and then deliberately re-indexes (this endpoint), not a
+    silent re-chunk on every override.
+
+    409, not 404 or 422 -- the document exists and the request is
+    well-formed, but re-indexing something that was never successfully
+    extracted (no chunking_strategy set yet) isn't a valid action on
+    this resource right now, the same "right resource, wrong state"
+    reasoning Invitation's already-accepted 409 uses elsewhere in this
+    codebase. document:update, same permission the override endpoint
+    already requires -- this is a further mutation of the same
+    document-processing-decision capability, not a new one.
+
+    Async, same shape as upload_document dispatching extraction: 202
+    Accepted with the current (still "embedded"/"embedding_failed" from
+    the PREVIOUS run) status, not the finished result -- a client polls
+    .../status or .../pipeline-status afterward, same as it already does
+    after upload."""
+    repo = DocumentRepository(session, tenant_id)
+    document = await repo.get(document_id)
+    if document is None or document.knowledge_base_id != knowledge_base.id:
+        raise NotFoundError(f"Document {document_id} not found.")
+    if document.chunking_strategy is None:
+        raise ConflictError(
+            f"Document {document_id} has no chunking strategy set yet -- "
+            "it must be successfully extracted before it can be re-indexed."
+        )
+
+    await write_audit_log(
+        session,
+        tenant_id=tenant_id,
+        action="document.reindex",
+        resource_type="document",
+        resource_id=document.id,
+    )
+
+    dispatch_embedding_generation.delay(str(document.id), str(tenant_id))
+    return DocumentStatusRead.model_validate(document)
