@@ -77,6 +77,16 @@ which never changes) rather than the current column value (which does,
 as overrides happen) -- so overriding a document more than once still
 correctly names what was actually recommended, not whatever the
 previous decision happened to be.
+
+As of step 108, a successful extraction also dispatches
+embeddings_pipeline.py:dispatch_embedding_generation -- the same
+"one stage's success kicks off the next" shape upload_document already
+uses to start extraction itself. Dispatched only after _run_extraction's
+own asyncio.run() returns without raising, i.e. only once
+Document.chunking_strategy is genuinely set and committed -- not from
+inside _run_extraction itself, so a retried/duplicate extraction attempt
+(the _DocumentNotFoundYet path) can't also duplicate-dispatch embedding
+generation.
 """
 
 import asyncio
@@ -88,6 +98,7 @@ from agents.chunking_recommendation import ChunkingRecommendationAgent
 from agents.document_analysis import DocumentAnalysisAgent
 from celery_app import celery_app
 from db import get_worker_session, set_tenant_context
+from embeddings_pipeline import dispatch_embedding_generation
 from extraction_docx import extract_docx
 from extraction_html import extract_html
 from extraction_metadata import build_doc_metadata
@@ -130,7 +141,12 @@ class _DocumentNotFoundYet(Exception):
     its life). Caught by dispatch_extraction and retried."""
 
 
-async def _run_extraction(document_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
+async def _run_extraction(document_id: uuid.UUID, tenant_id: uuid.UUID) -> bool:
+    """Returns True only when extraction actually reached
+    Document.chunking_strategy being set -- the one condition
+    dispatch_extraction needs before it's safe to dispatch embedding
+    generation next. False (not an exception) for the honest
+    "extraction_unsupported" outcome, which isn't a failure."""
     async with get_worker_session() as session:
         await set_tenant_context(session, tenant_id)
         repo = DocumentRepository(session, tenant_id)
@@ -143,7 +159,7 @@ async def _run_extraction(document_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
         if handler is None:
             document.status = "extraction_unsupported"
             await session.commit()
-            return
+            return False
 
         document.status = "processing"
         await session.commit()
@@ -184,11 +200,14 @@ async def _run_extraction(document_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
         document.chunking_strategy_source = "recommended"
         document.chunking_strategy_reasoning = chunking_recommendation.reasoning
         await session.commit()
+        return True
 
 
 @celery_app.task(bind=True, name="dispatch_extraction", max_retries=5)  # type: ignore[untyped-decorator]
 def dispatch_extraction(self: Any, document_id: str, tenant_id: str) -> None:
     try:
-        asyncio.run(_run_extraction(uuid.UUID(document_id), uuid.UUID(tenant_id)))
+        extracted = asyncio.run(_run_extraction(uuid.UUID(document_id), uuid.UUID(tenant_id)))
     except _DocumentNotFoundYet as exc:
         raise self.retry(countdown=1, exc=exc) from exc
+    if extracted:
+        dispatch_embedding_generation.delay(document_id, tenant_id)

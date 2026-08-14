@@ -13,23 +13,21 @@ for every strategy except chunking_markdown_heading.py/chunking_
 recursive_hybrid.py's own documented, narrow exception for a sub-split
 oversized section's later pieces).
 
-No embedding-related columns yet (vector, embedding model, etc.) --
-those are steps 106-109's job (embedding-provider abstraction, the
-provider implementation, batched generation, the pgvector column
-itself), the same "add the field when the step that needs it lands"
-discipline already used throughout this project (Document's own
-storage_key/content_type/size_bytes were deferred from step 083 to 084
-for the identical reason).
+`embedding` (added at step 108, folding in step 109's own literal task
+early -- see embeddings_pipeline.py's module docstring for why) is
+`pgvector.sqlalchemy.Vector(1536)`, nullable: a Chunk exists the moment
+its text/start/end/index are known, before an embedding is computed for
+it, so the column can't be NOT NULL. 1536 is `embeddings.openai
+.OpenAIEmbeddingProvider.dimensions` exactly (text-embedding-3-small's
+native output size) -- the only real provider this roadmap ever adds
+behind `EmbeddingProvider` (checked: no second embedding-provider step
+exists anywhere in docs/ROADMAP.md), so there's no speculative
+multi-provider dimension mismatch to design around here.
 
-Real, honest gap this step doesn't close: nothing actually DISPATCHES
-chunking yet -- no code path creates a Chunk row from a Document's
-extracted_text and its chunking_strategy. The roadmap has no step
-between this one and 108 ("background task: batched embedding
-generation") dedicated to that dispatch; 108 is the first step whose
-own description implies chunks already exist to embed. Tracked here
-explicitly rather than silently assumed away -- whoever picks up 106+
-needs to either find that dispatch already exists by then or build it
-as part of getting embeddings generated.
+Step 105's own gap ("nothing dispatches chunking yet") is closed as of
+step 108: embeddings_pipeline.py creates real Chunk rows from a
+Document's extracted_text + chunking_strategy, immediately followed by
+embedding generation in the same task.
 
 (document_id, index) is unique -- two chunks can't legitimately occupy
 the same position within one document; re-chunking a document (a
@@ -39,17 +37,37 @@ outright, not create a second, colliding index 0.
 
 import uuid
 
-from sqlalchemy import ForeignKey, UniqueConstraint
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import ForeignKey, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db import Base
 from models.mixins import TenantScopedEntity, TimestampMixin
 
+EMBEDDING_DIMENSIONS = 1536
+
 
 class Chunk(TenantScopedEntity, TimestampMixin, Base):
     __tablename__ = "chunks"
-    __table_args__ = (UniqueConstraint("document_id", "index", name="uq_chunks_document_id_index"),)
+    __table_args__ = (
+        UniqueConstraint("document_id", "index", name="uq_chunks_document_id_index"),
+        # ivfflat, not hnsw: this project's default choice for a first
+        # ANN index -- cheaper to build and good enough at the row counts
+        # a real deployment starts at; step 110 ("background task: vector
+        # indexing") owns rebuilding/tuning this as data grows, not this
+        # migration's job to get right forever. Cosine ops since that's
+        # the distance OpenAI's own embeddings are meant to be compared
+        # with (verified against OpenAI's docs, same as embeddings/
+        # openai.py's own model choice).
+        Index(
+            "ix_chunks_embedding_ivfflat",
+            "embedding",
+            postgresql_using="ivfflat",
+            postgresql_with={"lists": 100},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
 
     document_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -61,3 +79,6 @@ class Chunk(TenantScopedEntity, TimestampMixin, Base):
     start: Mapped[int] = mapped_column(nullable=False)
     end: Mapped[int] = mapped_column(nullable=False)
     index: Mapped[int] = mapped_column(nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(EMBEDDING_DIMENSIONS), nullable=True
+    )
