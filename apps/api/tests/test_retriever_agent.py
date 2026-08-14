@@ -24,12 +24,17 @@ Postgres/fakes needed, since rerank() itself only maps RetrievedChunk
 to/from RerankCandidate/RerankResult around a caller-supplied
 RerankerProvider, and LexicalReranker has no external dependency of
 its own to fake.
+
+Step 129's retrieval-quality logging is tested with structlog's own
+`structlog.testing.capture_logs()` (verified live before trusting it)
+-- real structured-logging output, not a mock of the logging call.
 """
 
 import uuid
 from dataclasses import dataclass, field
 
 import pytest
+import structlog
 
 from agents.retriever import RetrievedChunk, RetrieverAgent
 from db import get_session, set_tenant_context
@@ -318,3 +323,98 @@ async def test_rerank_reorders_results_by_the_provided_reranker() -> None:
     reranked = await agent.rerank(LexicalReranker(), "refund policy", results)
 
     assert [r.chunk_id for r in reranked] == [strong_match_id, weak_match_id]
+
+
+@pytest.mark.anyio
+async def test_search_dense_logs_a_retrieval_quality_event() -> None:
+    tenant_id, kb_id, document_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    vector_store = _FakeVectorStore()
+    await vector_store.upsert(
+        tenant_id,
+        kb_id,
+        [
+            VectorRecord(
+                id=uuid.uuid4(), document_id=document_id, text="a chunk", embedding=[1.0, 0.0]
+            )
+        ],
+    )
+    agent = RetrieverAgent(_FakeEmbeddingProvider(), vector_store)
+
+    with structlog.testing.capture_logs() as logs:
+        await agent.search_dense(tenant_id, kb_id, "some query", top_k=5)
+
+    events = [entry for entry in logs if entry["event"] == "retrieval_dense_search"]
+    assert len(events) == 1
+    assert events[0]["query"] == "some query"
+    assert events[0]["result_count"] == 1
+    assert events[0]["scores"] == [1.0]
+    assert isinstance(events[0]["latency_ms"], float)
+
+
+@pytest.mark.anyio
+async def test_search_keyword_logs_a_retrieval_quality_event() -> None:
+    tenant_id, kb_id, document_id = await _new_org_workspace_kb_document("retr-agent-log-kw")
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        session.add(
+            Chunk(
+                tenant_id=tenant_id,
+                document_id=document_id,
+                text="refund policy details",
+                start=0,
+                end=1,
+                index=0,
+            )
+        )
+        await session.commit()
+
+    agent = RetrieverAgent(_FakeEmbeddingProvider(), _FakeVectorStore())
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        repo = ChunkRepository(session, tenant_id)
+        with structlog.testing.capture_logs() as logs:
+            await agent.search_keyword(repo, kb_id, "refund policy")
+
+    events = [entry for entry in logs if entry["event"] == "retrieval_keyword_search"]
+    assert len(events) == 1
+    assert events[0]["result_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_search_hybrid_logs_all_three_retrieval_events() -> None:
+    """hybrid's two real sub-searches each log their own event too --
+    an honest reflection of the real work done, not suppressed."""
+    tenant_id, kb_id, document_id = await _new_org_workspace_kb_document("retr-agent-log-hybrid")
+    agent = RetrieverAgent(_FakeEmbeddingProvider(), _FakeVectorStore())
+
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        repo = ChunkRepository(session, tenant_id)
+        with structlog.testing.capture_logs() as logs:
+            await agent.search_hybrid(tenant_id, repo, kb_id, "some query")
+
+    event_names = [entry["event"] for entry in logs]
+    assert event_names == [
+        "retrieval_dense_search",
+        "retrieval_keyword_search",
+        "retrieval_hybrid_search",
+    ]
+
+
+@pytest.mark.anyio
+async def test_rerank_logs_a_retrieval_quality_event() -> None:
+    agent = RetrieverAgent(_FakeEmbeddingProvider(), _FakeVectorStore())
+    document_id = uuid.uuid4()
+    results = [
+        RetrievedChunk(
+            chunk_id=uuid.uuid4(), document_id=document_id, text="refund policy", score=0.5
+        )
+    ]
+
+    with structlog.testing.capture_logs() as logs:
+        await agent.rerank(LexicalReranker(), "refund policy", results)
+
+    events = [entry for entry in logs if entry["event"] == "retrieval_rerank"]
+    assert len(events) == 1
+    assert events[0]["reranker"] == "lexical"
+    assert events[0]["result_count"] == 1

@@ -52,17 +52,37 @@ constructor-held collaborator like embedding_provider/vector_store --
 there's no router step yet that always wants reranking applied (unlike
 embedding_provider/vector_store, which every dense/hybrid call needs),
 so nothing yet justifies a fixed, always-used instance.
+
+As of step 129, every search_*/rerank method logs one structured event
+(query, result count, scores, latency_ms) via `logging_config.py`'s
+existing `get_logger(__name__)` convention (module-level `logger`,
+snake_case event name as the first positional arg -- same shape
+errors.py/main.py/notifications/email.py already use). Query text is
+logged verbatim, not hashed or redacted -- this codebase has no
+existing PII-redaction convention for logged user input (notifications/
+email.py already logs a real recipient email address the same way),
+so redacting only retrieval queries would be a new, inconsistent
+policy invented here rather than an established one applied
+consistently; `_log_retrieval` is one small private helper shared by
+all three search_* methods (identical shape each time), not
+duplicated three times, since `rerank()`'s own event has a genuinely
+different field set (no `knowledge_base_id`, no query embedding step)
+and stays separate.
 """
 
+import time
 import uuid
 from dataclasses import dataclass
 
 from agents.base import Agent
 from embeddings.base import EmbeddingProvider
+from logging_config import get_logger
 from repositories.chunk import ChunkRepository
 from rerankers.base import RerankCandidate, RerankerProvider
 from retrieval_fusion import reciprocal_rank_fusion
 from vectorstore.base import SearchFilters, VectorStore
+
+logger = get_logger(__name__)
 
 # Same reasoning and same value as routers/retrieval.py's own pre-step-124
 # constant: each underlying retriever is queried for this many candidates
@@ -81,6 +101,24 @@ class RetrievedChunk:
     score: float
 
 
+def _log_retrieval(
+    event: str,
+    *,
+    query: str,
+    knowledge_base_id: uuid.UUID,
+    results: list[RetrievedChunk],
+    latency_ms: float,
+) -> None:
+    logger.info(
+        event,
+        query=query,
+        knowledge_base_id=str(knowledge_base_id),
+        result_count=len(results),
+        scores=[r.score for r in results],
+        latency_ms=round(latency_ms, 2),
+    )
+
+
 class RetrieverAgent(Agent):
     name = "retriever"
 
@@ -97,16 +135,25 @@ class RetrieverAgent(Agent):
         top_k: int = 10,
         filters: SearchFilters | None = None,
     ) -> list[RetrievedChunk]:
+        start = time.perf_counter()
         query_vectors = await self._embedding_provider.embed([query])
         results = await self._vector_store.search(
             tenant_id, knowledge_base_id, query_vectors[0], top_k=top_k, filters=filters
         )
-        return [
+        mapped = [
             RetrievedChunk(
                 chunk_id=r.chunk_id, document_id=r.document_id, text=r.text, score=r.score
             )
             for r in results
         ]
+        _log_retrieval(
+            "retrieval_dense_search",
+            query=query,
+            knowledge_base_id=knowledge_base_id,
+            results=mapped,
+            latency_ms=(time.perf_counter() - start) * 1000,
+        )
+        return mapped
 
     async def search_keyword(
         self,
@@ -117,6 +164,7 @@ class RetrieverAgent(Agent):
         top_k: int = 10,
         filters: SearchFilters | None = None,
     ) -> list[RetrievedChunk]:
+        start = time.perf_counter()
         results = await chunk_repo.search_by_keyword(
             knowledge_base_id,
             query,
@@ -124,12 +172,20 @@ class RetrieverAgent(Agent):
             document_id=filters.document_id if filters else None,
             document_type=filters.document_type if filters else None,
         )
-        return [
+        mapped = [
             RetrievedChunk(
                 chunk_id=r.chunk_id, document_id=r.document_id, text=r.text, score=r.score
             )
             for r in results
         ]
+        _log_retrieval(
+            "retrieval_keyword_search",
+            query=query,
+            knowledge_base_id=knowledge_base_id,
+            results=mapped,
+            latency_ms=(time.perf_counter() - start) * 1000,
+        )
+        return mapped
 
     async def search_hybrid(
         self,
@@ -141,6 +197,7 @@ class RetrieverAgent(Agent):
         top_k: int = 10,
         filters: SearchFilters | None = None,
     ) -> list[RetrievedChunk]:
+        start = time.perf_counter()
         dense_results = await self.search_dense(
             tenant_id,
             knowledge_base_id,
@@ -169,7 +226,7 @@ class RetrieverAgent(Agent):
         lookup.update({r.chunk_id: r for r in keyword_results})
 
         ranked_ids = sorted(fused_scores, key=lambda chunk_id: fused_scores[chunk_id], reverse=True)
-        return [
+        mapped = [
             RetrievedChunk(
                 chunk_id=chunk_id,
                 document_id=lookup[chunk_id].document_id,
@@ -178,15 +235,28 @@ class RetrieverAgent(Agent):
             )
             for chunk_id in ranked_ids[:top_k]
         ]
+        # Latency covers the whole hybrid operation -- both sub-searches
+        # (each already logged their own event above) plus fusion --
+        # the honest end-to-end cost of calling search_hybrid, not just
+        # the fusion step on its own.
+        _log_retrieval(
+            "retrieval_hybrid_search",
+            query=query,
+            knowledge_base_id=knowledge_base_id,
+            results=mapped,
+            latency_ms=(time.perf_counter() - start) * 1000,
+        )
+        return mapped
 
     async def rerank(
         self, reranker: RerankerProvider, query: str, results: list[RetrievedChunk]
     ) -> list[RetrievedChunk]:
+        start = time.perf_counter()
         candidates = [RerankCandidate(id=r.chunk_id, text=r.text) for r in results]
         rerank_results = await reranker.rerank(query, candidates)
 
         lookup = {r.chunk_id: r for r in results}
-        return [
+        reranked = [
             RetrievedChunk(
                 chunk_id=rr.id,
                 document_id=lookup[rr.id].document_id,
@@ -195,3 +265,12 @@ class RetrieverAgent(Agent):
             )
             for rr in rerank_results
         ]
+        logger.info(
+            "retrieval_rerank",
+            query=query,
+            reranker=reranker.name,
+            result_count=len(reranked),
+            scores=[r.score for r in reranked],
+            latency_ms=round((time.perf_counter() - start) * 1000, 2),
+        )
+        return reranked
