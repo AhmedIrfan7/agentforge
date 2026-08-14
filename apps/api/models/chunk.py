@@ -33,13 +33,28 @@ embedding generation in the same task.
 the same position within one document; re-chunking a document (a
 future concern, not this step's) would need to replace its old chunks
 outright, not create a second, colliding index 0.
+
+`search_vector` (step 121) is a DB-computed column (`GENERATED ALWAYS
+AS ... STORED`), not something application code sets -- verified live
+before trusting it (sqlalchemy.Computed compiles to the real Postgres
+GENERATED syntax, and a real to_tsvector/plainto_tsquery/ts_rank round
+trip against a temp table matched correctly). Deriving it from `text`
+at the DB level guarantees it can never drift out of sync the way an
+application-set column could if some future write path forgot to
+update it -- Postgres itself keeps it current on every insert/update to
+`text`, the same reasoning `embedding`'s ivfflat index gets automatic
+maintenance from Postgres rather than application code. Deliberately
+separate from `embedding`/vector search -- keyword/full-text and dense
+retrieval are two different mechanisms (confirmed at step 118's own
+design: VectorStore is vector-similarity only), not one interface
+trying to do both.
 """
 
 import uuid
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import ForeignKey, Index, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Computed, ForeignKey, Index, UniqueConstraint
+from sqlalchemy.dialects.postgresql import TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db import Base
@@ -67,6 +82,12 @@ class Chunk(TenantScopedEntity, TimestampMixin, Base):
             postgresql_with={"lists": 100},
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
+        # GIN, the standard, Postgres-recommended index type for
+        # tsvector full-text search -- unrelated to ivfflat/embedding's
+        # own indexing concerns above, a completely different query
+        # pattern (@@ match against a tsquery, not nearest-neighbor
+        # distance).
+        Index("ix_chunks_search_vector_gin", "search_vector", postgresql_using="gin"),
     )
 
     document_id: Mapped[uuid.UUID] = mapped_column(
@@ -81,4 +102,7 @@ class Chunk(TenantScopedEntity, TimestampMixin, Base):
     index: Mapped[int] = mapped_column(nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(
         Vector(EMBEDDING_DIMENSIONS), nullable=True
+    )
+    search_vector: Mapped[str] = mapped_column(
+        TSVECTOR, Computed("to_tsvector('english', text)", persisted=True), nullable=False
     )

@@ -107,6 +107,12 @@ def _search_url(org_id: uuid.UUID, workspace_id: uuid.UUID, kb_id: uuid.UUID) ->
     return f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/search"
 
 
+def _keyword_search_url(org_id: uuid.UUID, workspace_id: uuid.UUID, kb_id: uuid.UUID) -> str:
+    return (
+        f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/search/keyword"
+    )
+
+
 @pytest.mark.anyio
 async def test_dense_search_returns_the_closest_chunk_first(
     monkeypatch: pytest.MonkeyPatch,
@@ -304,4 +310,132 @@ async def test_end_user_role_cannot_search() -> None:
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(owner_email)
+
+
+@pytest.mark.anyio
+async def test_keyword_search_returns_matching_chunk() -> None:
+    """No fake provider needed here, unlike dense search -- keyword
+    search has no embedding step, so this works for real in every
+    environment including one with no OPENAI_API_KEY."""
+    email = "endpoint-test-retrieval-owner-6@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        document_response = client.post(
+            f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/documents",
+            files={"file": ("doc.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = uuid.UUID(document_response.json()["id"])
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            session.add_all(
+                [
+                    Chunk(
+                        tenant_id=org_id,
+                        document_id=document_id,
+                        text="Our refund policy allows returns within thirty days.",
+                        start=0,
+                        end=1,
+                        index=0,
+                    ),
+                    Chunk(
+                        tenant_id=org_id,
+                        document_id=document_id,
+                        text="The quick brown fox jumps over the lazy dog.",
+                        start=1,
+                        end=2,
+                        index=1,
+                    ),
+                ]
+            )
+            await session.commit()
+
+        response = client.post(
+            _keyword_search_url(org_id, workspace_id, kb_id),
+            json={"query": "refund policy"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body) == 1
+        assert "refund policy" in body[0]["text"]
+        assert body[0]["document_id"] == str(document_id)
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_keyword_search_with_no_matches_returns_empty_list() -> None:
+    email = "endpoint-test-retrieval-owner-7@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        response = client.post(
+            _keyword_search_url(org_id, workspace_id, kb_id),
+            json={"query": "nothing matches this"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert response.json() == []
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_keyword_search_for_nonexistent_knowledge_base_returns_404() -> None:
+    email = "endpoint-test-retrieval-owner-8@example.com"
+    org_id, workspace_id, _kb_id, headers = _new_org_with_kb(email)
+    try:
+        response = client.post(
+            _keyword_search_url(org_id, workspace_id, uuid.uuid4()),
+            json={"query": "query"},
+            headers=headers,
+        )
+        assert response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_end_user_role_cannot_keyword_search() -> None:
+    owner_email = "endpoint-test-retrieval-owner-9@example.com"
+    org_id, workspace_id, kb_id, owner_headers = _new_org_with_kb(owner_email)
+    try:
+        member_token = signup_and_login(
+            client,
+            email="endpoint-test-retrieval-kw-member@example.com",
+            password="correct horse battery staple",
+            full_name="Retrieval KW Member",
+        )
+        async with get_session() as session:
+            result = await session.execute(
+                select(User).where(User.email == "endpoint-test-retrieval-kw-member@example.com")
+            )
+            member_user = result.scalar_one()
+            role_result = await session.execute(select(Role).where(Role.name == "end_user"))
+            end_user_role = role_result.scalar_one()
+            await set_tenant_context(session, org_id)
+            session.add(
+                Membership(
+                    tenant_id=org_id,
+                    user_id=member_user.id,
+                    workspace_id=None,
+                    role_id=end_user_role.id,
+                )
+            )
+            await session.commit()
+
+        response = client.post(
+            _keyword_search_url(org_id, workspace_id, kb_id),
+            json={"query": "query"},
+            headers=auth_headers(member_token),
+        )
+        assert response.status_code == 403
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user("endpoint-test-retrieval-kw-member@example.com")
         await _cleanup_user("endpoint-test-retrieval-member@example.com")
