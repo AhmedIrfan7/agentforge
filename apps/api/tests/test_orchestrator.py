@@ -7,11 +7,27 @@ set internal graph state. The retriever step is tested against real
 Postgres (same "no mocks for infrastructure this project owns"
 reasoning test_retriever_agent.py already established) -- it's the
 one real mechanism (keyword search) that works with no OPENAI_API_KEY.
+
+As of step 157, also covers the orchestrator integration test the
+roadmap's own parenthetical asks for: "full request->response trace."
+Every test above already proves handle()'s real RESPONSE value is
+correct; none of them prove the request is actually TRACED end to end
+-- agents/tracing.py's traced_run (153) is wired into _planning_node/
+_execute_node, but nothing until now called handle() inside
+structlog.testing.capture_logs() to verify the "agent_execution" event
+this project's own tracing infrastructure promises actually fires for
+every real per-agent step a request triggers, and only those steps --
+tying steps 140-143 (the orchestrator itself) and 153 (tracing)
+together into one integration-level guarantee neither step alone
+proves on its own.
 """
 
 import uuid
+from collections.abc import MutableMapping
+from typing import Any
 
 import pytest
+import structlog.testing
 
 from agents.registry import AgentRegistry
 from db import get_session, set_tenant_context
@@ -178,3 +194,50 @@ async def test_handle_is_scoped_to_the_given_knowledge_base() -> None:
     assert result == "No results found."
     assert tenant_id != other_tenant_id
     assert kb_id != other_kb_id
+
+
+def _agent_execution_events(
+    logs: list[MutableMapping[str, Any]],
+) -> list[MutableMapping[str, Any]]:
+    return [entry for entry in logs if entry["event"] == "agent_execution"]
+
+
+@pytest.mark.anyio
+async def test_handle_produces_a_full_trace_across_every_real_agent_step() -> None:
+    """A real document-search request runs two real, traced agent
+    steps -- planning (142) then retriever (143) -- and nothing else;
+    this asserts the real response AND that both, and only both, are
+    traced, in the order the graph actually runs them."""
+    tenant_id, kb_id = await _new_org_workspace_kb_with_chunk(
+        "orch-trace-hit", text="Our refund policy allows returns within thirty days."
+    )
+    orchestrator = Orchestrator(AgentRegistry())
+
+    with structlog.testing.capture_logs() as logs:
+        result = await orchestrator.handle(
+            "refund policy", tenant_id=tenant_id, knowledge_base_id=kb_id
+        )
+
+    assert result == "Our refund policy allows returns within thirty days."
+    events = _agent_execution_events(logs)
+    assert [e["agent_name"] for e in events] == ["planning", "retriever"]
+    assert all(e["status"] == "success" for e in events)
+
+
+@pytest.mark.anyio
+async def test_handle_traces_planning_but_not_retriever_for_an_empty_query() -> None:
+    """_planning_node always runs (140-141's own graph shape means
+    every request reaches it); _execute_node's echo short-circuit for
+    an empty query means the retriever agent is never constructed or
+    called -- the trace should honestly reflect that, not claim a step
+    ran that didn't."""
+    orchestrator = Orchestrator(AgentRegistry())
+
+    with structlog.testing.capture_logs() as logs:
+        result = await orchestrator.handle(
+            "   ", tenant_id=uuid.uuid4(), knowledge_base_id=uuid.uuid4()
+        )
+
+    assert result == "   "
+    events = _agent_execution_events(logs)
+    assert [e["agent_name"] for e in events] == ["planning"]
