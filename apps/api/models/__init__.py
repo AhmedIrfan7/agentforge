@@ -2,6 +2,7 @@
 for Alembic autogenerate — see migrations/env.py."""
 
 from models.audit_log import AuditLog
+from models.chunk import Chunk
 from models.document import Document
 from models.invitation import Invitation
 from models.knowledge_base import KnowledgeBase
@@ -19,6 +20,7 @@ from models.workspace import Workspace
 
 __all__ = [
     "AuditLog",
+    "Chunk",
     "Document",
     "Invitation",
     "KnowledgeBase",
