@@ -61,6 +61,11 @@ truncated -- fusing only within each retriever's own top_k (if a caller
 asked for a small one) risks missing a chunk that ranks well in one
 retriever but just outside the other's narrow top_k, defeating the
 point of combining two signals.
+
+As of step 123, SearchRequest.document_id/document_type (schemas/
+retrieval.py) are passed through to all three endpoints -- dense via
+vectorstore/base.py:SearchFilters, keyword/hybrid's own keyword-search
+half via ChunkRepository.search_by_keyword's own keyword arguments.
 """
 
 import uuid
@@ -77,6 +82,7 @@ from embeddings.openai import OpenAIEmbeddingProvider
 from repositories.chunk import ChunkRepository
 from retrieval_fusion import reciprocal_rank_fusion
 from schemas.retrieval import SearchRequest, SearchResultRead
+from vectorstore.base import SearchFilters
 from vectorstore.pgvector import PgVectorStore
 
 HYBRID_CANDIDATE_POOL_SIZE = 50
@@ -108,8 +114,9 @@ async def dense_search(
     knowledge_base: TargetKnowledgeBase,
 ) -> list[SearchResultRead]:
     query_vectors = await _embedding_provider.embed([body.query])
+    filters = SearchFilters(document_id=body.document_id, document_type=body.document_type)
     results = await _vector_store.search(
-        tenant_id, knowledge_base.id, query_vectors[0], top_k=body.top_k
+        tenant_id, knowledge_base.id, query_vectors[0], top_k=body.top_k, filters=filters
     )
     return [
         SearchResultRead(chunk_id=r.chunk_id, document_id=r.document_id, text=r.text, score=r.score)
@@ -129,7 +136,13 @@ async def keyword_search(
     knowledge_base: TargetKnowledgeBase,
 ) -> list[SearchResultRead]:
     repo = ChunkRepository(session, tenant_id)
-    results = await repo.search_by_keyword(knowledge_base.id, body.query, top_k=body.top_k)
+    results = await repo.search_by_keyword(
+        knowledge_base.id,
+        body.query,
+        top_k=body.top_k,
+        document_id=body.document_id,
+        document_type=body.document_type,
+    )
     return [
         SearchResultRead(chunk_id=r.chunk_id, document_id=r.document_id, text=r.text, score=r.score)
         for r in results
@@ -148,13 +161,22 @@ async def hybrid_search(
     knowledge_base: TargetKnowledgeBase,
 ) -> list[SearchResultRead]:
     query_vectors = await _embedding_provider.embed([body.query])
+    filters = SearchFilters(document_id=body.document_id, document_type=body.document_type)
     dense_results = await _vector_store.search(
-        tenant_id, knowledge_base.id, query_vectors[0], top_k=HYBRID_CANDIDATE_POOL_SIZE
+        tenant_id,
+        knowledge_base.id,
+        query_vectors[0],
+        top_k=HYBRID_CANDIDATE_POOL_SIZE,
+        filters=filters,
     )
 
     repo = ChunkRepository(session, tenant_id)
     keyword_results = await repo.search_by_keyword(
-        knowledge_base.id, body.query, top_k=HYBRID_CANDIDATE_POOL_SIZE
+        knowledge_base.id,
+        body.query,
+        top_k=HYBRID_CANDIDATE_POOL_SIZE,
+        document_id=body.document_id,
+        document_type=body.document_type,
     )
 
     fused_scores = reciprocal_rank_fusion(

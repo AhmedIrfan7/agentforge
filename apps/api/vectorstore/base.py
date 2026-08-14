@@ -19,16 +19,18 @@ store implementation is exactly the kind of place a forgotten tenant
 filter would leak data across tenants, so it's a required parameter on
 every call, not an afterthought.
 
-Deliberately minimal beyond that: no metadata-filtering parameter on
-search() yet, even though step 123 ("Add metadata filtering in
-retrieval queries") is already known to need one -- same "add the field
-when the step that needs it lands" discipline this project used
-throughout the ingestion pipeline (Document's own storage_key/
-content_type/size_bytes deferred from step 083 to 084 for the identical
-reason) rather than guessing at a filter shape before a real caller
-exists to prove out what's actually needed. top_k is the one search
-parameter step 120 ("dense (vector similarity) retrieval endpoint")
-is already known to need, so it's here now.
+As of step 123, search() takes an optional SearchFilters -- deliberately
+NOT a speculative generic filter DSL, but exactly the two fields that
+are actually real and populated today: document_id (scope to one
+document, a common real RAG need) and document_type (agents/
+document_analysis.py's own classification, step 095, already stored in
+Document.doc_metadata). Both live on Document, not Chunk -- filtering
+means joining through Document, the same join every implementation of
+this interface already needs for knowledge_base_id scoping. No
+generic "filter by any doc_metadata key" mechanism: that would be
+designing against a guess about what a caller might someday want,
+rather than the two fields this codebase can actually already answer
+queries about.
 
 VectorRecord/VectorSearchResult intentionally don't carry start/end/
 index -- those are pgvector-adapter-specific implementation details
@@ -59,6 +61,12 @@ class VectorSearchResult:
     score: float  # similarity score -- higher means more similar
 
 
+@dataclass(frozen=True)
+class SearchFilters:
+    document_id: uuid.UUID | None = None
+    document_type: str | None = None
+
+
 class VectorStore(Protocol):
     name: str
 
@@ -73,4 +81,5 @@ class VectorStore(Protocol):
         query_vector: list[float],
         *,
         top_k: int = 10,
+        filters: SearchFilters | None = None,
     ) -> list[VectorSearchResult]: ...

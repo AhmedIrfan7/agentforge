@@ -41,7 +41,13 @@ class ChunkRepository(TenantScopedRepository[Chunk]):
         return result.scalar_one()
 
     async def search_by_keyword(
-        self, knowledge_base_id: uuid.UUID, query: str, *, top_k: int = 10
+        self,
+        knowledge_base_id: uuid.UUID,
+        query: str,
+        *,
+        top_k: int = 10,
+        document_id: uuid.UUID | None = None,
+        document_type: str | None = None,
     ) -> list[KeywordSearchResult]:
         """Roadmap step 121 -- Postgres full-text search against
         Chunk.search_vector (a DB-computed tsvector column, models/
@@ -56,7 +62,14 @@ class ChunkRepository(TenantScopedRepository[Chunk]):
         language input (no operator syntax a caller would need to know),
         the same "don't ask more of a query string than a search box
         realistically gets" reasoning applies here as anywhere else a
-        free-text query becomes a structured one."""
+        free-text query becomes a structured one.
+
+        As of step 123, document_id/document_type are optional filters --
+        same two fields, same reasoning, as vectorstore/base.py:
+        SearchFilters (dense search's own equivalent), kept as plain
+        keyword arguments here rather than a shared dataclass since
+        this repository isn't a VectorStore implementation and doesn't
+        need to satisfy that Protocol's exact shape."""
         ts_query = func.plainto_tsquery("english", query)
         rank = func.ts_rank(Chunk.search_vector, ts_query).label("rank")
         stmt = (
@@ -67,9 +80,12 @@ class ChunkRepository(TenantScopedRepository[Chunk]):
                 Document.knowledge_base_id == knowledge_base_id,
                 Chunk.search_vector.op("@@")(ts_query),
             )
-            .order_by(rank.desc())
-            .limit(top_k)
         )
+        if document_id is not None:
+            stmt = stmt.where(Chunk.document_id == document_id)
+        if document_type is not None:
+            stmt = stmt.where(Document.doc_metadata["document_type"].astext == document_type)
+        stmt = stmt.order_by(rank.desc()).limit(top_k)
         result = await self.session.execute(stmt)
         return [
             KeywordSearchResult(

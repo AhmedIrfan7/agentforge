@@ -36,6 +36,12 @@ embeddings_pipeline.py's own dispatch (which knows start/end/index from
 the real chunking algorithm) -- documented as a real, deliberate
 adapter limitation rather than weakening Chunk's own NOT NULL columns
 to accommodate a caller that doesn't exist yet.
+
+As of step 123, search() applies SearchFilters.document_type via
+Document.doc_metadata["document_type"].astext -- verified live before
+trusting it (SQLAlchemy's JSONB accessor + .astext compiles to the real
+Postgres ->> operator). document_id filters directly on Chunk.
+document_id, no JSONB involved.
 """
 
 import uuid
@@ -45,7 +51,7 @@ from sqlalchemy import select
 from db import get_worker_session, set_tenant_context
 from models.chunk import Chunk
 from models.document import Document
-from vectorstore.base import VectorRecord, VectorSearchResult
+from vectorstore.base import SearchFilters, VectorRecord, VectorSearchResult
 
 
 class PgVectorStore:
@@ -76,6 +82,7 @@ class PgVectorStore:
         query_vector: list[float],
         *,
         top_k: int = 10,
+        filters: SearchFilters | None = None,
     ) -> list[VectorSearchResult]:
         async with get_worker_session() as session:
             await set_tenant_context(session, tenant_id)
@@ -87,9 +94,15 @@ class PgVectorStore:
                     Document.knowledge_base_id == knowledge_base_id,
                     Chunk.embedding.is_not(None),
                 )
-                .order_by(Chunk.embedding.cosine_distance(query_vector))
-                .limit(top_k)
             )
+            if filters is not None:
+                if filters.document_id is not None:
+                    stmt = stmt.where(Chunk.document_id == filters.document_id)
+                if filters.document_type is not None:
+                    stmt = stmt.where(
+                        Document.doc_metadata["document_type"].astext == filters.document_type
+                    )
+            stmt = stmt.order_by(Chunk.embedding.cosine_distance(query_vector)).limit(top_k)
             result = await session.execute(stmt)
             return [
                 VectorSearchResult(

@@ -598,3 +598,72 @@ async def test_hybrid_search_for_nonexistent_knowledge_base_returns_404() -> Non
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_dense_search_document_id_filter_is_wired_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Roadmap step 123 -- filtering itself is proven directly against
+    real Postgres in test_pgvector_store.py/test_chunk_repository_
+    keyword_search.py; this only needs to prove SearchRequest.
+    document_id actually reaches the real endpoint's real query, the
+    same "prove the wiring, not re-derive the underlying logic"
+    reasoning every other endpoint test in this file already uses."""
+    monkeypatch.setattr(
+        "routers.retrieval._embedding_provider",
+        _FakeEmbeddingProvider(vectors_by_text={"query": _vector(lead=1.0)}),
+    )
+
+    email = "endpoint-test-retrieval-owner-14@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        docs_url = (
+            f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/documents"
+        )
+        first_response = client.post(
+            docs_url, files={"file": ("first.txt", b"content", "text/plain")}, headers=headers
+        )
+        first_id = uuid.UUID(first_response.json()["id"])
+        second_response = client.post(
+            docs_url, files={"file": ("second.txt", b"content", "text/plain")}, headers=headers
+        )
+        second_id = uuid.UUID(second_response.json()["id"])
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            session.add_all(
+                [
+                    Chunk(
+                        tenant_id=org_id,
+                        document_id=first_id,
+                        text="in first document",
+                        start=0,
+                        end=1,
+                        index=0,
+                        embedding=_vector(lead=1.0),
+                    ),
+                    Chunk(
+                        tenant_id=org_id,
+                        document_id=second_id,
+                        text="in second document",
+                        start=0,
+                        end=1,
+                        index=0,
+                        embedding=_vector(lead=1.0),
+                    ),
+                ]
+            )
+            await session.commit()
+
+        response = client.post(
+            _search_url(org_id, workspace_id, kb_id),
+            json={"query": "query", "document_id": str(first_id)},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert [r["text"] for r in body] == ["in first document"]
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)

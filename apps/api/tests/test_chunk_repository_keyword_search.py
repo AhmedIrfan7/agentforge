@@ -197,3 +197,106 @@ async def test_search_by_keyword_with_no_matches_returns_empty_list() -> None:
         results = await repo.search_by_keyword(kb_id, "refund policy", top_k=10)
 
     assert results == []
+
+
+@pytest.mark.anyio
+async def test_search_by_keyword_filters_by_document_id() -> None:
+    """Roadmap step 123."""
+    tenant_id, kb_id, document_id = await _new_org_workspace_kb_document("kw-filter-docid")
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        other_document = Document(
+            tenant_id=tenant_id,
+            knowledge_base_id=kb_id,
+            title="other.txt",
+            storage_key="kw-filter-docid/other.txt",
+            content_type="text/plain",
+            size_bytes=10,
+        )
+        session.add(other_document)
+        await session.flush()
+
+        session.add_all(
+            [
+                Chunk(
+                    tenant_id=tenant_id,
+                    document_id=document_id,
+                    text="refund policy in target document",
+                    start=0,
+                    end=1,
+                    index=0,
+                ),
+                Chunk(
+                    tenant_id=tenant_id,
+                    document_id=other_document.id,
+                    text="refund policy in other document",
+                    start=0,
+                    end=1,
+                    index=0,
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        repo = ChunkRepository(session, tenant_id)
+        results = await repo.search_by_keyword(
+            kb_id, "refund policy", top_k=10, document_id=document_id
+        )
+
+    assert [r.text for r in results] == ["refund policy in target document"]
+
+
+@pytest.mark.anyio
+async def test_search_by_keyword_filters_by_document_type() -> None:
+    """Roadmap step 123."""
+    tenant_id, kb_id, document_id = await _new_org_workspace_kb_document("kw-filter-doctype")
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        document = await session.get(Document, document_id)
+        assert document is not None
+        document.doc_metadata = {"document_type": "faq"}
+
+        other_document = Document(
+            tenant_id=tenant_id,
+            knowledge_base_id=kb_id,
+            title="other.txt",
+            storage_key="kw-filter-doctype/other.txt",
+            content_type="text/plain",
+            size_bytes=10,
+            doc_metadata={"document_type": "manual"},
+        )
+        session.add(other_document)
+        await session.flush()
+
+        session.add_all(
+            [
+                Chunk(
+                    tenant_id=tenant_id,
+                    document_id=document_id,
+                    text="refund policy in faq",
+                    start=0,
+                    end=1,
+                    index=0,
+                ),
+                Chunk(
+                    tenant_id=tenant_id,
+                    document_id=other_document.id,
+                    text="refund policy in manual",
+                    start=0,
+                    end=1,
+                    index=0,
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        repo = ChunkRepository(session, tenant_id)
+        results = await repo.search_by_keyword(
+            kb_id, "refund policy", top_k=10, document_type="faq"
+        )
+
+    assert [r.text for r in results] == ["refund policy in faq"]

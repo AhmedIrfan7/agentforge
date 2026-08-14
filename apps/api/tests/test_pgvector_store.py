@@ -18,7 +18,7 @@ from models.document import Document
 from models.knowledge_base import KnowledgeBase
 from models.organization import Organization
 from models.workspace import Workspace
-from vectorstore.base import VectorRecord
+from vectorstore.base import SearchFilters, VectorRecord
 from vectorstore.pgvector import PgVectorStore
 
 
@@ -248,6 +248,115 @@ async def test_upsert_updates_an_existing_chunks_text_and_embedding() -> None:
         assert updated.text == "updated text"
         assert updated.embedding is not None
         assert updated.embedding[0] == pytest.approx(5.0)
+
+
+@pytest.mark.anyio
+async def test_search_filters_by_document_id() -> None:
+    """Roadmap step 123."""
+    tenant_id, kb_id, document_id = await _new_org_workspace_kb_document("pgvs-filter-docid")
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        other_document = Document(
+            tenant_id=tenant_id,
+            knowledge_base_id=kb_id,
+            title="other.txt",
+            storage_key="pgvs-filter-docid/other.txt",
+            content_type="text/plain",
+            size_bytes=10,
+        )
+        session.add(other_document)
+        await session.flush()
+
+        session.add_all(
+            [
+                Chunk(
+                    tenant_id=tenant_id,
+                    document_id=document_id,
+                    text="in target document",
+                    start=0,
+                    end=1,
+                    index=0,
+                    embedding=_vector(lead=1.0),
+                ),
+                Chunk(
+                    tenant_id=tenant_id,
+                    document_id=other_document.id,
+                    text="in other document",
+                    start=0,
+                    end=1,
+                    index=0,
+                    embedding=_vector(lead=1.0),
+                ),
+            ]
+        )
+        await session.commit()
+
+    store = PgVectorStore()
+    results = await store.search(
+        tenant_id,
+        kb_id,
+        _vector(lead=1.0),
+        top_k=10,
+        filters=SearchFilters(document_id=document_id),
+    )
+
+    assert [r.text for r in results] == ["in target document"]
+
+
+@pytest.mark.anyio
+async def test_search_filters_by_document_type() -> None:
+    """Roadmap step 123 -- Document.doc_metadata["document_type"] is set
+    by agents/document_analysis.py (step 095) during real extraction;
+    set directly here since this test doesn't run a live worker."""
+    tenant_id, kb_id, document_id = await _new_org_workspace_kb_document("pgvs-filter-doctype")
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        document = await session.get(Document, document_id)
+        assert document is not None
+        document.doc_metadata = {"document_type": "faq"}
+
+        other_document = Document(
+            tenant_id=tenant_id,
+            knowledge_base_id=kb_id,
+            title="other.txt",
+            storage_key="pgvs-filter-doctype/other.txt",
+            content_type="text/plain",
+            size_bytes=10,
+            doc_metadata={"document_type": "manual"},
+        )
+        session.add(other_document)
+        await session.flush()
+
+        session.add_all(
+            [
+                Chunk(
+                    tenant_id=tenant_id,
+                    document_id=document_id,
+                    text="faq chunk",
+                    start=0,
+                    end=1,
+                    index=0,
+                    embedding=_vector(lead=1.0),
+                ),
+                Chunk(
+                    tenant_id=tenant_id,
+                    document_id=other_document.id,
+                    text="manual chunk",
+                    start=0,
+                    end=1,
+                    index=0,
+                    embedding=_vector(lead=1.0),
+                ),
+            ]
+        )
+        await session.commit()
+
+    store = PgVectorStore()
+    results = await store.search(
+        tenant_id, kb_id, _vector(lead=1.0), top_k=10, filters=SearchFilters(document_type="faq")
+    )
+
+    assert [r.text for r in results] == ["faq chunk"]
 
 
 @pytest.mark.anyio

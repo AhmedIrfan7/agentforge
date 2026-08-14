@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from vectorstore.base import VectorRecord, VectorSearchResult, VectorStore
+from vectorstore.base import SearchFilters, VectorRecord, VectorSearchResult, VectorStore
 
 
 @dataclass
@@ -39,6 +39,7 @@ class _FakeVectorStore:
         query_vector: list[float],
         *,
         top_k: int = 10,
+        filters: SearchFilters | None = None,
     ) -> list[VectorSearchResult]:
         # Real, if trivial, similarity: score by how many leading
         # components match exactly -- enough to prove ordering/top_k
@@ -48,6 +49,16 @@ class _FakeVectorStore:
             pairs = zip(record.embedding, query_vector, strict=False)
             return sum(1.0 for a, b in pairs if a == b)
 
+        candidates: list[VectorRecord] = list(self._records.values())
+        # document_id filtering is real here -- VectorRecord carries it.
+        # document_type isn't: VectorRecord (deliberately, see vectorstore/
+        # base.py's own docstring) doesn't carry document metadata, only
+        # PgVectorStore's real join-through-Document implementation can
+        # honestly filter by it -- tested directly against real Postgres
+        # in test_pgvector_store.py instead of faked here.
+        if filters is not None and filters.document_id is not None:
+            candidates = [r for r in candidates if r.document_id == filters.document_id]
+
         scored = [
             VectorSearchResult(
                 chunk_id=record.id,
@@ -55,7 +66,7 @@ class _FakeVectorStore:
                 text=record.text,
                 score=_match_score(record),
             )
-            for record in self._records.values()
+            for record in candidates
         ]
         scored.sort(key=lambda r: r.score, reverse=True)
         return scored[:top_k]
@@ -106,3 +117,25 @@ async def test_search_on_empty_store_returns_no_results() -> None:
     store = _FakeVectorStore(name="fake")
     results = await store.search(uuid.uuid4(), uuid.uuid4(), [1.0, 0.0])
     assert results == []
+
+
+@pytest.mark.anyio
+async def test_search_filters_by_document_id() -> None:
+    store = _FakeVectorStore(name="fake")
+    tenant_id = uuid.uuid4()
+    kb_id = uuid.uuid4()
+    target_document_id = uuid.uuid4()
+    records = [
+        VectorRecord(
+            id=uuid.uuid4(), document_id=target_document_id, text="in target", embedding=[1.0]
+        ),
+        VectorRecord(id=uuid.uuid4(), document_id=uuid.uuid4(), text="in other", embedding=[1.0]),
+    ]
+
+    await store.upsert(tenant_id, kb_id, records)
+    results = await store.search(
+        tenant_id, kb_id, [1.0], filters=SearchFilters(document_id=target_document_id)
+    )
+
+    assert len(results) == 1
+    assert results[0].text == "in target"
