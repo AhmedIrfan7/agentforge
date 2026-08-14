@@ -26,40 +26,73 @@ conversation/memory/voice/workflows/analytics/admin are all later,
 unbuilt milestones). Building a ten-way classifier today, with nine
 categories nothing can route to, would be dishonest scaffolding
 pretending to more capability than exists. `document_search` vs.
-`empty` is the one real, checkable distinction available: a genuinely
-blank/whitespace-only query is never actionable regardless of what
-gets built later, and everything else is -- today -- routed the same
-one real way this system knows how to handle a query. `intent` stays
-internal graph state, not part of `handle()`'s own external `str`
-contract -- nothing outside the graph consumes it yet; step 142's
-Planning Agent is the real, first consumer.
+`empty` is the one real, checkable distinction available.
 
 As of step 142, `_planning_node` calls `agents/planning.py:
 PlanningAgent` for real, storing its `Plan.agent_names` into a new
-`agent_names` state field -- a genuine, justified addition now that
-planning actually produces it (same "add the field when the step that
-needs it lands" discipline the rest of this state schema already
-follows). `agent_names` currently names an agent nothing can execute
-yet (`agents/registry.py:AgentRegistry` has nothing real registered --
-step 143's own job); deciding what SHOULD run and being able to
-actually run it are two different, deliberately separate concerns.
-`_echo_node` doesn't read `agent_names` yet -- it stays the same
-placeholder until 143 gives it something real to call.
+`agent_names` state field.
+
+As of step 143, `_RetrieverGraphAgent`/`_execute_node` finally make
+`agent_names` executable -- the "thin adapter wraps RetrieverAgent to
+satisfy this interface for graph use specifically" step `agents/
+base.py`'s own step-138 docstring already named. `OrchestratorState`
+gains `tenant_id`/`knowledge_base_id`, a genuinely justified addition
+now: real retrieval needs them, the same "add the field when the step
+that needs it lands" discipline this state schema has followed since
+141. `Orchestrator.handle()` grows matching keyword-only parameters
+for the same real reason -- no HTTP caller exists yet to force a
+particular shape, so this is the first, honest shape a real caller
+(a future chat/conversation endpoint) will need.
+
+`_RetrieverGraphAgent` is deliberately NOT registered into `agents/
+registry.py:AgentRegistry` -- that registry's whole design (step 139)
+assumes stateless, construct-once, look-up-many agents, but this
+adapter is genuinely request-scoped (`tenant_id`/`knowledge_base_id`
+differ per call), which the registry's `register()` never accounted
+for. Forcing a per-request object into an app-wide singleton registry
+would be a worse fit than just constructing it fresh inside the node
+that needs it, the same way `vectorstore/pgvector.py:PgVectorStore.
+search()` opens its own `get_worker_session()` internally rather than
+taking one injected -- both chose "no fixed caller yet" honesty over a
+premature abstraction. `Orchestrator._registry` stays unused by this
+step too; it's real infrastructure waiting for a genuinely stateless
+agent (steps 144+) to actually need it.
+
+Uses `ChunkRepository.search_by_keyword` specifically, not dense or
+hybrid -- the one retrieval mechanism that works for real in every
+environment, including this one with no OPENAI_API_KEY (same
+documented gap dense/hybrid have had since step 107); a future step
+can add real strategy selection once a real chat/generation caller
+exists to justify it. The response for a real `document_search` hit is
+the retrieved chunks' own raw text, not a synthesized answer -- no
+chat/generation model exists yet (steps 150+) to produce one honestly;
+surfacing the real retrieved content is the honest thing to return
+today, not a faked summary.
 """
 
+import uuid
 from typing import TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from agents.base import Agent
 from agents.planning import PlanningAgent
 from agents.registry import AgentRegistry
+from agents.retriever import RetrievedChunk, RetrieverAgent
+from db import get_worker_session, set_tenant_context
+from embeddings.openai import OpenAIEmbeddingProvider
+from repositories.chunk import ChunkRepository
+from vectorstore.pgvector import PgVectorStore
 
 _planning_agent = PlanningAgent()
+_retriever_agent = RetrieverAgent(OpenAIEmbeddingProvider(), PgVectorStore())
 
 
 class OrchestratorState(TypedDict):
     query: str
+    tenant_id: uuid.UUID
+    knowledge_base_id: uuid.UUID
     intent: str
     agent_names: list[str]
     response: str
@@ -80,8 +113,29 @@ async def _planning_node(state: OrchestratorState) -> dict[str, list[str]]:
     return {"agent_names": plan.agent_names}
 
 
-async def _echo_node(state: OrchestratorState) -> dict[str, str]:
-    return {"response": state["query"]}
+class _RetrieverGraphAgent(Agent[str, list[RetrievedChunk]]):
+    name = "retriever"
+
+    def __init__(self, tenant_id: uuid.UUID, knowledge_base_id: uuid.UUID) -> None:
+        self._tenant_id = tenant_id
+        self._knowledge_base_id = knowledge_base_id
+
+    async def run(self, input: str) -> list[RetrievedChunk]:
+        async with get_worker_session() as session:
+            await set_tenant_context(session, self._tenant_id)
+            repo = ChunkRepository(session, self._tenant_id)
+            return await _retriever_agent.search_keyword(repo, self._knowledge_base_id, input)
+
+
+async def _execute_node(state: OrchestratorState) -> dict[str, str]:
+    if "retriever" not in state["agent_names"]:
+        return {"response": state["query"]}
+
+    agent = _RetrieverGraphAgent(state["tenant_id"], state["knowledge_base_id"])
+    results = await agent.run(state["query"])
+    if not results:
+        return {"response": "No results found."}
+    return {"response": "\n\n".join(r.text for r in results)}
 
 
 class Orchestrator:
@@ -95,21 +149,30 @@ class Orchestrator:
         builder = StateGraph(OrchestratorState)
         builder.add_node("intent_analysis", _intent_analysis_node)
         builder.add_node("planning", _planning_node)
-        builder.add_node("echo", _echo_node)
+        builder.add_node("execute", _execute_node)
         builder.add_edge(START, "intent_analysis")
         builder.add_edge("intent_analysis", "planning")
-        builder.add_edge("planning", "echo")
-        builder.add_edge("echo", END)
+        builder.add_edge("planning", "execute")
+        builder.add_edge("execute", END)
         return builder.compile()
 
-    async def handle(self, query: str) -> str:
+    async def handle(
+        self, query: str, *, tenant_id: uuid.UUID, knowledge_base_id: uuid.UUID
+    ) -> str:
         # ainvoke() is typed `dict[str, Any] | Any` by LangGraph itself
         # (verified live) -- cast() narrows the real, known-at-runtime
         # shape back to OrchestratorState (matching _build_graph()'s
         # own state schema) rather than letting Any leak into handle()'s
         # own real str return type.
         raw_result = await self._graph.ainvoke(
-            {"query": query, "intent": "", "agent_names": [], "response": ""}
+            {
+                "query": query,
+                "tenant_id": tenant_id,
+                "knowledge_base_id": knowledge_base_id,
+                "intent": "",
+                "agent_names": [],
+                "response": "",
+            }
         )
         result = cast(OrchestratorState, raw_result)
         return result["response"]
