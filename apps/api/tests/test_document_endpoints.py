@@ -12,6 +12,7 @@ away in tests the way a genuine third-party dependency would need to be.
 import uuid
 
 import pytest
+from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -19,6 +20,7 @@ from config import settings
 from db import get_session, set_tenant_context
 from main import app
 from models.audit_log import AuditLog
+from models.chunk import Chunk
 from models.document import Document
 from models.document_version import DocumentVersion
 from models.knowledge_base import KnowledgeBase
@@ -1268,3 +1270,155 @@ async def test_end_user_role_cannot_replace_document_content() -> None:
         await _cleanup_org(org_id)
         await _cleanup_user(owner_email)
         await _cleanup_user("endpoint-test-doc-replace-member@example.com")
+
+
+@pytest.mark.anyio
+async def test_delete_document_removes_chunks_versions_and_storage_objects() -> None:
+    """Roadmap step 116 -- the real thing worth proving here isn't the DB
+    cascade (Chunk/DocumentVersion FKs already do that at the Postgres
+    level, same as every other ondelete="CASCADE" relationship in this
+    codebase) but the storage cleanup this endpoint adds explicitly:
+    both the document's current object AND its version history's old
+    object actually disappear from MinIO, not just their DB rows."""
+    email = "endpoint-test-doc-owner-28@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("original.txt", b"original content", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        replace_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/versions"),
+            files={"file": ("replacement.txt", b"new content", "text/plain")},
+            headers=headers,
+        )
+        assert replace_response.status_code == 201
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            current_storage_key = document.storage_key
+
+            result = await session.execute(
+                select(DocumentVersion).where(DocumentVersion.document_id == uuid.UUID(document_id))
+            )
+            old_storage_key = result.scalar_one().storage_key
+
+            # A real Chunk row too, added directly (no live worker in
+            # this HTTP-level test) -- proves the FK cascade actually
+            # fires, not just that the Document row itself disappears.
+            session.add(
+                Chunk(
+                    tenant_id=org_id,
+                    document_id=uuid.UUID(document_id),
+                    text="a chunk",
+                    start=0,
+                    end=7,
+                    index=0,
+                )
+            )
+            await session.commit()
+
+        for key in (current_storage_key, old_storage_key):
+            async with _client_context() as s3:
+                stored = await s3.get_object(Bucket="agentforge-dev", Key=key)
+                assert await stored["Body"].read()
+
+        delete_response = client.delete(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}"), headers=headers
+        )
+        assert delete_response.status_code == 204
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            assert await session.get(Document, uuid.UUID(document_id)) is None
+            chunk_result = await session.execute(
+                select(Chunk).where(Chunk.document_id == uuid.UUID(document_id))
+            )
+            assert chunk_result.scalars().all() == []
+            version_result = await session.execute(
+                select(DocumentVersion).where(DocumentVersion.document_id == uuid.UUID(document_id))
+            )
+            assert version_result.scalars().all() == []
+
+        for key in (current_storage_key, old_storage_key):
+            async with _client_context() as s3:
+                with pytest.raises(ClientError):
+                    await s3.get_object(Bucket="agentforge-dev", Key=key)
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_delete_document_for_nonexistent_document_returns_404() -> None:
+    email = "endpoint-test-doc-owner-29@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        response = client.delete(
+            _docs_url(org_id, workspace_id, kb_id, f"/{uuid.uuid4()}"), headers=headers
+        )
+        assert response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_end_user_role_cannot_delete_document() -> None:
+    owner_email = "endpoint-test-doc-owner-30@example.com"
+    org_id, workspace_id, kb_id, owner_headers = _new_org_with_kb(owner_email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("notes.txt", b"content", "text/plain")},
+            headers=owner_headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+
+        member_token = signup_and_login(
+            client,
+            email="endpoint-test-doc-delete-member@example.com",
+            password="correct horse battery staple",
+            full_name="Delete Member",
+        )
+        async with get_session() as session:
+            result = await session.execute(
+                select(User).where(User.email == "endpoint-test-doc-delete-member@example.com")
+            )
+            member_user = result.scalar_one()
+            role_result = await session.execute(select(Role).where(Role.name == "end_user"))
+            end_user_role = role_result.scalar_one()
+            await set_tenant_context(session, org_id)
+            session.add(
+                Membership(
+                    tenant_id=org_id,
+                    user_id=member_user.id,
+                    workspace_id=None,
+                    role_id=end_user_role.id,
+                )
+            )
+            await session.commit()
+
+        response = client.delete(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}"),
+            headers=auth_headers(member_token),
+        )
+        assert response.status_code == 403
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user("endpoint-test-doc-delete-member@example.com")

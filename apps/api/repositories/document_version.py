@@ -28,6 +28,19 @@ class DocumentVersionRepository(TenantScopedRepository[DocumentVersion]):
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
+    async def list_all_for_document(self, document_id: uuid.UUID) -> Sequence[DocumentVersion]:
+        """Unpaginated, unlike list_for_document above -- roadmap step
+        116's deletion cleanup needs every historical storage_key, not
+        just one page of them; a document with more than list_for_
+        document's default 50-row page could otherwise leak storage
+        objects belonging to versions past that page."""
+        stmt = select(DocumentVersion).where(
+            DocumentVersion.tenant_id == self.tenant_id,
+            DocumentVersion.document_id == document_id,
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
     async def count_for_document(self, document_id: uuid.UUID) -> int:
         stmt = (
             select(func.count())

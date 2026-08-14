@@ -15,9 +15,11 @@ Deliberately narrow scope, matching what this step actually asks for:
   will accept (validation.py:ALLOWED_EXTENSIONS) has a real extraction
   handler -- "extraction_unsupported" is defined but not currently
   reachable through any upload this API accepts.
-- No delete endpoint -- step 116 ("tenant-scoped document deletion")
-  owns that, and it needs to cascade chunks/embeddings that don't exist
-  yet either. A bare delete now would just be replaced.
+- delete_document (step 116) is the delete endpoint this docstring used
+  to defer -- Chunk (105) and DocumentVersion (115) both cascade at the
+  DB level (ondelete="CASCADE"), so nothing here deletes those rows
+  explicitly; the real remaining work is storage_key cleanup, which
+  Postgres FKs can't do (storage.py:delete_file, step 116).
 - override_chunking_strategy (step 103, real Document columns as of
   step 104) is document:update -- this project's first document-
   mutation permission beyond create, same tier as document:create/read
@@ -63,7 +65,7 @@ from schemas.document import (
     DocumentVersionRead,
     PipelineStageRead,
 )
-from storage import ensure_bucket_exists, upload_file
+from storage import delete_file, ensure_bucket_exists, upload_file
 from validation import read_upload_content, validate_upload
 
 router = APIRouter(
@@ -499,3 +501,60 @@ async def list_document_versions(
         offset=pagination.offset,
         total=total,
     )
+
+
+@router.delete(
+    "/{document_id}",
+    status_code=204,
+    dependencies=[Depends(require_permission("document:delete"))],
+)
+async def delete_document(
+    document_id: uuid.UUID,
+    session: TenantDb,
+    tenant_id: TenantId,
+    knowledge_base: TargetKnowledgeBase,
+) -> None:
+    """Roadmap step 116 -- deletes a document and everything that
+    belongs to it. Chunk (105) and DocumentVersion (115) rows cascade
+    automatically at the DB level (ondelete="CASCADE" foreign keys) --
+    nothing here deletes them explicitly. Storage objects are NOT
+    covered by any FK, so they're deleted explicitly: the document's
+    own current storage_key plus every DocumentVersion's own historical
+    storage_key (step 115's own live verification surfaced that neither
+    org deletion nor anything else in this codebase cleans up MinIO
+    objects -- this is the one place that actually does, for a
+    document's own storage footprint).
+
+    Storage cleanup runs BEFORE the DB delete, not after: if a storage
+    delete fails partway, the Document/DocumentVersion rows (and their
+    audit trail) stay intact for a retry or investigation, rather than
+    the DB row disappearing first and leaving orphaned, now-undiscoverable
+    objects in MinIO with nothing left pointing at them.
+
+    document:delete, not document:update -- deleting is a genuinely
+    more destructive, harder-to-undo action than updating processing
+    config or replacing content, worth its own explicit grant even
+    though it lands at the same org_owner/admin/manager tier (same
+    precedent knowledge_base:delete already set at 082: siblings under
+    one parent resource don't need a stricter delete tier than their
+    own create/read/update, just a distinct permission key)."""
+    repo = DocumentRepository(session, tenant_id)
+    document = await repo.get(document_id)
+    if document is None or document.knowledge_base_id != knowledge_base.id:
+        raise NotFoundError(f"Document {document_id} not found.")
+
+    version_repo = DocumentVersionRepository(session, tenant_id)
+    versions = await version_repo.list_all_for_document(document_id)
+    for version in versions:
+        await delete_file(version.storage_key)
+    await delete_file(document.storage_key)
+
+    await write_audit_log(
+        session,
+        tenant_id=tenant_id,
+        action="document.delete",
+        resource_type="document",
+        resource_id=document.id,
+    )
+
+    await repo.delete(document)

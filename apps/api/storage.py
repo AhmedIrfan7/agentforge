@@ -61,3 +61,12 @@ async def download_file(key: str) -> bytes:
         response = await client.get_object(Bucket=settings.storage_bucket, Key=key)
         body: bytes = await response["Body"].read()
         return body
+
+
+async def delete_file(key: str) -> None:
+    """Roadmap step 116's first real caller (deleting a Document and
+    its version history's storage objects) -- delete_object is already
+    idempotent (S3-compatible APIs don't error on a missing key), so no
+    existence check is needed before calling this."""
+    async with _client_context() as client:
+        await client.delete_object(Bucket=settings.storage_bucket, Key=key)
