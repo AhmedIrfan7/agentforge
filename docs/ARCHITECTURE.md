@@ -4,7 +4,7 @@ This document describes the system **as implemented**, not as aspired to — it 
 
 ## Status
 
-Milestone 1 (Multi-Tenancy Core) in progress. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten.
+Milestone 3 (Knowledge Pipeline: Ingestion + RAG) complete; Milestone 4 (Agent System) next. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
 
 ## Repository layout
 
@@ -70,7 +70,52 @@ _To be filled in as Milestone 2 lands._
 
 ## Knowledge pipeline & RAG
 
-_To be filled in as Milestone 3 lands._
+Two halves, built in sequence: **ingestion** (steps 82–117) turns an uploaded file into searchable, embedded chunks; **retrieval** (steps 118–135) turns a free-text query into a ranked, cited, token-budgeted context an LLM could consume. No chat/generation model is chosen yet (Milestone 4+) — every retrieval-facing capability here was built and proven as its own real, tested unit, not against an imagined downstream consumer.
+
+### Ingestion
+
+`POST .../knowledge-bases/{id}/documents` accepts a multipart upload, validates it (file-type allow-list, size limit, a real ClamAV scan — not stubbed), and stores the raw file in MinIO/S3-compatible storage (`storage.py`, aioboto3). A Celery + Redis background pipeline then runs, with per-stage status visible through a pipeline-status endpoint and real retry/backoff (not just a `max_retries` number nobody wired up) on every stage:
+
+1. **Extraction** (`extraction_pdf.py`/`extraction_docx.py`/etc., dispatched per file type) — every format normalizes to the same markdown shape (`# `/`## ` headings, `| … |` pipe tables), which is what lets every downstream stage (chunking, section-aware citations) work uniformly regardless of source format.
+2. **Metadata extraction** — title, author, dates, language.
+3. **Document Analysis Agent** (`agents/document_analysis.py`) — classifies document type via keyword-phrase scoring, honestly heuristic, not an ML model.
+4. **Quality checks** — empty pages, broken formatting, duplicate-content hash.
+5. **Chunking Recommendation Agent** (`agents/chunking_recommendation.py`) — scores five real chunking strategies (fixed-size, sentence/paragraph, markdown-heading, table-aware, recursive-hybrid) against the document's actual structure and explains its choice; overridable per-document via a dedicated endpoint.
+6. **Embedding generation** — `embeddings/base.py:EmbeddingProvider` (structural Protocol, interface-first) with `embeddings/openai.py:OpenAIEmbeddingProvider` (`text-embedding-3-small`, 1536-d) the one real implementation.
+7. **Vector storage** — `Chunk.embedding` (pgvector `Vector(1536)`, ivfflat index) plus `Chunk.search_vector` (a DB-computed `tsvector`, GIN-indexed) for full-text search — both populated from the same chunk row, never able to drift out of sync.
+
+Document lifecycle beyond first upload: re-indexing (re-runs extraction→embedding, old chunks kept until the new run succeeds), versioning (replace preserves history), tenant-scoped deletion (cascades chunks/embeddings, deletes the storage object first), and duplicate-document detection within a knowledge base (by content hash).
+
+**Real, tracked environment gap:** no `OPENAI_API_KEY` exists in this project's dev/CI environment. Every embedding-dependent code path is real, not stubbed — it's tested against a fake `EmbeddingProvider` and separately live-verified to fail closed with a clean 500 (not a leaked stack trace) when the real key is absent, rather than being silently skipped.
+
+### Retrieval
+
+`vectorstore/base.py:VectorStore` (structural Protocol, interface-first) with `vectorstore/pgvector.py:PgVectorStore` the one real implementation — deliberately no provider registry, since nothing in this roadmap ever adds a second vector store. Three real retrieval mechanisms exist as genuinely different techniques, not modes of one abstraction:
+
+- **Dense** (cosine similarity via pgvector).
+- **Keyword** (`ChunkRepository.search_by_keyword` — Postgres full-text, `plainto_tsquery`/`ts_rank`; the one mechanism that works with no external API key).
+- **Hybrid** — runs both and fuses their ranked lists with Reciprocal Rank Fusion (`retrieval_fusion.py`), the industry-standard technique for combining differently-scaled rankings.
+
+All three support metadata filtering (`document_id`/`document_type`, the two real, populated fields — not a speculative generic filter DSL) and are wrapped behind one agent-shaped interface, `agents/retriever.py:RetrieverAgent`, matching `AGENTS.md`'s Agent Registry design. Layered on top, each an independent, explicitly opt-in stage (never silently folded into the base search calls):
+
+- **Reranking** (`rerankers/lexical.py:LexicalReranker`) — real term-overlap scoring, not an ML cross-encoder or LLM call (none exists yet in this codebase); a genuinely different signal from both cosine similarity and `ts_rank`.
+- **Multi-query expansion** (`multi_query.py`) — splits a compound query ("refund policy and shipping times") into its own clauses, retrieves each separately, and fuses via the same RRF — a deterministic heuristic, not an LLM paraphraser.
+- **Parent-child retrieval** (`ChunkRepository.get_expanded_context`) — reconstructs a matched chunk's wider context from its own real neighbors (`Chunk.index`/`document_id`), not a separately stored parent-chunk row; no schema change, since nothing in this roadmap needs a genuine parent-chunk relationship.
+
+`context_builder.py` then dedupes (by normalized text), groups chunks from the same document adjacent to each other, and fits the result to a real token budget (`tiktoken`, `cl100k_base`) — and `citations.py` attaches document/section references to what survives. Section references are parsed live from a chunk's own leading markdown heading; **page references are deliberately not supported** — every extractor joins a document's pages into one continuous string with no page boundary retained anywhere to honestly cite.
+
+`POST .../knowledge-bases/{id}/context` is the one endpoint that composes all of the above into a real HTTP response: strategy choice (dense/keyword/hybrid), optional multi-query expansion, optional reranking, context-building, and citations — cached in Redis, keyed by a hash of tenant/knowledge-base/every request field (`routers/retrieval.py`), with a flat 5-minute TTL and **no reindex-aware invalidation** (a stated limitation, not silently worked around).
+
+`eval/` is this pipeline's own quality-measurement layer, per `AGENTS.md`'s "do not assume retrieval quality is good, measure it": `eval/metrics.py` (precision@k/recall@k), `eval/fixtures.py` (a small, real, labeled benchmark corpus), `eval/harness.py` (seeds the corpus into real Postgres and scores a caller-supplied search function against it), and `eval/regression.py` — a real script (`python -m eval.regression`, also wrapped by a pytest test) that fails if keyword-search precision/recall on the benchmark corpus ever drops below 1.0.
+
+Tenant isolation for retrieval specifically is covered by `tests/test_retrieval_tenant_isolation.py` — proving both raw Postgres RLS (no app-layer filter at all) and the real retrieval methods reject a genuinely valid, real `knowledge_base_id`/`chunk_id` belonging to a different tenant, not just a random never-real UUID.
+
+**Honest, tracked gaps, not silently worked around:**
+- No `OPENAI_API_KEY` in this environment — dense, hybrid, and multi-query-over-dense all fail closed with a clean 500; keyword search works for real everywhere.
+- No page-number citations (extraction never retains page boundaries).
+- Parent-child retrieval reconstructs a window from adjacent chunks, not a document's true stored parent-section structure.
+- The Redis cache has no invalidation hook into document re-index/delete — only a 5-minute TTL.
+- Reranking and multi-query expansion are real heuristics, not ML/LLM-based — no chat/generation model exists yet to build either against.
 
 ## Multi-agent system
 
