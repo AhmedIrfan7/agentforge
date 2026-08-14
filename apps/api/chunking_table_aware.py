@@ -23,47 +23,23 @@ an oversight.
 Packing (small regions combined, overlap at chunk boundaries) reuses
 chunking_packing.py:pack_units, the same shared implementation
 chunking_sentence_paragraph.py and chunking_markdown_heading.py already
-use.
+use. Region-splitting itself (split_table_and_prose_regions) moved to
+chunking_regions.py in step 102, promoted to shared once
+chunking_recursive_hybrid.py needed it too.
 """
 
-import re
-
 from chunking_packing import pack_units
+from chunking_regions import Span, split_table_and_prose_regions
 from chunking_sentence_paragraph import chunk_sentence_paragraph
 from chunking_types import Chunk
 
 CHUNK_SIZE = 1000
 OVERLAP = 200
 
-_TABLE_LINE = re.compile(r"^\s*\|.*\|\s*$")
 
-_Span = tuple[int, int]
-
-
-def _split_table_and_prose_regions(text: str) -> list[tuple[bool, int, int]]:
-    """Returns (is_table, start, end) spans covering the whole text --
-    a contiguous run of table-shaped lines is one table region;
-    everything else (including blank lines between regions) belongs to
-    whichever prose region it falls in."""
-    lines = text.splitlines(keepends=True)
-    regions: list[tuple[bool, int, int]] = []
-    pos = 0
-    i = 0
-    line_count = len(lines)
-    while i < line_count:
-        is_table = bool(_TABLE_LINE.match(lines[i].rstrip("\n")))
-        start = pos
-        while i < line_count and bool(_TABLE_LINE.match(lines[i].rstrip("\n"))) == is_table:
-            pos += len(lines[i])
-            i += 1
-        if text[start:pos].strip():
-            regions.append((is_table, start, pos))
-    return regions
-
-
-def _build_units(text: str, chunk_size: int) -> list[_Span]:
-    units: list[_Span] = []
-    for is_table, start, end in _split_table_and_prose_regions(text):
+def _build_units(text: str, chunk_size: int) -> list[Span]:
+    units: list[Span] = []
+    for is_table, start, end in split_table_and_prose_regions(text):
         if is_table:
             units.append((start, end))  # atomic -- never sub-split, see module docstring
         else:
