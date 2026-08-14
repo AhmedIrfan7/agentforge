@@ -5,8 +5,9 @@ Real org/workspace/knowledge-base/document setup through the real HTTP
 endpoints, real Chunk rows with real embeddings added directly via the
 ORM (no live worker needed -- matches the chunk-injection pattern
 test_document_endpoints.py's own delete test already established), and
-routers.retrieval._embedding_provider swapped for a fake so this can
-prove real end-to-end ranking through the real endpoint without a real
+routers.retrieval._retriever_agent's own embedding_provider (agents/
+retriever.py, step 124) swapped for a fake so this can prove real
+end-to-end ranking through the real endpoint without a real
 OPENAI_API_KEY.
 """
 
@@ -124,7 +125,7 @@ async def test_dense_search_returns_the_closest_chunk_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "routers.retrieval._embedding_provider",
+        "routers.retrieval._retriever_agent._embedding_provider",
         _FakeEmbeddingProvider(vectors_by_text={"find the near chunk": _vector(lead=1.0)}),
     )
 
@@ -183,7 +184,7 @@ async def test_dense_search_returns_the_closest_chunk_first(
 @pytest.mark.anyio
 async def test_dense_search_respects_top_k(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "routers.retrieval._embedding_provider",
+        "routers.retrieval._retriever_agent._embedding_provider",
         _FakeEmbeddingProvider(vectors_by_text={"query": _vector(lead=0.0)}),
     )
 
@@ -232,7 +233,7 @@ async def test_dense_search_on_empty_knowledge_base_returns_empty_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "routers.retrieval._embedding_provider",
+        "routers.retrieval._retriever_agent._embedding_provider",
         _FakeEmbeddingProvider(vectors_by_text={"query": _vector(lead=0.0)}),
     )
 
@@ -458,7 +459,7 @@ async def test_hybrid_search_ranks_a_chunk_matching_both_signals_above_one_match
     RRF is actually driving the endpoint's real ranking, not just that
     both underlying calls happen."""
     monkeypatch.setattr(
-        "routers.retrieval._embedding_provider",
+        "routers.retrieval._retriever_agent._embedding_provider",
         _FakeEmbeddingProvider(vectors_by_text={"refund policy": _vector(lead=1.0)}),
     )
 
@@ -516,7 +517,7 @@ async def test_hybrid_search_ranks_a_chunk_matching_both_signals_above_one_match
 @pytest.mark.anyio
 async def test_hybrid_search_respects_top_k(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "routers.retrieval._embedding_provider",
+        "routers.retrieval._retriever_agent._embedding_provider",
         _FakeEmbeddingProvider(vectors_by_text={"query": _vector(lead=0.0)}),
     )
 
@@ -565,7 +566,7 @@ async def test_hybrid_search_on_empty_knowledge_base_returns_empty_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "routers.retrieval._embedding_provider",
+        "routers.retrieval._retriever_agent._embedding_provider",
         _FakeEmbeddingProvider(vectors_by_text={"query": _vector(lead=0.0)}),
     )
 
@@ -611,7 +612,7 @@ async def test_dense_search_document_id_filter_is_wired_through(
     same "prove the wiring, not re-derive the underlying logic"
     reasoning every other endpoint test in this file already uses."""
     monkeypatch.setattr(
-        "routers.retrieval._embedding_provider",
+        "routers.retrieval._retriever_agent._embedding_provider",
         _FakeEmbeddingProvider(vectors_by_text={"query": _vector(lead=1.0)}),
     )
 

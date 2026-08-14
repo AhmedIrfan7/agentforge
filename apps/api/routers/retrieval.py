@@ -11,25 +11,16 @@ results (retrieval_fusion.py) rather than being a third, independent
 mechanism -- dense and keyword stay the two real building blocks, this
 is what combines them.
 
-dense_search is the first real caller of vectorstore/pgvector.py:
-PgVectorStore.search() and embeddings/openai.py:OpenAIEmbeddingProvider
-.embed() (steps 107/119). A free-text query has to become a vector
-before PgVectorStore.search() can run anything -- this endpoint's own
-real job, beyond wiring, is that one extra step: embed the query with
-the SAME provider that embedded the chunks, since comparing vectors
-from two different embedding models/dimensions would be meaningless.
-Own module-level _embedding_provider singleton, same shape
-embeddings_pipeline.py's own module-level instance already uses, rather
-than reaching into that other module's underscore-prefixed (module-
-private) attribute -- there's exactly one real EmbeddingProvider in
-this codebase (checked at step 107), so a second lightweight instance
-costs nothing and keeps this module's own tests independent.
-
-keyword_search calls repositories/chunk.py:ChunkRepository.
-search_by_keyword directly -- no provider, no embedding step, a
-free-text query becomes a Postgres tsquery synchronously in the same
-request, genuinely simpler than dense search's own extra async
-round trip.
+As of step 124, all three endpoints are thin wiring only (request in,
+agents.retriever.RetrieverAgent call, schema out) -- the actual
+embed-then-search / keyword-search / fuse-two-retrievers logic lives on
+RetrieverAgent now, not here (see agents/retriever.py's own docstring
+for why: AGENTS.md's Agent Registry vision, and no module outside
+routers/ should import schemas/). _retriever_agent is a module-level
+singleton for the same reason _embedding_provider/_vector_store were
+before this step -- there's exactly one real EmbeddingProvider and one
+real VectorStore in this codebase (checked at steps 107/119), so
+constructing the agent once at import time costs nothing.
 
 Both share schemas.retrieval.SearchRequest/SearchResultRead (query/
 top_k in, chunk_id/document_id/text/score out) -- deliberately minimal,
@@ -54,18 +45,12 @@ similarity or a rank score in the sense dense/keyword's own results
 are -- an intentional, documented departure from SearchResultRead's
 score meaning elsewhere, the same "the algorithm's own real output
 shape, not massaged to look like something it isn't" reasoning applies
-here as everywhere numbers get surfaced in this codebase. Each
-underlying retriever is queried for HYBRID_CANDIDATE_POOL_SIZE results
-regardless of the caller's own requested top_k, then fused and
-truncated -- fusing only within each retriever's own top_k (if a caller
-asked for a small one) risks missing a chunk that ranks well in one
-retriever but just outside the other's narrow top_k, defeating the
-point of combining two signals.
+here as everywhere numbers get surfaced in this codebase.
 
 As of step 123, SearchRequest.document_id/document_type (schemas/
-retrieval.py) are passed through to all three endpoints -- dense via
-vectorstore/base.py:SearchFilters, keyword/hybrid's own keyword-search
-half via ChunkRepository.search_by_keyword's own keyword arguments.
+retrieval.py) are passed through to all three endpoints via
+vectorstore/base.py:SearchFilters, which RetrieverAgent now owns
+unpacking for the keyword half too.
 """
 
 import uuid
@@ -74,18 +59,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agents.retriever import RetrieverAgent
 from dependencies.knowledge_base import TargetKnowledgeBase
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
-from embeddings.base import EmbeddingProvider
 from embeddings.openai import OpenAIEmbeddingProvider
 from repositories.chunk import ChunkRepository
-from retrieval_fusion import reciprocal_rank_fusion
 from schemas.retrieval import SearchRequest, SearchResultRead
 from vectorstore.base import SearchFilters
 from vectorstore.pgvector import PgVectorStore
-
-HYBRID_CANDIDATE_POOL_SIZE = 50
 
 router = APIRouter(
     prefix=(
@@ -98,8 +80,7 @@ router = APIRouter(
 TenantDb = Annotated[AsyncSession, Depends(get_tenant_db)]
 TenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
 
-_embedding_provider: EmbeddingProvider = OpenAIEmbeddingProvider()
-_vector_store = PgVectorStore()
+_retriever_agent = RetrieverAgent(OpenAIEmbeddingProvider(), PgVectorStore())
 
 
 @router.post(
@@ -113,10 +94,9 @@ async def dense_search(
     tenant_id: TenantId,
     knowledge_base: TargetKnowledgeBase,
 ) -> list[SearchResultRead]:
-    query_vectors = await _embedding_provider.embed([body.query])
     filters = SearchFilters(document_id=body.document_id, document_type=body.document_type)
-    results = await _vector_store.search(
-        tenant_id, knowledge_base.id, query_vectors[0], top_k=body.top_k, filters=filters
+    results = await _retriever_agent.search_dense(
+        tenant_id, knowledge_base.id, body.query, top_k=body.top_k, filters=filters
     )
     return [
         SearchResultRead(chunk_id=r.chunk_id, document_id=r.document_id, text=r.text, score=r.score)
@@ -136,12 +116,9 @@ async def keyword_search(
     knowledge_base: TargetKnowledgeBase,
 ) -> list[SearchResultRead]:
     repo = ChunkRepository(session, tenant_id)
-    results = await repo.search_by_keyword(
-        knowledge_base.id,
-        body.query,
-        top_k=body.top_k,
-        document_id=body.document_id,
-        document_type=body.document_type,
+    filters = SearchFilters(document_id=body.document_id, document_type=body.document_type)
+    results = await _retriever_agent.search_keyword(
+        repo, knowledge_base.id, body.query, top_k=body.top_k, filters=filters
     )
     return [
         SearchResultRead(chunk_id=r.chunk_id, document_id=r.document_id, text=r.text, score=r.score)
@@ -160,44 +137,12 @@ async def hybrid_search(
     tenant_id: TenantId,
     knowledge_base: TargetKnowledgeBase,
 ) -> list[SearchResultRead]:
-    query_vectors = await _embedding_provider.embed([body.query])
-    filters = SearchFilters(document_id=body.document_id, document_type=body.document_type)
-    dense_results = await _vector_store.search(
-        tenant_id,
-        knowledge_base.id,
-        query_vectors[0],
-        top_k=HYBRID_CANDIDATE_POOL_SIZE,
-        filters=filters,
-    )
-
     repo = ChunkRepository(session, tenant_id)
-    keyword_results = await repo.search_by_keyword(
-        knowledge_base.id,
-        body.query,
-        top_k=HYBRID_CANDIDATE_POOL_SIZE,
-        document_id=body.document_id,
-        document_type=body.document_type,
+    filters = SearchFilters(document_id=body.document_id, document_type=body.document_type)
+    results = await _retriever_agent.search_hybrid(
+        tenant_id, repo, knowledge_base.id, body.query, top_k=body.top_k, filters=filters
     )
-
-    fused_scores = reciprocal_rank_fusion(
-        [[r.chunk_id for r in dense_results], [r.chunk_id for r in keyword_results]]
-    )
-    # (document_id, text) only -- not the whole result object, since
-    # dense/keyword results are two unrelated dataclasses that happen to
-    # share field names, not a common type mypy can unify across a
-    # combined iterable.
-    lookup: dict[uuid.UUID, tuple[uuid.UUID, str]] = {
-        r.chunk_id: (r.document_id, r.text) for r in dense_results
-    }
-    lookup.update({r.chunk_id: (r.document_id, r.text) for r in keyword_results})
-    ranked_ids = sorted(fused_scores, key=lambda chunk_id: fused_scores[chunk_id], reverse=True)
-
     return [
-        SearchResultRead(
-            chunk_id=chunk_id,
-            document_id=lookup[chunk_id][0],
-            text=lookup[chunk_id][1],
-            score=fused_scores[chunk_id],
-        )
-        for chunk_id in ranked_ids[: body.top_k]
+        SearchResultRead(chunk_id=r.chunk_id, document_id=r.document_id, text=r.text, score=r.score)
+        for r in results
     ]
