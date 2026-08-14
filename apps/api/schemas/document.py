@@ -57,3 +57,22 @@ class ChunkingDecisionRead(BaseModel):
     strategy: str
     source: str  # "accepted" (matches the agent's own recommendation) or "override"
     reasoning: str
+
+
+class PipelineStageRead(BaseModel):
+    stage: str
+    status: str
+
+
+class DocumentPipelineStatusRead(BaseModel):
+    """Roadmap step 111 -- richer than DocumentStatusRead's single flat
+    string: a per-stage breakdown (pipeline_status.py) plus real Chunk
+    counts, for a client that wants to show ingestion progress rather
+    than just poll for the final terminal status."""
+
+    id: uuid.UUID
+    status: str
+    stages: list[PipelineStageRead]
+    chunk_count: int
+    embedded_chunk_count: int
+    updated_at: datetime

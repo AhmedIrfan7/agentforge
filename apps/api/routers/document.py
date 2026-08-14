@@ -47,14 +47,18 @@ from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from errors import InvalidChunkingStrategyError, NotFoundError
 from extraction import dispatch_extraction
 from models.knowledge_base import KnowledgeBase
+from pipeline_status import compute_pipeline_stages
+from repositories.chunk import ChunkRepository
 from repositories.document import DocumentRepository
 from repositories.knowledge_base import KnowledgeBaseRepository
 from schemas.common import Page, PaginationParams
 from schemas.document import (
     ChunkingDecisionRead,
     ChunkingStrategyOverrideRequest,
+    DocumentPipelineStatusRead,
     DocumentRead,
     DocumentStatusRead,
+    PipelineStageRead,
 )
 from storage import ensure_bucket_exists, upload_file
 from validation import read_upload_content, validate_upload
@@ -195,6 +199,42 @@ async def get_document_status(
     if document is None or document.knowledge_base_id != knowledge_base.id:
         raise NotFoundError(f"Document {document_id} not found.")
     return DocumentStatusRead.model_validate(document)
+
+
+@router.get(
+    "/{document_id}/pipeline-status",
+    response_model=DocumentPipelineStatusRead,
+    dependencies=[Depends(require_permission("document:read"))],
+)
+async def get_document_pipeline_status(
+    document_id: uuid.UUID,
+    session: TenantDb,
+    tenant_id: TenantId,
+    knowledge_base: TargetKnowledgeBase,
+) -> DocumentPipelineStatusRead:
+    """Roadmap step 111 -- per-stage breakdown (pipeline_status.py),
+    distinct from get_document_status above: that endpoint is a cheap
+    single-string poll target, this one is for a client that wants to
+    show real ingestion progress. Same document:read permission -- a
+    richer view of the same capability, not a new one."""
+    repo = DocumentRepository(session, tenant_id)
+    document = await repo.get(document_id)
+    if document is None or document.knowledge_base_id != knowledge_base.id:
+        raise NotFoundError(f"Document {document_id} not found.")
+
+    chunk_repo = ChunkRepository(session, tenant_id)
+    chunk_count = await chunk_repo.count_for_document(document_id)
+    embedded_chunk_count = await chunk_repo.count_embedded_for_document(document_id)
+    stages = compute_pipeline_stages(document.status, chunk_count)
+
+    return DocumentPipelineStatusRead(
+        id=document.id,
+        status=document.status,
+        stages=[PipelineStageRead(stage=s.stage, status=s.status) for s in stages],
+        chunk_count=chunk_count,
+        embedded_chunk_count=embedded_chunk_count,
+        updated_at=document.updated_at,
+    )
 
 
 @router.patch(

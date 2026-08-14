@@ -296,6 +296,92 @@ async def test_document_status_not_visible_under_a_different_knowledge_base() ->
 
 
 @pytest.mark.anyio
+async def test_get_document_pipeline_status_shows_pending_stage_breakdown() -> None:
+    """Roadmap step 111 -- richer than /status: a per-stage breakdown
+    plus real chunk counts. No worker runs during this test (dispatch_
+    extraction.delay() just enqueues, nothing consumes it), so status
+    stays "pending" the whole time -- pipeline_status.py's own unit
+    tests (test_pipeline_status.py) cover every other Document.status
+    value; this only needs to prove the real endpoint wires that pure
+    logic + real Chunk counts together correctly."""
+    email = "endpoint-test-doc-owner-14@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("pipeline-status.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+
+        response = client.get(
+            _docs_url(org_id, workspace_id, kb_id, f"/{document_id}/pipeline-status"),
+            headers=headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["id"] == document_id
+        assert body["status"] == "pending"
+        assert body["chunk_count"] == 0
+        assert body["embedded_chunk_count"] == 0
+        assert body["stages"] == [
+            {"stage": "extraction", "status": "pending"},
+            {"stage": "chunk_generation", "status": "not_applicable"},
+            {"stage": "embedding_generation", "status": "not_applicable"},
+        ]
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_document_pipeline_status_not_visible_under_a_different_knowledge_base() -> None:
+    email = "endpoint-test-doc-owner-15@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    storage_key = None
+    try:
+        upload_response = client.post(
+            _docs_url(org_id, workspace_id, kb_id),
+            files={"file": ("scoped-pipeline-status.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = upload_response.json()["id"]
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            document = await session.get(Document, uuid.UUID(document_id))
+            assert document is not None
+            storage_key = document.storage_key
+
+        other_kb_response = client.post(
+            f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases",
+            json={"name": "Other Pipeline KB", "slug": "endpoint-test-doc-pipeline-other-kb"},
+            headers=headers,
+        )
+        other_kb_id = uuid.UUID(other_kb_response.json()["id"])
+
+        response = client.get(
+            _docs_url(org_id, workspace_id, other_kb_id, f"/{document_id}/pipeline-status"),
+            headers=headers,
+        )
+        assert response.status_code == 404
+    finally:
+        if storage_key is not None:
+            await _cleanup_storage(storage_key)
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
 async def test_end_user_role_cannot_poll_document_status() -> None:
     """document:read (same permission the full GET already requires) --
     proves this isn't a new, unguarded capability."""
