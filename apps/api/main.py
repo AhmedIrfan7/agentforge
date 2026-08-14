@@ -11,6 +11,7 @@ from routers import (
     mfa,
     oauth,
     organization,
+    retrieval,
     security_settings,
     workspace,
 )
@@ -30,6 +31,7 @@ app.include_router(invitation.accept_router)
 app.include_router(security_settings.router)
 app.include_router(knowledge_base.router)
 app.include_router(document.router)
+app.include_router(retrieval.router)
 
 
 @app.get("/health")
