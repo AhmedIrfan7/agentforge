@@ -42,8 +42,16 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://agentforge_app:agentforge_app@localhost:5432/agentforge"
     )
 
-    # Bootstrap superuser — needed for DDL. Used only by Alembic
-    # (migrations/env.py), never by the running application.
+    # Bootstrap superuser — needed for DDL. Used by Alembic
+    # (migrations/env.py), and, as of step 110, by
+    # vector_maintenance.py's REINDEX CONCURRENTLY task — REINDEX
+    # requires index ownership on Postgres 16 (the MAINTAIN privilege
+    # that would let a non-owner role do this doesn't exist until
+    # Postgres 17), confirmed live (`agentforge_app` gets `ERROR: must
+    # be owner of index`). REINDEX touches no tenant data (it rebuilds
+    # an index structure, doesn't read/return rows), so this is an
+    # honest, narrow exception to "the running application only uses
+    # database_url" — a maintenance operation, not a data-access one.
     database_migrations_url: str = (
         "postgresql+asyncpg://agentforge:agentforge@localhost:5432/agentforge"
     )

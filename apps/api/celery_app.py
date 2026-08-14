@@ -6,17 +6,18 @@ against a real worker process and real Redis, same as every other piece
 of infrastructure in this project.
 
 conf.imports lists every other module that defines a @celery_app.task --
-extraction.py (step 090) and embeddings_pipeline.py (step 108) so far. A
-worker process only knows about tasks from modules it has actually
-imported; `-A celery_app worker` alone only imports this file, so without
-this, a task defined in extraction.py would be invisible to the worker
-(real KeyError caught live: 'dispatch_extraction' -- the task existed in
-the API process, which does import extraction.py, but not in the
-separate worker process, which didn't). Not a direct `from extraction
-import dispatch_extraction` here instead, because extraction.py itself
-imports celery_app from this module -- conf.imports sidesteps that
-circular import by deferring the actual import until Celery's own worker
-bootstrap, after celery_app already exists.
+extraction.py (step 090), embeddings_pipeline.py (step 108), and
+vector_maintenance.py (step 110) so far. A worker process only knows
+about tasks from modules it has actually imported; `-A celery_app worker`
+alone only imports this file, so without this, a task defined in
+extraction.py would be invisible to the worker (real KeyError caught
+live: 'dispatch_extraction' -- the task existed in the API process,
+which does import extraction.py, but not in the separate worker process,
+which didn't). Not a direct `from extraction import dispatch_extraction`
+here instead, because extraction.py itself imports celery_app from this
+module -- conf.imports sidesteps that circular import by deferring the
+actual import until Celery's own worker bootstrap, after celery_app
+already exists.
 
 Shares config.redis_url with redis_client.py's cache/rate-limiter
 connection (see config.py's own docstring: "cache, Celery
@@ -48,7 +49,7 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
-    imports=("extraction", "embeddings_pipeline"),
+    imports=("extraction", "embeddings_pipeline", "vector_maintenance"),
 )
 
 
