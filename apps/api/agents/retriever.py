@@ -41,6 +41,17 @@ per request) -- an agent instance is built once at module import time
 (same module-level singleton shape routers/retrieval.py already used
 for _embedding_provider/_vector_store before this step), so it can't
 hold a collaborator whose lifetime is one request.
+
+As of step 125, `rerank()` adds reranking as its own separate,
+explicit stage -- AGENTS.md's own "Design reranking as an independent
+stage" taken literally: it is NOT folded into search_dense/
+search_keyword/search_hybrid (each already produces its own real
+ranking), so calling it is opt-in, on results a caller already has.
+`reranker: RerankerProvider` is a per-call parameter, not a
+constructor-held collaborator like embedding_provider/vector_store --
+there's no router step yet that always wants reranking applied (unlike
+embedding_provider/vector_store, which every dense/hybrid call needs),
+so nothing yet justifies a fixed, always-used instance.
 """
 
 import uuid
@@ -49,6 +60,7 @@ from dataclasses import dataclass
 from agents.base import Agent
 from embeddings.base import EmbeddingProvider
 from repositories.chunk import ChunkRepository
+from rerankers.base import RerankCandidate, RerankerProvider
 from retrieval_fusion import reciprocal_rank_fusion
 from vectorstore.base import SearchFilters, VectorStore
 
@@ -165,4 +177,21 @@ class RetrieverAgent(Agent):
                 score=fused_scores[chunk_id],
             )
             for chunk_id in ranked_ids[:top_k]
+        ]
+
+    async def rerank(
+        self, reranker: RerankerProvider, query: str, results: list[RetrievedChunk]
+    ) -> list[RetrievedChunk]:
+        candidates = [RerankCandidate(id=r.chunk_id, text=r.text) for r in results]
+        rerank_results = await reranker.rerank(query, candidates)
+
+        lookup = {r.chunk_id: r for r in results}
+        return [
+            RetrievedChunk(
+                chunk_id=rr.id,
+                document_id=lookup[rr.id].document_id,
+                text=lookup[rr.id].text,
+                score=rr.score,
+            )
+            for rr in rerank_results
         ]

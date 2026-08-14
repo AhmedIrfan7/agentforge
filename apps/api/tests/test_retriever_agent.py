@@ -17,6 +17,13 @@ same as search_dense's own tests) and one real keyword result (via
 real Postgres) at once -- proving the two real halves this project
 already trusts independently combine correctly through the agent, not
 re-proving either half's own internal correctness again.
+
+rerank() (step 125) is tested with the real LexicalReranker (rerankers/
+lexical.py) against plain in-memory RetrievedChunk objects -- no
+Postgres/fakes needed, since rerank() itself only maps RetrievedChunk
+to/from RerankCandidate/RerankResult around a caller-supplied
+RerankerProvider, and LexicalReranker has no external dependency of
+its own to fake.
 """
 
 import uuid
@@ -24,7 +31,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from agents.retriever import RetrieverAgent
+from agents.retriever import RetrievedChunk, RetrieverAgent
 from db import get_session, set_tenant_context
 from embeddings.base import EmbeddingProvider
 from models.chunk import Chunk
@@ -33,6 +40,7 @@ from models.knowledge_base import KnowledgeBase
 from models.organization import Organization
 from models.workspace import Workspace
 from repositories.chunk import ChunkRepository
+from rerankers.lexical import LexicalReranker
 from vectorstore.base import SearchFilters, VectorRecord, VectorSearchResult, VectorStore
 
 
@@ -285,3 +293,28 @@ async def test_search_hybrid_fuses_real_dense_and_real_keyword_results() -> None
 
     result_texts = {r.text for r in results}
     assert result_texts == {"found by keyword search only", "found by dense search only"}
+
+
+@pytest.mark.anyio
+async def test_rerank_reorders_results_by_the_provided_reranker() -> None:
+    """Roadmap step 125 -- rerank() is a separate stage applied to
+    results a caller already has, not folded into search_dense/
+    search_keyword/search_hybrid."""
+    agent = RetrieverAgent(_FakeEmbeddingProvider(), _FakeVectorStore())
+    weak_match_id, strong_match_id = uuid.uuid4(), uuid.uuid4()
+    document_id = uuid.uuid4()
+    results = [
+        RetrievedChunk(
+            chunk_id=weak_match_id, document_id=document_id, text="mentions refund once", score=0.9
+        ),
+        RetrievedChunk(
+            chunk_id=strong_match_id,
+            document_id=document_id,
+            text="refund policy refund refund",
+            score=0.1,
+        ),
+    ]
+
+    reranked = await agent.rerank(LexicalReranker(), "refund policy", results)
+
+    assert [r.chunk_id for r in reranked] == [strong_match_id, weak_match_id]
