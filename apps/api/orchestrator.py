@@ -44,6 +44,13 @@ for the same real reason -- no HTTP caller exists yet to force a
 particular shape, so this is the first, honest shape a real caller
 (a future chat/conversation endpoint) will need.
 
+As of step 153, `_planning_node`/`_execute_node` call their agents
+through `agents/tracing.py:traced_run` rather than `.run()` directly --
+these are the two real per-agent call sites this codebase has today,
+matching AGENTS.md's own "END-TO-END EXECUTION TRACING" diagram
+(Planning Agent, Selected Agents). See that module's own docstring for
+why tokens stay honestly `None` for both today.
+
 `_RetrieverGraphAgent` is deliberately NOT registered into `agents/
 registry.py:AgentRegistry` -- that registry's whole design (step 139)
 assumes stateless, construct-once, look-up-many agents, but this
@@ -80,6 +87,7 @@ from agents.base import Agent
 from agents.planning import PlanningAgent
 from agents.registry import AgentRegistry
 from agents.retriever import RetrievedChunk, RetrieverAgent
+from agents.tracing import traced_run
 from db import get_worker_session, set_tenant_context
 from embeddings.openai import OpenAIEmbeddingProvider
 from repositories.chunk import ChunkRepository
@@ -109,7 +117,7 @@ async def _intent_analysis_node(state: OrchestratorState) -> dict[str, str]:
 
 
 async def _planning_node(state: OrchestratorState) -> dict[str, list[str]]:
-    plan = await _planning_agent.run(state["intent"])
+    plan = await traced_run(_planning_agent, state["intent"])
     return {"agent_names": plan.agent_names}
 
 
@@ -132,7 +140,7 @@ async def _execute_node(state: OrchestratorState) -> dict[str, str]:
         return {"response": state["query"]}
 
     agent = _RetrieverGraphAgent(state["tenant_id"], state["knowledge_base_id"])
-    results = await agent.run(state["query"])
+    results = await traced_run(agent, state["query"])
     if not results:
         return {"response": "No results found."}
     return {"response": "\n\n".join(r.text for r in results)}
