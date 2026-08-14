@@ -457,6 +457,122 @@ async def test_quality_signals_are_populated_through_the_real_dispatcher() -> No
 
 
 @pytest.mark.anyio
+async def test_second_upload_of_identical_content_is_flagged_as_a_duplicate() -> None:
+    """Roadmap step 117 -- repositories/document.py:DocumentRepository.
+    list_duplicates_in_knowledge_base's own query logic is exercised
+    here through the real dispatcher, not directly, since it needs two
+    real Document rows with real committed content_hash values to
+    compare. Only the SECOND document (extracted after the first
+    already has a content_hash) should see the first one as a
+    duplicate -- the first was extracted with nothing else to compare
+    against yet."""
+    content = b"Identical content uploaded twice into the same knowledge base."
+
+    tenant_id, kb_id = await _new_org_workspace_kb("extract-duplicate")
+    first_storage_key = None
+    second_storage_key = None
+    try:
+        first_id, first_storage_key = await _create_document(
+            tenant_id, kb_id, title="first.txt", content=content
+        )
+        await _run_extraction(first_id, tenant_id)
+
+        second_id, second_storage_key = await _create_document(
+            tenant_id, kb_id, title="second.txt", content=content
+        )
+        await _run_extraction(second_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            first_doc = await session.get(Document, first_id)
+            second_doc = await session.get(Document, second_id)
+            assert first_doc is not None
+            assert second_doc is not None
+            assert first_doc.doc_metadata["duplicate_document_ids"] == []
+            assert second_doc.doc_metadata["duplicate_document_ids"] == [str(first_id)]
+    finally:
+        await _cleanup(tenant_id, first_storage_key)
+        if second_storage_key is not None:
+            async with _client_context() as s3:
+                await s3.delete_object(Bucket="agentforge-dev", Key=second_storage_key)
+
+
+@pytest.mark.anyio
+async def test_different_content_is_not_flagged_as_a_duplicate() -> None:
+    tenant_id, kb_id = await _new_org_workspace_kb("extract-not-duplicate")
+    first_storage_key = None
+    second_storage_key = None
+    try:
+        first_id, first_storage_key = await _create_document(
+            tenant_id, kb_id, title="first.txt", content=b"First document's own content."
+        )
+        await _run_extraction(first_id, tenant_id)
+
+        second_id, second_storage_key = await _create_document(
+            tenant_id, kb_id, title="second.txt", content=b"Genuinely different content."
+        )
+        await _run_extraction(second_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            second_doc = await session.get(Document, second_id)
+            assert second_doc is not None
+            assert second_doc.doc_metadata["duplicate_document_ids"] == []
+    finally:
+        await _cleanup(tenant_id, first_storage_key)
+        if second_storage_key is not None:
+            async with _client_context() as s3:
+                await s3.delete_object(Bucket="agentforge-dev", Key=second_storage_key)
+
+
+@pytest.mark.anyio
+async def test_identical_content_in_a_different_knowledge_base_is_not_a_duplicate() -> None:
+    """Roadmap step 117's own wording -- "within a knowledge base" --
+    the same content uploaded into a DIFFERENT knowledge base under the
+    same tenant is deliberately not flagged."""
+    content = b"Shared content that happens to live in two different knowledge bases."
+
+    tenant_id, kb_id = await _new_org_workspace_kb("extract-duplicate-scope")
+    first_storage_key = None
+    second_storage_key = None
+    try:
+        first_id, first_storage_key = await _create_document(
+            tenant_id, kb_id, title="first.txt", content=content
+        )
+        await _run_extraction(first_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            first_kb = await session.get(KnowledgeBase, kb_id)
+            assert first_kb is not None
+            other_kb = KnowledgeBase(
+                tenant_id=tenant_id,
+                workspace_id=first_kb.workspace_id,
+                name="Other KB",
+                slug="extract-duplicate-scope-other-kb",
+            )
+            session.add(other_kb)
+            await session.commit()
+            other_kb_id = other_kb.id
+
+        second_id, second_storage_key = await _create_document(
+            tenant_id, other_kb_id, title="second.txt", content=content
+        )
+        await _run_extraction(second_id, tenant_id)
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            second_doc = await session.get(Document, second_id)
+            assert second_doc is not None
+            assert second_doc.doc_metadata["duplicate_document_ids"] == []
+    finally:
+        await _cleanup(tenant_id, first_storage_key)
+        if second_storage_key is not None:
+            async with _client_context() as s3:
+                await s3.delete_object(Bucket="agentforge-dev", Key=second_storage_key)
+
+
+@pytest.mark.anyio
 async def test_chunking_recommendation_is_populated_through_the_real_dispatcher() -> None:
     """agents/chunking_recommendation.py's own scoring logic is
     unit-tested directly in test_chunking_recommendation_agent.py --

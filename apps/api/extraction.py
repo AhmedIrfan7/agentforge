@@ -73,6 +73,19 @@ adding "quality": {"is_empty", "has_broken_formatting"} to doc_metadata
 and setting Document.content_hash (its own indexed column, not JSONB --
 step 117's duplicate-detection lookup needs to query it efficiently).
 
+As of step 117, the same pass also queries repositories/document.py:
+DocumentRepository.list_duplicates_in_knowledge_base for OTHER documents
+in the same knowledge base sharing this content_hash, adding
+"duplicate_document_ids" (a list of string UUIDs, empty when there are
+none) to doc_metadata. Informational only, same "detect, don't block"
+stance quality.py's own checks already take -- an upload's own
+validation/antivirus pipeline (validation.py, step 085-087) already ran
+and accepted the file before extraction even starts, so this step was
+never going to reject anything this late; only documents that already
+finished extraction (content_hash already committed) can match, so two
+uploads of the identical file racing each other correctly never flag
+one another before either has a real hash to compare.
+
 As of step 097, the same pass also runs agents/chunking_recommendation.py's
 ChunkingRecommendationAgent, adding "chunking_recommendation":
 {"strategy", "scores", "reasoning"} to doc_metadata -- the full
@@ -197,6 +210,10 @@ async def _run_extraction(document_id: uuid.UUID, tenant_id: uuid.UUID) -> bool:
                 "is_empty": quality.is_empty,
                 "has_broken_formatting": quality.has_broken_formatting,
             }
+            duplicates = await repo.list_duplicates_in_knowledge_base(
+                document.knowledge_base_id, quality.content_hash, exclude_document_id=document.id
+            )
+            doc_metadata["duplicate_document_ids"] = [str(d.id) for d in duplicates]
             chunking_recommendation = _chunking_recommendation_agent.recommend(extracted_text)
             doc_metadata["chunking_recommendation"] = {
                 "strategy": chunking_recommendation.strategy,

@@ -12,8 +12,10 @@ files that merely extract to the same text (e.g. a .txt and a .md with
 identical content) are a fuzzier kind of "duplicate" this step doesn't
 attempt to detect. Stored on Document.content_hash (indexed) for step
 117 ("duplicate-document detection within a knowledge base") to query
-against -- this step only computes and stores the signal, it doesn't
-act on it (no rejection, no warning surfaced to the caller yet).
+against -- this step only computes and stores the signal; step 117
+(extraction.py's own docstring) is what actually queries it and
+surfaces "duplicate_document_ids" in doc_metadata, informational only,
+never a rejection.
 
 is_empty: extracted_text is empty or whitespace-only after stripping.
 Deliberately whole-document, not literally per-PAGE despite the roadmap
