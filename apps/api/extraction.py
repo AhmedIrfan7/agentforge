@@ -34,6 +34,22 @@ with a short, bounded retry rather than SQLAlchemy after-commit event
 wiring: simpler, and self-healing under any commit-timing scenario, not
 just this specific race.
 
+As of step 112, a genuine extraction failure (a handler raising --
+corrupt content, a storage read blip, etc.) is ALSO retried, with
+exponential backoff (autoretry_for/retry_backoff on the task decorator),
+distinct from _DocumentNotFoundYet's flat 1s retry above: this is a real
+gap step 112 found, not assumed -- max_retries=5 had been set on this
+task since step 090, but nothing before now ever called self.retry() or
+configured autoretry_for for anything other than the not-found-yet race,
+so a genuinely failed extraction previously got exactly one attempt, no
+retry, despite max_retries implying otherwise. Both retry paths share
+the same max_retries budget (Celery's retry counter is per-task-instance,
+not per-reason) -- an honest, accepted simplification, not a designed-in
+budget split. This doesn't distinguish a transient failure (worth
+retrying) from a permanent one (a file that will never parse, which
+still burns all 5 retries before landing on "extraction_failed") -- a
+real, accepted limitation, not silently assumed away.
+
 As of step 094, a successful content extraction also populates
 Document.doc_metadata (title/author/created_at/modified_at/language --
 extraction_metadata.py:build_doc_metadata) in the same pass, reusing the
@@ -203,7 +219,14 @@ async def _run_extraction(document_id: uuid.UUID, tenant_id: uuid.UUID) -> bool:
         return True
 
 
-@celery_app.task(bind=True, name="dispatch_extraction", max_retries=5)  # type: ignore[untyped-decorator]
+@celery_app.task(  # type: ignore[untyped-decorator]
+    bind=True,
+    name="dispatch_extraction",
+    max_retries=5,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
 def dispatch_extraction(self: Any, document_id: str, tenant_id: str) -> None:
     try:
         extracted = asyncio.run(_run_extraction(uuid.UUID(document_id), uuid.UUID(tenant_id)))

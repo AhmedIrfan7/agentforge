@@ -41,6 +41,14 @@ operates a real deployment triggers this periodically (pgvector's own
 guidance: monthly/quarterly, or after a large bulk-ingestion burst) --
 same honest "build the task, not speculative scheduling infra" scope
 `ping` (step 089) and every other task here has kept.
+
+As of step 112, retries with exponential backoff on any failure
+(autoretry_for/retry_backoff), same policy as extraction.py/
+embeddings_pipeline.py's own step-112 additions -- a transient
+connection issue during REINDEX CONCURRENTLY is exactly the kind of
+failure worth retrying, and retrying is genuinely safe here (see
+reindex_chunk_embeddings' own comment on why an interrupted concurrent
+rebuild doesn't need special-case recovery logic).
 """
 
 import asyncio
@@ -71,6 +79,17 @@ async def _reindex_chunk_embeddings() -> None:
         await engine.dispose()
 
 
-@celery_app.task(name="reindex_chunk_embeddings")  # type: ignore[untyped-decorator]
+@celery_app.task(  # type: ignore[untyped-decorator]
+    name="reindex_chunk_embeddings",
+    max_retries=5,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
 def reindex_chunk_embeddings() -> None:
+    # Retrying a REINDEX CONCURRENTLY that failed partway is safe, not
+    # just convenient -- Postgres marks an interrupted concurrent
+    # rebuild INVALID rather than corrupting the index, and a later
+    # REINDEX CONCURRENTLY on an invalid index is a documented, normal
+    # recovery path, not a special case this code needs to handle.
     asyncio.run(_reindex_chunk_embeddings())

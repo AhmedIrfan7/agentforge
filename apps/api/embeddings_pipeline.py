@@ -40,6 +40,17 @@ re-chunk step) needs to make this state visible or actionable.
 CHUNKERS reuses the same plain-dict-registry shape as `auth/oauth.py:
 PROVIDERS` and `extraction.py:HANDLERS` — no reason for more machinery,
 same reasoning both of those already gave.
+
+As of step 112, dispatch_embedding_generation retries with exponential
+backoff on any failure (autoretry_for/retry_backoff) -- before this,
+despite max_retries=5 being set since this task's own introduction here,
+nothing ever called self.retry() or configured autoretry_for, so a real
+embedding failure (confirmed live at steps 108/111 -- an OpenAI request
+failing closed) got exactly one attempt. Same accepted limitation as
+extraction.py's own step-112 retry addition: this doesn't distinguish a
+transient failure (worth retrying) from a permanent one (an invalid
+API key, which will fail identically every retry) -- it burns the full
+retry budget either way before landing on "embedding_failed".
 """
 
 import asyncio
@@ -128,6 +139,13 @@ async def _run_embedding_generation(document_id: uuid.UUID, tenant_id: uuid.UUID
         await session.commit()
 
 
-@celery_app.task(bind=True, name="dispatch_embedding_generation", max_retries=5)  # type: ignore[untyped-decorator]
+@celery_app.task(  # type: ignore[untyped-decorator]
+    bind=True,
+    name="dispatch_embedding_generation",
+    max_retries=5,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
 def dispatch_embedding_generation(self: Any, document_id: str, tenant_id: str) -> None:
     asyncio.run(_run_embedding_generation(uuid.UUID(document_id), uuid.UUID(tenant_id)))
