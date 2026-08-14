@@ -668,3 +668,221 @@ async def test_dense_search_document_id_filter_is_wired_through(
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)
+
+
+def _context_url(org_id: uuid.UUID, workspace_id: uuid.UUID, kb_id: uuid.UUID) -> str:
+    return f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/context"
+
+
+@pytest.mark.anyio
+async def test_context_endpoint_returns_real_citations_for_keyword_strategy() -> None:
+    """The polished endpoint (roadmap step 133) -- keyword strategy
+    needs no OPENAI_API_KEY, so this proves the full real pipeline
+    (retrieval -> context_builder -> citations) end to end without a
+    fake embedding provider: document_title/knowledge_base_name come
+    from real rows, section is parsed from the chunk's own real leading
+    markdown heading."""
+    email = "endpoint-test-context-owner-1@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        document_response = client.post(
+            f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/documents",
+            files={"file": ("policy.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = uuid.UUID(document_response.json()["id"])
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            session.add(
+                Chunk(
+                    tenant_id=org_id,
+                    document_id=document_id,
+                    text="## Refund Policy\n\nOur refund policy allows returns.",
+                    start=0,
+                    end=1,
+                    index=0,
+                )
+            )
+            await session.commit()
+
+        response = client.post(
+            _context_url(org_id, workspace_id, kb_id),
+            json={"query": "refund policy", "strategy": "keyword"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body) == 1
+        assert body[0]["document_id"] == str(document_id)
+        assert body[0]["document_title"] == "policy.txt"
+        assert body[0]["knowledge_base_name"] == "Retrieval Test KB"
+        assert body[0]["section"] == "Refund Policy"
+        assert "refund policy" in body[0]["text"].lower()
+        assert "score" not in body[0]
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_context_endpoint_dense_strategy_is_wired_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "routers.retrieval._retriever_agent._embedding_provider",
+        _FakeEmbeddingProvider(vectors_by_text={"refund": _vector(lead=1.0)}),
+    )
+
+    email = "endpoint-test-context-owner-2@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        document_response = client.post(
+            f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/documents",
+            files={"file": ("doc.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = uuid.UUID(document_response.json()["id"])
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            session.add(
+                Chunk(
+                    tenant_id=org_id,
+                    document_id=document_id,
+                    text="a real chunk of text",
+                    start=0,
+                    end=1,
+                    index=0,
+                    embedding=_vector(lead=1.0),
+                )
+            )
+            await session.commit()
+
+        response = client.post(
+            _context_url(org_id, workspace_id, kb_id),
+            json={"query": "refund", "strategy": "dense"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert [r["text"] for r in body] == ["a real chunk of text"]
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_context_endpoint_respects_the_token_budget() -> None:
+    email = "endpoint-test-context-owner-3@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        document_response = client.post(
+            f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/documents",
+            files={"file": ("doc.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = uuid.UUID(document_response.json()["id"])
+
+        # Two chunks that both match "refund policy" on their own but
+        # together exceed a small max_tokens budget.
+        long_text = "refund policy " + " ".join(f"filler{i}" for i in range(200))
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            session.add_all(
+                [
+                    Chunk(
+                        tenant_id=org_id,
+                        document_id=document_id,
+                        text=long_text,
+                        start=0,
+                        end=1,
+                        index=0,
+                    ),
+                    Chunk(
+                        tenant_id=org_id,
+                        document_id=document_id,
+                        text="refund policy short chunk",
+                        start=1,
+                        end=2,
+                        index=1,
+                    ),
+                ]
+            )
+            await session.commit()
+
+        response = client.post(
+            _context_url(org_id, workspace_id, kb_id),
+            json={"query": "refund policy", "strategy": "keyword", "max_tokens": 5},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body) < 2
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_context_endpoint_rerank_and_multi_query_flags_do_not_error() -> None:
+    """Proves the wiring, not re-derives rerank()/search_multi_query()'s
+    own correctness -- both are already independently, rigorously
+    tested at the agent layer (test_retriever_agent.py)."""
+    email = "endpoint-test-context-owner-4@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_with_kb(email)
+    try:
+        document_response = client.post(
+            f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/documents",
+            files={"file": ("doc.txt", b"content", "text/plain")},
+            headers=headers,
+        )
+        document_id = uuid.UUID(document_response.json()["id"])
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            session.add(
+                Chunk(
+                    tenant_id=org_id,
+                    document_id=document_id,
+                    text="refund policy and shipping details",
+                    start=0,
+                    end=1,
+                    index=0,
+                )
+            )
+            await session.commit()
+
+        response = client.post(
+            _context_url(org_id, workspace_id, kb_id),
+            json={
+                "query": "refund policy and shipping",
+                "strategy": "keyword",
+                "rerank": True,
+                "multi_query": True,
+            },
+            headers=headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body) == 1
+        assert body[0]["text"] == "refund policy and shipping details"
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_context_endpoint_for_nonexistent_knowledge_base_returns_404() -> None:
+    email = "endpoint-test-context-owner-5@example.com"
+    org_id, workspace_id, _kb_id, headers = _new_org_with_kb(email)
+    try:
+        response = client.post(
+            _context_url(org_id, workspace_id, uuid.uuid4()),
+            json={"query": "query"},
+            headers=headers,
+        )
+        assert response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
