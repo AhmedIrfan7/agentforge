@@ -4,7 +4,7 @@ This document describes the system **as implemented**, not as aspired to — it 
 
 ## Status
 
-Milestone 4 (Agent System) complete; Milestone 5 (Memory System) next. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
+Milestone 5 (Memory System) complete; Milestone 6 (Conversation Engine) next. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
 
 ## Repository layout
 
@@ -159,7 +159,39 @@ Three small, composable modules wrap every real agent call:
 
 ## Memory architecture
 
-_To be filled in as Milestone 5 lands._
+Two genuinely separate stores, not two modes of one abstraction — "Memory is different from retrieval. Do not mix them" (AGENTS.md), and short-term and long-term memory are different from *each other* too: short-term never touches Postgres, long-term never touches Redis, and the only bridge between them is a real decision, not automatic promotion.
+
+### Short-term memory
+
+`short_term_memory.py` — a Redis LIST per conversation (`session_id`), storing real `llm.base.Message` entries (role/content, the exact shape a chat call needs). `append_turn` pushes and trims to `MAX_ENTRIES` (50); every write refreshes a one-hour TTL, so an idle conversation's working memory expires on its own. No `Conversation`/`ConversationSession` model exists yet (Milestone 6) — `session_id` is an opaque, caller-supplied UUID today, the same identifier `models/memory.py:Memory.session_id` uses for its own unconstrained reference.
+
+### Long-term memory
+
+`models/memory.py:Memory` — Postgres, tenant-scoped, RLS-protected. Three real scopes (`scope` column): **user** (`user_id`, a real FK — one person's preferences/history), **organization** (no extra column; `tenant_id` already identifies it — shared business context), **session** (`session_id`, unconstrained — same reason as the Redis store). `memory_type` genuinely supports `"short_term"`/`"long_term"` as values, but only `"long_term"` is ever written here — short-term entries never get promoted into a row automatically. `importance_score` (0.0–1.0, app-level convention) drives everything downstream: retrieval ordering, expiration duration, and conflict resolution all read the same number rather than three independently invented scales.
+
+`repositories/memory.py:MemoryRepository` is the real access layer: `list_for_user`/`list_for_organization`/`list_for_session` (importance-ordered, already-expired rows excluded), `list_all_for_user`/`delete_all_for_user` (the export/erasure pair, deliberately unfiltered by expiration or importance — both are "give me *everything*" operations), and `update_content` (the one real update path, used only by conflict resolution).
+
+### The retention decision
+
+`agents/memory.py:MemoryAgent` is the first Milestone-4 skeleton to gain real logic: `run(Message) -> RetentionDecision` is a deterministic heuristic — no LLM judges this — scoring on content length and explicit identity/preference signal phrases ("my name is", "remember that", ...). Below `RETENTION_THRESHOLD` (0.5), content is never written to Postgres at all; "not every conversation should become permanent memory" is enforced at the point of creation, not cleaned up after the fact.
+
+### The summarization pipeline
+
+`memory_summarization.py:dispatch_memory_summarization` (Celery, same task shape as the document pipeline's own background jobs) is the one real path that turns short-term memory into long-term memory, and the first code in this codebase to call a real LLM provider directly (`llm/openai.py:OpenAIProvider`, not through an agent — summarization isn't an `Agent.run()`-shaped decision). Per dispatch: read a session's Redis turns → summarize via a real LLM call → run the summary through `MemoryAgent`'s own retention decision → check `memory_conflict.py:find_conflicting_memory` (a word-overlap heuristic, not embeddings — `Memory` has no embedding column) against the session's existing memories → **create** a new row, **update** a conflicting one that it outscores, or **ignore** it entirely → clear the Redis turns either way. Every real outcome is logged via `memory_observability.py:log_memory_event` (one structured event, an `outcome` field: created/updated/ignored), so an operator can see not just *that* something happened but *why*.
+
+### Expiration and conflict resolution
+
+`memory_policy.py:compute_expiration` maps `importance_score` to a real TTL — permanent above 0.8, 90 days above the retention threshold, 7 days below it (a defensive floor `MemoryAgent`'s own output never actually reaches). `expire_stale_memories` is a real, dispatchable Celery task, explicitly **not** a scheduled job — this codebase never adds Celery Beat, matching the same "build the task, not speculative scheduling infra" choice the document pipeline's own maintenance task made. Between when a memory expires and when that task next runs, the row still physically exists; `MemoryRepository`'s own retrieval methods exclude it anyway, so expiration is enforced at read time regardless of when the sweep gets around to deleting it.
+
+### Privacy and identity-based retrieval
+
+`memory_retrieval.py:retrieve_memory_for_conversation_start` combines a user's own memory with their organization's shared memory into one importance-ordered result — the real substance behind "the assistant should feel continuous rather than stateless." `routers/memory.py` gives users real, self-service control over their own data: view, export (everything, unfiltered), and two distinct deletion operations — a granular per-entry delete and a comprehensive right-to-erasure that wipes every user-scoped memory at once, audit-logged since a bulk erasure is exactly the kind of event `AuditLog` exists for.
+
+**Honest, tracked gaps, not silently worked around:**
+- No agent calls an LLM provider through the `Agent.run()` contract yet — `memory_summarization.py` calls `OpenAIProvider` directly, matching the embedding pipeline's own precedent for provider calls outside the agent abstraction.
+- Right-to-erasure doesn't reach into Redis short-term memory — there's no `user_id → session_id` mapping anywhere in this codebase yet (that needs Milestone 6's `Conversation` model); short-term memory's own one-hour TTL is the only real cleanup for it today.
+- Conflict resolution is word-overlap, not semantic similarity — `Memory` has no embedding column, and adding one wasn't asked for by this milestone's own roadmap wording.
+- `memory_type="short_term"` and the `"updated"` observability outcome are both real, callable values nothing in this codebase currently produces — short-term memory never gets a Postgres row, and nothing but conflict resolution ever updates one.
 
 ## Conversation engine
 
