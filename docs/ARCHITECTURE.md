@@ -4,7 +4,7 @@ This document describes the system **as implemented**, not as aspired to — it 
 
 ## Status
 
-Milestone 3 (Knowledge Pipeline: Ingestion + RAG) complete; Milestone 4 (Agent System) next. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
+Milestone 4 (Agent System) complete; Milestone 5 (Memory System) next. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
 
 ## Repository layout
 
@@ -119,7 +119,43 @@ Tenant isolation for retrieval specifically is covered by `tests/test_retrieval_
 
 ## Multi-agent system
 
-_To be filled in as Milestone 4 lands._
+Built in three layers, each proven independently before the next depended on it: a **LangGraph-based orchestrator** that runs a real request through a real graph, an **agent population** ranging from genuinely implemented to honestly-unimplemented skeletons, and **cross-cutting execution infrastructure** (tracing, parallelism, failure handling) that wraps every agent call uniformly.
+
+### Agents
+
+`agents/base.py:Agent[InputT, OutputT]` (PEP 695 generics, this codebase's enforced style over `typing.Generic`) is the shared shape: a `name` for logging/registry lookup, a generic `run(input) -> output`, deliberately **not** an `abstractmethod` — several agents (`RetrieverAgent`, `PlanningAgent`) have real, useful methods that aren't shaped like a single `run()` call and never override it. `agents/registry.py:AgentRegistry` is a real, tested, name-keyed lookup (`register`/`get`/`discover`/`health_check`) that starts empty by design — nothing constructs-and-registers agents at app startup yet, since no router depends on registry lookup today; `health_check()`'s real signal is `type(agent).run is not Agent.run`, distinguishing an agent that overrides `run()` from one that's still a skeleton.
+
+Two genuinely different kinds of agent exist side by side, both honest about which they are:
+
+- **Real, implemented:** `RetrieverAgent` (dense/keyword/hybrid search, reranking, multi-query, parent-child expansion — wraps Milestone 3's retrieval mechanisms behind the Agent interface), `PlanningAgent` (a real, minimal `document_search` → `["retriever"]` heuristic — not an LLM planner, since no chat model exists to plan with yet), `CitationAgent` (wraps `citations.py`'s existing real logic), `DocumentAnalysisAgent`/`ChunkingRecommendationAgent` (Milestone 3's ingestion-time agents).
+- **Honest skeletons:** `MemoryAgent`, `ConversationAgent`, `ReasoningAgent`, `QualityReviewAgent`, `SafetyAgent` — real classes with a real `name`, deliberately left `NotImplementedError` rather than stubbed to return empty/fake-safe output. Each needs infrastructure that doesn't exist yet (a conversation/session model, a real chat/generation model) or, for `SafetyAgent` specifically, would be actively dangerous to fake (a confident-looking but fake "safe" verdict is worse than an honest failure).
+
+### Orchestrator
+
+`orchestrator.py:Orchestrator` builds its own real, compiled LangGraph `StateGraph` in `__init__` — a genuine three-node graph (`intent_analysis → planning → execute`), not the throwaway passthrough scaffold `agent_graph.py` used to first prove LangGraph works in this codebase. `OrchestratorState` is a `TypedDict` that grew one justified field per step (`query`/`response` → `+intent` → `+agent_names` → `+tenant_id`/`+knowledge_base_id`). Intent classification is deliberately two-way (`document_search` vs. `empty`) rather than AGENTS.md's full ten-category vision — only document search has a real subsystem behind it today; building a ten-way classifier with nine dead branches would be dishonest scaffolding. `_RetrieverGraphAgent` is a thin, request-scoped adapter constructed fresh per graph node (never registered into `AgentRegistry`, whose stateless design doesn't fit a `tenant_id`/`knowledge_base_id`-bound object) — the response for a real hit is the retrieved chunks' own raw text, since no chat/generation model exists yet to synthesize an answer.
+
+### LLM providers
+
+`llm/base.py:LLMProvider` (structural Protocol, message-based — `list[Message]`, each a `role`/`content` turn, not a single prompt string) with two real implementations: `llm/openai.py:OpenAIProvider` (Chat Completions, not the newer Responses API — the more stable, longest-unchanged shape) and `llm/anthropic.py:AnthropicProvider` (Messages API, with two real shape differences from OpenAI it translates itself: `system` as a top-level parameter rather than a message role, and a required `max_tokens`). `llm.PROVIDERS` is a name-keyed registry of both real instances, landing at the same point `embeddings`/`auth.oauth`'s own registries did — once a genuine second implementation existed to put in it. No agent calls an LLM yet; both providers are real, tested (including live-probed failure modes against the actual APIs), and waiting for `ReasoningAgent`/`ConversationAgent` to need one.
+
+### Execution infrastructure
+
+Three small, composable modules wrap every real agent call:
+
+- **Tracing** (`agents/tracing.py:traced_run`) — times one `Agent.run()` call and logs a single `"agent_execution"` structured event (`status`/`latency_ms`/`prompt_tokens`/`completion_tokens`), wired into the orchestrator's two real per-agent call sites. Token fields stay honestly `None` until an agent's output is a real `LLMResponse` — no agent produces one yet.
+- **Parallel execution** (`agents/parallel.py:run_parallel`/`gather_partial`) — runs independent `(agent, input)` steps concurrently via `asyncio.gather`, each still traced individually; `gather_partial` returns one `ok`/`failed` result per step instead of failing the whole batch. Real, tested (including a wall-clock timing proof of genuine concurrency), not yet wired into the orchestrator — `PlanningAgent` only ever plans one agent (`["retriever"]`) today, so there's no real multi-independent-agent request yet to parallelize.
+- **Failure handling** (`agents/resilience.py:with_retry`/`with_fallback`) — linear-backoff retry and primary/fallback agent substitution, both tracing every attempt. No retry library added; this codebase's only other retry precedent (Celery's `autoretry_for`, the document pipeline) only applies to background tasks, not inline request-path agent calls.
+
+### Assistants
+
+`Assistant` (`models/assistant.py`) is the product-facing configuration surface — one level under `KnowledgeBase` in the tenant hierarchy (`Organization → Workspace → KnowledgeBase → Assistant`), with `name`/`slug`/`description` plus an `agent_configuration` JSONB column. That column stores `agents/configuration.py:AgentConfiguration`, a validated Pydantic model built specifically to give it a real shape: `llm_provider` validated against `llm.PROVIDERS`' live keys, `enabled_agents` validated against each real agent's own `.name` (deliberately excluding the two ingestion-time agents, which are never part of an assistant's runtime request path), `retrieval_top_k` bounded to `RetrieverAgent`'s own real parameter. `routers/assistant.py` exposes create/list/get/delete, nested under `.../knowledge-bases/{id}/assistants`, validating `agent_configuration` at the API boundary before it ever reaches the JSONB column — no update endpoint, matching `KnowledgeBase`/`Workspace`'s own CRUD scope.
+
+**Honest, tracked gaps, not silently worked around:**
+- No agent calls an LLM provider yet — `ReasoningAgent`/`ConversationAgent`/`QualityReviewAgent`/`SafetyAgent`/`MemoryAgent` are real classes with no implementation, waiting on infrastructure Milestones 5–6 build (memory, conversation/session models).
+- `PlanningAgent` is a deterministic two-branch heuristic, not an LLM-based planner — no chat model exists yet to plan with.
+- `agents/parallel.py:run_parallel`/`gather_partial` are real and tested but not wired into the orchestrator — no request today plans more than one independent agent.
+- `AgentRegistry` is real and tested but empty at runtime — nothing constructs-and-registers agents at app startup, since no router depends on registry lookup yet.
+- `Assistant` has no update endpoint — only create/list/get/delete exist, matching every other resource at this layer.
 
 ## Memory architecture
 
