@@ -1,0 +1,61 @@
+"""Assistant model (roadmap step 159, Milestone 4) -- sits under
+KnowledgeBase in the product hierarchy (AGENTS.md's own "ORGANIZATION
+STRUCTURE" diagram: Organization -> Workspace(s) -> Knowledge Base(s)
+-> AI Assistant(s) -> ...), one level deeper than KnowledgeBase itself
+-- the same "one parent FK, mirroring the hierarchy" shape
+KnowledgeBase (082) already established under Workspace.
+
+Genuinely model-only, same precedent Document (083) and Chunk (105)
+already set: step 160 ("Add Assistant CRUD endpoints") is its own,
+separate roadmap step -- unlike KnowledgeBase (082), which bundled a
+minimal CRUD into its own model step because no later dedicated CRUD
+step existed for it. No repository yet either, same reasoning Chunk's
+own step-105 docstring gave.
+
+Deliberately minimal beyond name/slug/description -- same "don't
+speculate about fields a real step hasn't asked for yet" discipline
+KnowledgeBase's own docstring already applied. AGENTS.md's own "AI
+ASSISTANTS" section lists many more per-assistant concerns
+(instructions, knowledge access, voice configuration, memory settings,
+security policies, deployment settings, analytics, future tool
+integrations), but none of those have a real, already-built shape to
+store yet -- except `agent_configuration`, step 158's own
+`agents/configuration.py:AgentConfiguration`, built specifically so
+this step would have a real payload. Stored as JSONB
+(`Mapped[dict[str, object]]`), matching `models/document.py`'s own
+`doc_metadata` JSONB column -- the same "validated structure at the
+application layer, flexible storage at the DB layer" split. This
+model stays SQLAlchemy-only (no Pydantic import), matching every other
+`models/*.py` file -- validating a write against `AgentConfiguration`
+is the future CRUD endpoint's job (step 160), not this table's.
+"""
+
+import uuid
+
+from sqlalchemy import ForeignKey, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from db import Base
+from models.mixins import TenantScopedEntity, TimestampMixin
+
+
+class Assistant(TenantScopedEntity, TimestampMixin, Base):
+    __tablename__ = "assistants"
+    __table_args__ = (
+        # Slug unique within a knowledge base, not tenant-wide -- same
+        # "two different parents can each reasonably reuse a name"
+        # reasoning KnowledgeBase's own uq_knowledge_bases_workspace_id_slug
+        # already established one level up.
+        UniqueConstraint("knowledge_base_id", "slug", name="uq_assistants_knowledge_base_id_slug"),
+    )
+
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(nullable=False)
+    slug: Mapped[str] = mapped_column(nullable=False)
+    description: Mapped[str | None] = mapped_column(nullable=True)
+    agent_configuration: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )

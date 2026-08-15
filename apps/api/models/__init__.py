@@ -1,6 +1,7 @@
 """Import every model module here so its table registers on db.Base.metadata
 for Alembic autogenerate — see migrations/env.py."""
 
+from models.assistant import Assistant
 from models.audit_log import AuditLog
 from models.chunk import Chunk
 from models.document import Document
@@ -20,6 +21,7 @@ from models.verification_token import VerificationToken
 from models.workspace import Workspace
 
 __all__ = [
+    "Assistant",
     "AuditLog",
     "Chunk",
     "Document",
