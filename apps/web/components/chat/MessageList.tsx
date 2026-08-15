@@ -1,4 +1,4 @@
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage } from "@agentforge/shared";
 import styles from "./MessageList.module.css";
 import { TypingIndicator } from "./TypingIndicator";
 

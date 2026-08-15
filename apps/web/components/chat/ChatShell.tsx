@@ -1,5 +1,6 @@
 "use client";
 
+import type { ChatMessage, MessageRead } from "@agentforge/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createAnonymousConversation, streamMessage } from "@/lib/api";
 import {
@@ -8,7 +9,6 @@ import {
   saveConversation,
   type StoredConversation,
 } from "@/lib/conversationStore";
-import type { ChatMessage, MessageRead } from "@/lib/types";
 import { ConversationSidebar } from "./ConversationSidebar";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";

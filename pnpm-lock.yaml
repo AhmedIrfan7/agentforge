@@ -10,6 +10,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@agentforge/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       next:
         specifier: 16.3.0
         version: 16.3.0(@babel/core@7.29.7(supports-color@7.2.0))(@playwright/test@1.62.1)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -49,6 +52,10 @@ importers:
         version: 5.9.3
 
   apps/widget:
+    dependencies:
+      '@agentforge/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
     devDependencies:
       esbuild:
         specifier: ^0.28.2

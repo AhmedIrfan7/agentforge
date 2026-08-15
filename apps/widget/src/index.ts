@@ -28,7 +28,7 @@ try {
 }
 
 if (config) {
-  mountLauncher();
+  mountLauncher(config);
 }
 
 export function getConfig(): WidgetConfig | null {

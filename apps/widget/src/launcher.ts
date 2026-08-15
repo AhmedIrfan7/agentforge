@@ -12,8 +12,14 @@
 // "minimal deps" constraint (201) intact.
 //
 // Toggles a real open/closed state and swaps the icon accordingly.
-// The panel it reveals is deliberately empty -- the chat window's own
-// real content is step 205's job, not this one.
+// As of step 205, the panel's own content is rendered by
+// chat-window.ts:renderChatWindow -- launcher.ts still owns the
+// panel's shell (position/size/shadow/base visibility), chat-window.ts
+// owns what "open" looks like internally (flex layout) and everything
+// inside it.
+
+import { renderChatWindow } from "./chat-window";
+import type { WidgetConfig } from "./config";
 
 const CHAT_ICON =
   '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor" aria-hidden="true"><path d="M4 4h16v12H7l-3 3V4z"/></svg>';
@@ -52,11 +58,11 @@ const STYLES = `
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
     z-index: 2147483646;
     display: none;
+    overflow: hidden;
   }
-  .panel.open { display: block; }
 `;
 
-export function mountLauncher(): void {
+export function mountLauncher(config: WidgetConfig): void {
   const host = document.createElement("div");
   host.id = "agentforge-widget-root";
   document.body.appendChild(host);
@@ -70,6 +76,7 @@ export function mountLauncher(): void {
   const panel = document.createElement("div");
   panel.className = "panel";
   shadow.appendChild(panel);
+  renderChatWindow(shadow, panel, config);
 
   const button = document.createElement("button");
   button.type = "button";

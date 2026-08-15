@@ -1,4 +1,4 @@
-import type { ChatMessage } from "./types";
+import type { ChatMessage } from "@agentforge/shared";
 
 const STORAGE_PREFIX = "agentforge:conversations:";
 const MAX_STORED_CONVERSATIONS = 20;
