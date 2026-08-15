@@ -9,10 +9,14 @@
 // config fails loudly to the console rather than throwing an
 // uncaught error into the host page -- a misconfigured embed
 // shouldn't be able to break the customer's own site around it.
-// Launcher button and chat window UI (204-205) are each their own
-// later, real step.
+//
+// As of step 204, a resolved config mounts the real launcher button
+// (`launcher.ts`) -- gated behind a successful config load, so a
+// misconfigured embed shows nothing rather than a broken, non-
+// functional button. Chat window content is step 205's own job.
 
 import { loadWidgetConfig, type WidgetConfig } from "./config";
+import { mountLauncher } from "./launcher";
 
 export const WIDGET_VERSION = "0.1.0";
 
@@ -21,6 +25,10 @@ try {
   config = loadWidgetConfig();
 } catch (error) {
   console.error(error);
+}
+
+if (config) {
+  mountLauncher();
 }
 
 export function getConfig(): WidgetConfig | null {
