@@ -2,8 +2,14 @@
 FastAPI-wired version is a no-op under pytest (rate_limit.py's own
 docstring explains why), so this calls the dependency function directly
 instead of going through an HTTP endpoint.
+
+As of roadmap step 199, also proves the per-tenant message-send
+limiters (`routers/conversation.py:rate_limit_message_send`, `routers/
+public_conversation.py:rate_limit_public_message_send`) the same way —
+called directly, real production-limit enforcement, real Redis.
 """
 
+import uuid
 from collections.abc import AsyncGenerator
 from unittest.mock import patch
 
@@ -12,8 +18,11 @@ from starlette.requests import Request
 
 from config import settings
 from errors import TooManyRequestsError
-from rate_limit import rate_limit
+from models.assistant import Assistant
+from rate_limit import MESSAGE_SEND_RATE_LIMIT, check_rate_limit, rate_limit
 from redis_client import redis_client
+from routers.conversation import rate_limit_message_send
+from routers.public_conversation import rate_limit_public_message_send
 
 
 def _fake_request(ip: str) -> Request:
@@ -94,3 +103,66 @@ async def test_rate_limit_is_a_noop_under_test_environment(_clean_redis_key: str
     # times it's called.
     for _ in range(5):
         await limiter(request)
+
+
+@pytest.mark.anyio
+async def test_check_rate_limit_allows_up_to_the_limit_then_blocks(_clean_redis_key: str) -> None:
+    key = f"{_clean_redis_key}:direct"
+
+    with patch.object(settings, "environment", "production"):
+        await check_rate_limit(key, limit=3, window_seconds=60)
+        await check_rate_limit(key, limit=3, window_seconds=60)
+        await check_rate_limit(key, limit=3, window_seconds=60)
+        with pytest.raises(TooManyRequestsError):
+            await check_rate_limit(key, limit=3, window_seconds=60)
+
+
+@pytest.fixture
+async def _clean_tenant_keys() -> AsyncGenerator[list[uuid.UUID]]:
+    tenant_ids: list[uuid.UUID] = []
+    yield tenant_ids
+    for tenant_id in tenant_ids:
+        await redis_client.delete(f"ratelimit:message_send:{tenant_id}")
+
+
+@pytest.mark.anyio
+async def test_message_send_rate_limit_is_isolated_per_tenant(
+    _clean_tenant_keys: list[uuid.UUID],
+) -> None:
+    tenant_a, tenant_b = uuid.uuid4(), uuid.uuid4()
+    _clean_tenant_keys.extend([tenant_a, tenant_b])
+
+    with patch.object(settings, "environment", "production"):
+        for _ in range(MESSAGE_SEND_RATE_LIMIT):
+            await rate_limit_message_send(tenant_id=tenant_a)
+        with pytest.raises(TooManyRequestsError):
+            await rate_limit_message_send(tenant_id=tenant_a)
+
+        # Different tenant, same limiter — must not be blocked by
+        # tenant_a's usage.
+        await rate_limit_message_send(tenant_id=tenant_b)
+
+
+@pytest.mark.anyio
+async def test_message_send_rate_limit_is_shared_across_authenticated_and_anonymous_callers(
+    _clean_tenant_keys: list[uuid.UUID],
+) -> None:
+    """routers/conversation.py:rate_limit_message_send (authenticated)
+    and routers/public_conversation.py:rate_limit_public_message_send
+    (anonymous) are keyed by the identical `message_send:{tenant_id}`
+    prefix (rate_limit.py's own MESSAGE_SEND_RATE_LIMIT docstring
+    explains why) — proves they really draw from ONE shared per-tenant
+    budget, not two independent ones."""
+    tenant_id = uuid.uuid4()
+    _clean_tenant_keys.append(tenant_id)
+    assistant = Assistant(tenant_id=tenant_id)
+
+    with patch.object(settings, "environment", "production"):
+        for _ in range(MESSAGE_SEND_RATE_LIMIT):
+            await rate_limit_message_send(tenant_id=tenant_id)
+
+        # Budget already exhausted by the "authenticated" calls above —
+        # the anonymous door for the SAME tenant hits the same wall
+        # immediately, with no separate allowance of its own.
+        with pytest.raises(TooManyRequestsError):
+            await rate_limit_public_message_send(assistant=assistant)

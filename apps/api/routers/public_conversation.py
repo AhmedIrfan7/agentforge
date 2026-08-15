@@ -65,6 +65,17 @@ the same `message_processing.py:generate_assistant_reply`/`build_
 message_stream` pair the authenticated endpoint now uses (see that
 module's own docstring) -- not a second, duplicated inline
 implementation.
+
+`rate_limit_public_message_send` (step 199) gates `send_anonymous_
+message`/`send_anonymous_message_streaming`, keyed by `assistant.
+tenant_id` -- the only real tenant identity a caller with no JWT and no
+Membership can offer. Shares its Redis key prefix and budget with
+`routers/conversation.py:rate_limit_message_send` on purpose: an org's
+real per-tenant limit is the same real cost (an LLM call) regardless of
+whether it arrived through this zero-auth door or the authenticated
+one, and this door is the more abuse-prone of the two -- reachable
+with zero signup friction, the exact "prompt flooding"/"resource
+exhaustion" scenario AGENTS.md's own "ABUSE PREVENTION" section names.
 """
 
 import uuid
@@ -83,6 +94,7 @@ from errors import NotFoundError, UnauthorizedError
 from message_processing import build_message_stream, generate_assistant_reply
 from models.assistant import Assistant
 from models.conversation import Conversation
+from rate_limit import MESSAGE_SEND_RATE_LIMIT, check_rate_limit
 from repositories.assistant import get_public_assistant_by_id
 from repositories.conversation import ConversationRepository
 from schemas.conversation import AnonymousConversationRead
@@ -134,6 +146,12 @@ async def get_anonymous_conversation(
 AnonymousConversation = Annotated[Conversation, Depends(get_anonymous_conversation)]
 
 
+async def rate_limit_public_message_send(assistant: PublicAssistant) -> None:
+    await check_rate_limit(
+        f"message_send:{assistant.tenant_id}", limit=MESSAGE_SEND_RATE_LIMIT, window_seconds=60
+    )
+
+
 @router.post("", response_model=AnonymousConversationRead, status_code=201)
 async def create_anonymous_conversation(
     session: PublicDb, assistant: PublicAssistant
@@ -154,7 +172,12 @@ async def create_anonymous_conversation(
     return AnonymousConversationRead(conversation_id=conversation.id, access_token=access_token)
 
 
-@router.post("/{conversation_id}/messages", response_model=MessageRead, status_code=201)
+@router.post(
+    "/{conversation_id}/messages",
+    response_model=MessageRead,
+    status_code=201,
+    dependencies=[Depends(rate_limit_public_message_send)],
+)
 async def send_anonymous_message(
     body: MessageCreate,
     session: PublicDb,
@@ -175,7 +198,10 @@ async def send_anonymous_message(
     return MessageRead.model_validate(assistant_message)
 
 
-@router.post("/{conversation_id}/messages/stream")
+@router.post(
+    "/{conversation_id}/messages/stream",
+    dependencies=[Depends(rate_limit_public_message_send)],
+)
 async def send_anonymous_message_streaming(
     body: MessageCreate,
     session: PublicDb,

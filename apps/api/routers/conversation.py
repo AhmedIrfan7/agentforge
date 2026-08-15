@@ -295,6 +295,19 @@ literal name), not conversation-HISTORY reconnection (AGENTS.md's
 already provides that separately once a conversation is claimed and
 reachable through the normal authenticated list, so returning it again
 here would just be duplicating an existing capability, not adding one.
+
+`rate_limit_message_send` (step 199, AGENTS.md's own "RATE LIMITING"
+section: "Conversation requests"/"Tenant-specific limits") gates
+`send_message`/`send_message_streaming`/`regenerate_response` -- every
+real caller of `orchestrator.handle()` in this router, the actual cost
+being protected. Keyed by `tenant_id`, not by caller or conversation,
+and shares its Redis key prefix with `routers/public_conversation.py`'s
+own anonymous equivalent (`rate_limit.py`'s own docstring explains why
+one shared per-tenant budget, not two). Built on `rate_limit.py:
+check_rate_limit`, the same real fixed-window Redis logic
+`rate_limit()`'s per-IP auth-route dependency already used -- this
+router just resolves its own KEY (tenant_id, from the already-real
+`get_current_tenant_id`) rather than a client IP.
 """
 
 import uuid
@@ -327,6 +340,7 @@ from models.assistant import Assistant
 from models.conversation import Conversation
 from models.message import Message
 from orchestrator import orchestrator
+from rate_limit import MESSAGE_SEND_RATE_LIMIT, check_rate_limit
 from repositories.assistant import AssistantRepository
 from repositories.conversation import ConversationRepository
 from repositories.message import MessageRepository
@@ -376,6 +390,12 @@ async def get_target_assistant(
 
 
 TargetAssistant = Annotated[Assistant, Depends(get_target_assistant)]
+
+
+async def rate_limit_message_send(tenant_id: TenantId) -> None:
+    await check_rate_limit(
+        f"message_send:{tenant_id}", limit=MESSAGE_SEND_RATE_LIMIT, window_seconds=60
+    )
 
 
 @router.post(
@@ -600,7 +620,10 @@ async def export_conversation(
     "/{conversation_id}/messages",
     response_model=MessageRead,
     status_code=201,
-    dependencies=[Depends(require_permission("message:create"))],
+    dependencies=[
+        Depends(require_permission("message:create")),
+        Depends(rate_limit_message_send),
+    ],
 )
 async def send_message(
     body: MessageCreate,
@@ -625,7 +648,10 @@ async def send_message(
 
 @router.post(
     "/{conversation_id}/messages/stream",
-    dependencies=[Depends(require_permission("message:create"))],
+    dependencies=[
+        Depends(require_permission("message:create")),
+        Depends(rate_limit_message_send),
+    ],
 )
 async def send_message_streaming(
     body: MessageCreate,
@@ -671,7 +697,10 @@ TargetMessage = Annotated[Message, Depends(get_target_message)]
 @router.post(
     "/{conversation_id}/messages/{message_id}/regenerate",
     response_model=MessageRead,
-    dependencies=[Depends(require_permission("message:create"))],
+    dependencies=[
+        Depends(require_permission("message:create")),
+        Depends(rate_limit_message_send),
+    ],
 )
 async def regenerate_response(
     session: TenantDb,
