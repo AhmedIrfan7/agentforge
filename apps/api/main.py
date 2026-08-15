@@ -4,6 +4,7 @@ from config import settings
 from errors import register_exception_handlers
 from logging_config import configure_logging, get_logger
 from routers import (
+    assistant,
     auth,
     document,
     invitation,
@@ -32,6 +33,7 @@ app.include_router(security_settings.router)
 app.include_router(knowledge_base.router)
 app.include_router(document.router)
 app.include_router(retrieval.router)
+app.include_router(assistant.router)
 
 
 @app.get("/health")

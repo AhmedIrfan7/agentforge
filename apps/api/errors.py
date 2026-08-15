@@ -7,6 +7,7 @@ client. See AGENTS.md SECTION 9 "Error Handling."
 """
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -104,7 +105,18 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def handle_validation_error(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        return _error_response(422, "validation_error", "Invalid request.", exc.errors())
+        # exc.errors() embeds the raw exception object in each error's
+        # ctx["error"] for any field_validator that raises ValueError
+        # (roadmap step 160 -- agents/configuration.py:AgentConfiguration
+        # is this codebase's first field_validator) -- plain json.dumps
+        # can't serialize that and turns a real 422 into an unhandled
+        # 500. jsonable_encoder recursively converts anything it doesn't
+        # recognize (including a bare exception) via str(), the same
+        # fallback FastAPI's own default validation-error handler
+        # already relies on.
+        return _error_response(
+            422, "validation_error", "Invalid request.", jsonable_encoder(exc.errors())
+        )
 
     @app.exception_handler(Exception)
     async def handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
