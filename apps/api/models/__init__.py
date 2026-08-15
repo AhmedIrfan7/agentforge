@@ -11,6 +11,7 @@ from models.invitation import Invitation
 from models.knowledge_base import KnowledgeBase
 from models.membership import Membership
 from models.memory import Memory
+from models.message import Message
 from models.mfa_backup_code import MfaBackupCode
 from models.oauth_identity import OAuthIdentity
 from models.organization import Organization
@@ -33,6 +34,7 @@ __all__ = [
     "KnowledgeBase",
     "Membership",
     "Memory",
+    "Message",
     "MfaBackupCode",
     "OAuthIdentity",
     "Organization",
