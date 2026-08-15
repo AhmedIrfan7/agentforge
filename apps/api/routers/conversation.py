@@ -169,20 +169,25 @@ same accepted, honest gap `dense_search` already has; `search_keyword`
 has no such dependency and works for real in every environment,
 including this one.
 
-As of step 187, `_build_citations` turns `orchestrator.py:
-OrchestratorResult.chunks` into real `citations.py:Citation` objects
-right after `orchestrator.handle()` returns -- citations.py's own
-docstring deliberately keeps it DB-free and expects its caller to
-supply a `document_info` lookup, so this router (which already has a
-live, request-scoped session) is exactly that caller. Fetches each
-unique `Document`/`KnowledgeBase` at most once per request (a `dict`
-keyed by `document_id`, not one query per chunk) -- a real response
-can cite several chunks from the same document. Stored on the
-assistant `Message` as `CitationRead.model_dump(mode="json")` dicts
-(see `models/message.py:Message.citations`'s own docstring for why),
-never on the user's own message -- nothing retrieves on their behalf,
-so `[]` (the column's own default) is already the honest value there,
-no need to pass it explicitly.
+As of step 187, `message_processing.py:build_citations_for_result`
+turns `orchestrator.py:OrchestratorResult.chunks` into real
+`citations.py:Citation` objects right after `orchestrator.handle()`
+returns -- citations.py's own docstring deliberately keeps it DB-free
+and expects its caller to supply a `document_info` lookup; `message_
+processing.py` is that caller. Fetches each unique `Document`/
+`KnowledgeBase` at most once per request (a `dict` keyed by
+`document_id`, not one query per chunk) -- a real response can cite
+several chunks from the same document. Stored on the assistant
+`Message` as `CitationRead.model_dump(mode="json")` dicts (see
+`models/message.py:Message.citations`'s own docstring for why), never
+on the user's own message -- nothing retrieves on their behalf, so
+`[]` (the column's own default) is already the honest value there, no
+need to pass it explicitly. As of step 192, this logic (plus `message_
+processing.py:generate_assistant_reply`, the "process one turn" core
+`send_message` itself now just calls) moved out of this router
+entirely, once `routers/public_conversation.py`'s own anonymous
+message-send became a second real caller -- see that module's own
+docstring for why a router shouldn't import from another router.
 
 `POST .../{conversation_id}/messages/{message_id}/regenerate` (step
 188) UPDATES the existing assistant `Message` row in place rather than
@@ -257,8 +262,6 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import write_audit_log
-from citations import Citation, DocumentInfo, build_citations
-from context_builder import ContextChunk
 from conversation_state import InvalidTransitionError, transition
 from dependencies.auth import get_current_user_id
 from dependencies.knowledge_base import TargetKnowledgeBase
@@ -268,19 +271,17 @@ from embeddings.openai import OpenAIEmbeddingProvider
 from errors import ConflictError, NotFoundError
 from follow_up_questions import generate_follow_up_questions
 from message_embedding import dispatch_message_embedding
+from message_processing import build_citations_for_result, citation_json, generate_assistant_reply
 from models.assistant import Assistant
 from models.conversation import Conversation
 from models.message import Message
-from orchestrator import OrchestratorResult, orchestrator
+from orchestrator import orchestrator
 from repositories.assistant import AssistantRepository
 from repositories.conversation import ConversationRepository
-from repositories.document import DocumentRepository
-from repositories.knowledge_base import KnowledgeBaseRepository
 from repositories.message import MessageRepository
 from schemas.common import Page, PaginationParams
 from schemas.conversation import ConversationExportRead, ConversationRead, ConversationUpdate
 from schemas.message import (
-    CitationRead,
     ConversationSearchRequest,
     FollowUpQuestionsRead,
     MessageCreate,
@@ -481,46 +482,6 @@ async def export_conversation(
     )
 
 
-def _citation_json(citation: Citation) -> dict[str, object]:
-    return CitationRead(
-        chunk_id=citation.chunk_id,
-        document_id=citation.document_id,
-        document_title=citation.document_title,
-        knowledge_base_name=citation.knowledge_base_name,
-        section=citation.section,
-    ).model_dump(mode="json")
-
-
-async def _build_citations(
-    session: AsyncSession, tenant_id: uuid.UUID, result: OrchestratorResult
-) -> list[Citation]:
-    if not result.chunks:
-        return []
-
-    document_repo = DocumentRepository(session, tenant_id)
-    knowledge_base_repo = KnowledgeBaseRepository(session, tenant_id)
-    document_info: dict[uuid.UUID, DocumentInfo] = {}
-    for chunk in result.chunks:
-        if chunk.document_id in document_info:
-            continue
-        document = await document_repo.get(chunk.document_id)
-        if document is None:
-            continue
-        knowledge_base = await knowledge_base_repo.get(document.knowledge_base_id)
-        if knowledge_base is None:
-            continue
-        document_info[chunk.document_id] = DocumentInfo(
-            title=document.title, knowledge_base_name=knowledge_base.name
-        )
-
-    context_chunks = [
-        ContextChunk(id=chunk.chunk_id, document_id=chunk.document_id, text=chunk.text)
-        for chunk in result.chunks
-        if chunk.document_id in document_info
-    ]
-    return build_citations(context_chunks, document_info=document_info)
-
-
 @router.post(
     "/{conversation_id}/messages",
     response_model=MessageRead,
@@ -534,29 +495,9 @@ async def send_message(
     assistant: TargetAssistant,
     conversation: TargetConversation,
 ) -> MessageRead:
-    if conversation.status == "new":
-        transition(conversation, "active")
-
-    repo = MessageRepository(session, tenant_id)
-    user_message = await repo.create(
-        conversation_id=conversation.id,
-        role="user",
-        content=body.content,
+    assistant_message = await generate_assistant_reply(
+        session, tenant_id, assistant, conversation, body.content
     )
-    dispatch_message_embedding.delay(str(user_message.id), str(tenant_id))
-
-    result = await orchestrator.handle(
-        body.content, tenant_id=tenant_id, knowledge_base_id=assistant.knowledge_base_id
-    )
-    citations = await _build_citations(session, tenant_id, result)
-
-    assistant_message = await repo.create(
-        conversation_id=conversation.id,
-        role="assistant",
-        content=result.response,
-        citations=[_citation_json(c) for c in citations],
-    )
-    dispatch_message_embedding.delay(str(assistant_message.id), str(tenant_id))
 
     await write_audit_log(
         session,
@@ -593,13 +534,13 @@ async def send_message_streaming(
     result = await orchestrator.handle(
         body.content, tenant_id=tenant_id, knowledge_base_id=assistant.knowledge_base_id
     )
-    citations = await _build_citations(session, tenant_id, result)
+    citations = await build_citations_for_result(session, tenant_id, result)
 
     assistant_message = await repo.create(
         conversation_id=conversation.id,
         role="assistant",
         content=result.response,
-        citations=[_citation_json(c) for c in citations],
+        citations=[citation_json(c) for c in citations],
     )
     dispatch_message_embedding.delay(str(assistant_message.id), str(tenant_id))
 
@@ -661,10 +602,10 @@ async def regenerate_response(
     result = await orchestrator.handle(
         user_message.content, tenant_id=tenant_id, knowledge_base_id=assistant.knowledge_base_id
     )
-    citations = await _build_citations(session, tenant_id, result)
+    citations = await build_citations_for_result(session, tenant_id, result)
 
     message.content = result.response
-    message.citations = [_citation_json(c) for c in citations]
+    message.citations = [citation_json(c) for c in citations]
     dispatch_message_embedding.delay(str(message.id), str(tenant_id))
 
     await write_audit_log(

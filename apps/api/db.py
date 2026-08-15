@@ -130,3 +130,17 @@ async def set_lookup_token_hash(session: AsyncSession, token_hash: str) -> None:
     if len(token_hash) != 64 or any(c not in "0123456789abcdef" for c in token_hash):
         raise ValueError("token_hash must be a 64-character lowercase hex digest.")
     await session.execute(text(f"SET LOCAL app.lookup_token_hash = '{token_hash}'"))
+
+
+async def set_lookup_assistant_id(session: AsyncSession, assistant_id: uuid.UUID) -> None:
+    """Same dual-policy idea as set_lookup_token_hash, applied to an
+    anonymous chat visitor resolving an Assistant by ID alone (step
+    192): the caller doesn't know the tenant_id yet — that's what this
+    lookup answers. See migrations/versions/*_add_assistant_by_id_rls_
+    policy_for_.py. Once the lookup returns a real (and, the caller
+    must separately check, is_public) Assistant, switch to
+    set_tenant_context(session, assistant.tenant_id) for everything
+    after. Same "typed as uuid.UUID, nothing to escape" safety as
+    set_tenant_context.
+    """
+    await session.execute(text(f"SET LOCAL app.lookup_assistant_id = '{assistant_id}'"))

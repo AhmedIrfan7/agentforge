@@ -28,6 +28,21 @@ application layer, flexible storage at the DB layer" split. This
 model stays SQLAlchemy-only (no Pydantic import), matching every other
 `models/*.py` file -- validating a write against `AgentConfiguration`
 is the future CRUD endpoint's job (step 160), not this table's.
+
+As of step 192, `is_public` lands: defaults `False` -- anonymous
+access (`routers/public_conversation.py`) is opt-in per assistant, not
+automatic just because a caller learned its (non-guessable, but not
+secret) UUID. A real, explicit authorization control, not just relying
+on `UUIDPrimaryKeyMixin`'s own "hard to guess" property as the only
+thing standing between the public internet and an org's assistant --
+same "non-guessable ID is defense in depth, not the whole control"
+reasoning invitation tokens already established (hashed + a real
+expiry/accepted/revoked lifecycle, not just an unguessable value).
+Settable only at creation time (`schemas/assistant.py:AssistantCreate`)
+-- Assistant has no update endpoint yet (step 160's own docstring:
+"CRUD... unlike KnowledgeBase" still means create/list/get/delete
+only), and inventing one now, for this one field, would be scope this
+step doesn't ask for.
 """
 
 import uuid
@@ -59,3 +74,4 @@ class Assistant(TenantScopedEntity, TimestampMixin, Base):
     agent_configuration: Mapped[dict[str, object]] = mapped_column(
         JSONB, nullable=False, default=dict
     )
+    is_public: Mapped[bool] = mapped_column(nullable=False, default=False)

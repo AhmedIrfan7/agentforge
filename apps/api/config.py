@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     jwt_access_token_ttl_minutes: int = 15
     jwt_refresh_token_ttl_days: int = 30
 
+    # Anonymous-session tokens (roadmap step 192) -- a pre-auth widget
+    # visitor's proof of ownership over one specific Conversation, same
+    # "how long should a returning visitor still be recognized" question
+    # jwt_refresh_token_ttl_days already answers for real accounts, so it
+    # gets the same 30-day answer rather than a separately-tuned guess.
+    anonymous_session_ttl_days: int = 30
+
     # Used to build links in emails (verify-email, magic-link,
     # password-reset). apps/web doesn't have routes for these yet — the
     # links are logged (email.py is a stub), not clicked, until it does.

@@ -146,6 +146,8 @@ async def test_assistant_crud_as_org_owner() -> None:
             "enabled_agents": ["retriever", "citation"],
             "retrieval_top_k": 20,
         }
+        # Not requested in the body -- defaults closed (step 192).
+        assert body["is_public"] is False
 
         get_response = client.get(
             _asst_url(org_id, workspace_id, kb_id, f"/{assistant_id}"), headers=headers
@@ -186,6 +188,23 @@ async def test_create_assistant_defaults_agent_configuration_when_omitted() -> N
             "enabled_agents": ["retriever"],
             "retrieval_top_k": 10,
         }
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_create_assistant_can_opt_in_to_public_anonymous_access() -> None:
+    email = "endpoint-test-asst-owner-public@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_workspace_kb(email)
+    try:
+        create_response = client.post(
+            _asst_url(org_id, workspace_id, kb_id),
+            json={"name": "Public Bot", "slug": "endpoint-test-asst-public", "is_public": True},
+            headers=headers,
+        )
+        assert create_response.status_code == 201
+        assert create_response.json()["is_public"] is True
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)

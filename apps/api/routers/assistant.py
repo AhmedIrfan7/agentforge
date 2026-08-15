@@ -74,6 +74,7 @@ async def create_assistant(
             slug=body.slug,
             description=body.description,
             agent_configuration=body.agent_configuration.model_dump(),
+            is_public=body.is_public,
         )
     except IntegrityError as exc:
         raise ConflictError(

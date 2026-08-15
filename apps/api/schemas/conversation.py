@@ -41,3 +41,17 @@ class ConversationExportRead(BaseModel):
 
     conversation: ConversationRead
     messages: list[MessageRead]
+
+
+class AnonymousConversationRead(BaseModel):
+    """Roadmap step 192's own creation response -- deliberately NOT
+    ConversationRead: an anonymous caller has no session/RBAC context
+    to ever fetch this conversation any other way, so `access_token`
+    (routers/public_conversation.py's own anonymous session JWT) is
+    the actual, load-bearing payload here, not a nice-to-have extra
+    field. No `tenant_id`/`status`/etc. -- a pre-auth visitor has no
+    use for them and no other endpoint that would need to correlate
+    them against anything."""
+
+    conversation_id: uuid.UUID
+    access_token: str

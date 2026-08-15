@@ -103,6 +103,47 @@ def decode_mfa_ticket(token: str) -> uuid.UUID:
         raise TokenError("Invalid or expired sign-in attempt.") from exc
 
 
+def create_anonymous_session_token(conversation_id: uuid.UUID) -> str:
+    """Roadmap step 192 -- a pre-auth visitor's ENTIRE proof of ownership
+    over one specific anonymous Conversation (models/conversation.py's
+    own `user_id` stays NULL for these; there's no real account this
+    token could instead be checked against). Same shape create_mfa_
+    ticket already established: `type "anonymous_session"` means
+    decode_access_token rejects it outright, so this can never work as
+    a bearer credential for anything but the one public conversation
+    endpoint that checks for exactly this type. Deliberately encodes a
+    conversation_id, not a user_id -- there is no user, and (see
+    routers/public_conversation.py's own docstring) this codebase
+    doesn't build a broader "one anonymous identity, many conversations"
+    session concept for this step, only "proof of this one
+    conversation"."""
+    now = datetime.now(UTC)
+    payload: dict[str, Any] = {
+        "sub": str(conversation_id),
+        "type": "anonymous_session",
+        "jti": str(uuid.uuid4()),
+        "iat": now,
+        "exp": now + timedelta(days=settings.anonymous_session_ttl_days),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=_ALGORITHM)
+
+
+def decode_anonymous_session_token(token: str) -> uuid.UUID:
+    """Returns the conversation id this token is scoped to."""
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[_ALGORITHM])
+    except jwt.PyJWTError as exc:
+        raise TokenError("Invalid or expired session.") from exc
+
+    if payload.get("type") != "anonymous_session":
+        raise TokenError("Invalid or expired session.")
+
+    try:
+        return uuid.UUID(payload["sub"])
+    except (KeyError, ValueError) as exc:
+        raise TokenError("Invalid or expired session.") from exc
+
+
 def generate_refresh_token() -> tuple[str, str, datetime]:
     """Returns (raw_token, hash_for_storage, expires_at). Give the raw
     token to the client, store only the hash."""

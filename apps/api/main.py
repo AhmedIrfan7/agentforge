@@ -14,6 +14,7 @@ from routers import (
     mfa,
     oauth,
     organization,
+    public_conversation,
     retrieval,
     security_settings,
     workspace,
@@ -37,6 +38,7 @@ app.include_router(document.router)
 app.include_router(retrieval.router)
 app.include_router(assistant.router)
 app.include_router(conversation.router)
+app.include_router(public_conversation.router)
 app.include_router(memory.router)
 
 
