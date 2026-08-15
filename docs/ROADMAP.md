@@ -232,7 +232,7 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 
 ## Milestone 7 — Embeddable Widget (steps 201–215)
 
-- [ ] 201. Scaffold `apps/widget` (vanilla TS, minimal deps)
+- [x] 201. Scaffold `apps/widget` (vanilla TS, minimal deps) — genuinely minimal, unlike `apps/web`'s own Milestone 0 scaffold (a full `create-next-app` output): `package.json`/`tsconfig.json` mirror `packages/shared`'s own plain-TS shape (no framework, per ADR-0001's stack choice), just with `DOM` added to `lib` since this runs in a browser, not consumed as a library. `eslint.config.mjs` uses `typescript-eslint` directly (not `eslint-config-next`, which doesn't apply to a framework-free app) + `eslint-config-prettier`, same "prettier disables conflicting stylistic rules last" shape `apps/web`'s own config already established. `src/index.ts` is a single real exported constant (`WIDGET_VERSION`) — proves the toolchain compiles/lints cleanly without pretending to more capability than a scaffold has; config loading, launcher UI, and the chat window itself are each their own later, real steps (203-205). New `widget-lint` job in `lint.yml`, alongside the existing `api-lint`/`web-lint` jobs — no dedicated `widget-tests.yml` yet, since there's nothing to build (202) or test (214) until those later steps land, matching `web-tests.yml`'s own "gains a real step once there's something real to run" precedent. Verified: `pnpm --filter @agentforge/widget run typecheck`/`lint`/`format:check` all pass for real.
 - [ ] 202. Add widget build pipeline (single bundled JS output)
 - [ ] 203. Add widget config loader (org/assistant ID from script tag)
 - [ ] 204. Add widget launcher button UI
