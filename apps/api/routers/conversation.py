@@ -203,6 +203,19 @@ updated content -- the old embedding is now stale, describing text
 that no longer exists at that message id. Reuses `message:create`,
 not a new permission -- regenerating is the same capability tier as
 originally producing that reply, not a distinct action.
+
+`PUT`/`DELETE .../{conversation_id}/messages/{message_id}/feedback`
+(step 189) set/clear `Message.feedback_type`, reusing `get_target_
+message` (so feedback can only ever target a real assistant reply,
+same reasoning `regenerate` already established). Two endpoints, not
+one PATCH accepting `feedback_type: FeedbackType | None` -- setting a
+value and clearing it are different intents (rate this reply vs.
+retract that rating) worth distinct, self-documenting verbs, matching
+this codebase's own `PUT`-for-"set the current value of a single-value
+sub-resource" convention rather than `ConversationUpdate`'s multi-
+field `model_fields_set` partial-update shape, which exists
+specifically for resources with MULTIPLE independent optional fields
+-- feedback has exactly one.
 """
 
 import asyncio
@@ -241,6 +254,7 @@ from schemas.message import (
     CitationRead,
     ConversationSearchRequest,
     MessageCreate,
+    MessageFeedbackCreate,
     MessageRead,
     MessageSearchResultRead,
 )
@@ -579,6 +593,63 @@ async def regenerate_response(
         resource_id=message.id,
     )
     return MessageRead.model_validate(message)
+
+
+@router.put(
+    "/{conversation_id}/messages/{message_id}/feedback",
+    response_model=MessageRead,
+    dependencies=[Depends(require_permission("message:create"))],
+)
+async def set_message_feedback(
+    body: MessageFeedbackCreate,
+    session: TenantDb,
+    tenant_id: TenantId,
+    message: TargetMessage,
+) -> MessageRead:
+    # The explicit flush()+refresh() pair is load-bearing, confirmed
+    # live by adding a real diagnostic print and comparing against
+    # regenerate_response's own working case: updating feedback_type
+    # ALONE (nothing else on this row) leaves updated_at/search_vector
+    # genuinely expired after flush -- regenerate_response's own
+    # content update doesn't hit this because changing content is what
+    # search_vector's GENERATED expression actually depends on, so
+    # Postgres's RETURNING clause refreshes both columns for free
+    # there. Without refresh(), MessageRead.model_validate() below
+    # raises a real MissingGreenlet trying to lazily reload an expired
+    # attribute from Pydantic's own synchronous validation code.
+    message.feedback_type = body.feedback_type
+    await session.flush()
+    await session.refresh(message)
+
+    await write_audit_log(
+        session,
+        tenant_id=tenant_id,
+        action="message.feedback",
+        resource_type="message",
+        resource_id=message.id,
+    )
+    return MessageRead.model_validate(message)
+
+
+@router.delete(
+    "/{conversation_id}/messages/{message_id}/feedback",
+    status_code=204,
+    dependencies=[Depends(require_permission("message:create"))],
+)
+async def clear_message_feedback(
+    session: TenantDb,
+    tenant_id: TenantId,
+    message: TargetMessage,
+) -> None:
+    message.feedback_type = None
+
+    await write_audit_log(
+        session,
+        tenant_id=tenant_id,
+        action="message.feedback_clear",
+        resource_type="message",
+        resource_id=message.id,
+    )
 
 
 @router.post(

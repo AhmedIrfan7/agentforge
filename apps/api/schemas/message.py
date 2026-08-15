@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
@@ -8,6 +9,27 @@ from message_rendering import render_markdown
 
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
+
+
+FeedbackType = Literal[
+    "helpful",
+    "not_helpful",
+    "incorrect",
+    "incomplete",
+    "outdated",
+    "missing_citation",
+    "poor_retrieval",
+    "hallucination",
+]
+
+
+class MessageFeedbackCreate(BaseModel):
+    """Roadmap step 189 -- the real, in-scope taxonomy AGENTS.md's own
+    "FEEDBACK COLLECTION" section names for a text response; see
+    models/message.py:Message.feedback_type's own docstring for why
+    that section's `voice_quality` value is deliberately excluded."""
+
+    feedback_type: FeedbackType
 
 
 class CitationRead(BaseModel):
@@ -36,6 +58,7 @@ class MessageRead(BaseModel):
     role: str
     content: str
     citations: list[CitationRead]
+    feedback_type: str | None
     created_at: datetime
     updated_at: datetime
 

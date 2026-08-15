@@ -52,6 +52,50 @@ plain `json.dumps` knows how to serialize those; routing through a
 Pydantic model's own `mode="json"` dump (which converts UUIDs to
 strings automatically) sidesteps that without inventing a custom JSON
 encoder for one column.
+
+As of step 188, nothing changes here -- `regenerate_response` mutates
+`content`/`citations` in place, the same two fields this step already
+owns.
+
+As of step 189, `feedback_type` lands: nullable `str`, plain
+convention not a hard DB constraint (same choice `role`/`Conversation.
+status` already made) -- the real, in-scope taxonomy AGENTS.md's own
+"FEEDBACK COLLECTION" section names for a text response: helpful,
+not_helpful, incorrect, incomplete, outdated, missing_citation,
+poor_retrieval, hallucination. That section's own `voice_quality`
+value is deliberately excluded -- it's about a different modality
+(voice interactions, unbuilt Milestone 8/9 territory) this per-
+message, text-response field was never meant to cover, not a "real but
+currently unreachable" state the way `Conversation.status`'s own
+`waiting`/`processing` are. Real Literal-typed validation happens at
+the API boundary (`schemas/message.py:MessageFeedbackCreate`), same
+split every enum-like field in this codebase already uses. A single
+nullable column, not a separate table -- a `Conversation` (and
+therefore every `Message` in it) has exactly one owning `user_id` in
+this codebase's current design, so at most one real piece of feedback
+can ever exist per message; a whole table (like `citations`, which
+genuinely needs a list) would be speculative machinery for a
+cardinality that can't happen yet.
+
+Real gotcha found and fixed at this step, worth knowing for ANY future
+code that mutates an already-loaded `Message` row and then
+synchronously serializes it: because `search_vector` is `Computed`
+from `content`, Postgres's `RETURNING` clause (what SQLAlchemy relies
+on to refresh server-generated columns after an `UPDATE`) only
+actually refreshes it -- and, bundled with it, `updated_at` -- when
+`content` itself is part of that `UPDATE`'s own `SET` clause.
+`routers/conversation.py:regenerate_response` mutates `content`, so it
+gets this for free. `set_message_feedback` mutates ONLY
+`feedback_type`, which leaves `search_vector`/`updated_at` genuinely
+EXPIRED (not just stale) after `flush()` -- confirmed live with a real
+diagnostic comparing both endpoints' `sqlalchemy.inspect(obj).unloaded`
+state, not assumed. A synchronous `MessageRead.model_validate()` then
+raises a real `MissingGreenlet` trying to lazily reload an expired
+attribute outside an awaited context. Any future endpoint that
+mutates a `Message` column OTHER than `content` needs an explicit
+`await session.refresh(message)` after `flush()`, same fix
+`set_message_feedback` applies -- `Conversation` (no `Computed`
+column) doesn't have this risk, confirmed live the same way.
 """
 
 import uuid
@@ -92,3 +136,4 @@ class Message(TenantScopedEntity, TimestampMixin, Base):
         TSVECTOR, Computed("to_tsvector('english', content)", persisted=True), nullable=False
     )
     citations: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False, default=list)
+    feedback_type: Mapped[str | None] = mapped_column(nullable=True)
