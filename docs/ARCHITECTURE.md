@@ -4,7 +4,7 @@ This document describes the system **as implemented**, not as aspired to — it 
 
 ## Status
 
-Milestone 5 (Memory System) complete; Milestone 6 (Conversation Engine) next. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
+Milestone 6 (Conversation Engine) complete; Milestone 7 (Embeddable Widget) next. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
 
 ## Repository layout
 
@@ -195,7 +195,46 @@ Two genuinely separate stores, not two modes of one abstraction — "Memory is d
 
 ## Conversation engine
 
-_To be filled in as Milestone 6 lands._
+Two genuinely separate entry points into the same real message-send/citation/streaming machinery — an **authenticated** flow (a real member of an org talking to their own assistants) and an **anonymous** one (a pre-auth visitor, the shape a real embeddable widget needs) — plus a client (`apps/web`) that, for now, can only honestly reach the anonymous door, since no authenticated dashboard UI exists yet.
+
+### Conversation & message model
+
+`models/conversation.py:Conversation` — tenant-scoped, `assistant_id` (required), `user_id` (nullable — `NULL` means anonymous, the same flag both flows share), `status`, `title`/`is_pinned`. `models/message.py:Message` — `role`/`content` mirroring `llm/base.py:Message`'s own field names, plus `citations` (JSONB), `feedback_type` (nullable), `embedding` (pgvector) and a DB-`Computed` `search_vector` (tsvector) for the two message-search mechanisms below. `conversation_state.py` is a real, small state machine (`VALID_TRANSITIONS` dict graph over `new`/`active`/`waiting`/`processing`/`completed`/`archived`) — only `new → active` (first message sent) and `→ archived` are ever triggered by real code today; the others are legal, real states with no caller that needs them yet.
+
+### Message-send flow
+
+`message_processing.py:generate_assistant_reply` is the one real "process a turn" function both flows call: transitions `new → active`, persists the user's `Message`, calls `orchestrator.handle()` (Milestone 4 — keyword-only retrieval today, no OPENAI_API_KEY in this environment; the response is the retrieved chunks' own raw text, or `"No results found."`, not an LLM-synthesized answer, since no chat/generation model exists yet), builds real `citations.py:Citation` objects from whichever chunks fed the response, persists the assistant's `Message`, and dispatches embedding computation (`message_embedding.py`, Celery) for both turns. Deliberately does **not** thread prior conversation turns into `orchestrator.handle()` — that signature stays single-query-in/single-response-out, the same discipline that kept Milestone 4's other signatures narrow until a real caller needed more. `message_rendering.py:render_markdown` (Python-Markdown + `nh3` sanitization) renders `Message.content` to safe HTML on every read (`MessageRead.content_html`, a Pydantic `computed_field`, never stored) — a real, live-confirmed XSS surface (`nh3` was needed after finding a raw `<script>` survives unrendered) closed at the point of serving, not the point of storage.
+
+### Streaming
+
+`POST .../messages/stream` (both flows have one) returns real, incremental `text/event-stream` — word-chunked `event: message` frames plus a terminal `event: done` carrying the fully-persisted `MessageRead`. Honest about what's actually streamed: `orchestrator.handle()` still computes the whole response before the first byte is sent (no roadmap step through 300 asks for token-level generation streaming); this is real transport a future token-streaming source can plug into unchanged. `message_processing.py:build_message_stream` is the one shared generator both routers' streaming endpoints use — reads only from an already-validated `MessageRead`, never the ORM object, since the request-scoped session commits (and expires every tracked attribute) the instant the endpoint function returns, before Starlette starts iterating the response body.
+
+### Anonymous access (embeddable-widget channel)
+
+`routers/public_conversation.py` is a genuinely separate router, not a content-negotiated branch of the authenticated one — keyed by `assistant_id` alone (`/public/assistants/{assistant_id}/...`), the one identifier a real `<script data-assistant-id="...">` embed tag can carry. Public reachability is opt-in per assistant (`Assistant.is_public`, default `False`), checked against a narrowly-scoped permissive RLS policy (`assistant_by_id`) that only exposes enough of the row to check that flag before any tenant context exists. Ownership of an anonymous `Conversation` (`user_id IS NULL`) is proven by a signed JWT (`type "anonymous_session"`, rejected by the normal access-token decoder outright) scoped to exactly one `conversation_id` — there is no account behind it, only "you are whoever started this specific conversation."
+
+### Identity-triggered memory reconnection
+
+`POST .../conversations/claim` (authenticated only) lets a newly-signed-in caller present an anonymous session token, transfer that conversation's ownership to their real account, and receive their own relevant long-term memory (`memory_retrieval.py:retrieve_memory_for_conversation_start`, built in Milestone 5, unreachable by any real caller until this endpoint) directly in the response — a client-facing capability, not something silently injected into generation, since no chat UI yet consumes a prompt-engineered version of it.
+
+### Message search
+
+Two separate mechanisms, not one endpoint with a mode flag — mirroring Milestone 3's own dense/keyword/hybrid split precedent: keyword (Postgres full-text over `search_vector`) works in every environment; semantic (cosine similarity over `embedding`) needs a real `OPENAI_API_KEY`, absent in this environment, and fails closed with a clean 500. Both are scoped to the caller's own conversations for a given assistant — reachable only through the authenticated router, since "my conversations" has no meaning for an anonymous caller.
+
+### Rate limiting
+
+`rate_limit.py:check_rate_limit` — the same real Redis fixed-window logic Milestone 2's per-IP auth-route limiter already used, generalized to any string key. Message-send on *both* doors shares one Redis-backed budget keyed by `tenant_id` (60/minute) — the real cost being protected (an LLM call through `orchestrator.handle()`) is identical regardless of which door a message came through, and the anonymous door is the more abuse-prone of the two (zero signup friction).
+
+### Frontend (`apps/web`)
+
+A real `/chat?assistantId=<id>` page — message list, input, a genuine SSE-consuming streaming render, a typing indicator for the pre-first-chunk gap, a conversation sidebar, and client-side conversation search. Deliberately talks only to the **anonymous** door: no authenticated dashboard/login UI exists yet (Milestone 9's own admin dashboard, steps 233+, is what eventually reaches the authenticated conversation endpoints from a browser). Conversation history and search are therefore genuinely client-side — a localStorage-backed store (`lib/conversationStore.ts`) scoped per assistant, holding each conversation's full message list so switching between them needs no backend re-fetch — "your recent chats on this device," the same pattern real embeddable widgets already use for anonymous visitors, not a stand-in for the authenticated dashboard's own future server-backed history. The one Playwright e2e test (`e2e/chat.spec.ts`) provisions its own real org/workspace/knowledge-base/public-assistant via direct HTTP calls and asserts on the real SSE response (multiple `event: message` chunks, not one blob) alongside the rendered UI — nothing mocked.
+
+**Honest, tracked gaps, not silently worked around:**
+- No LLM synthesizes a response — a real hit's "response" is the retrieved chunks' own raw text, or a literal "No results found."; `ConversationAgent`/`ReasoningAgent`/`QualityReviewAgent`/`SafetyAgent` are still real classes with no implementation, waiting on a real chat/generation model this milestone never needed to add.
+- No conversation history is threaded into generation — every turn is independent from the orchestrator's own point of view; a user's prior messages exist in Postgres but are never read back into a prompt, since there is no prompt yet.
+- Streaming is real transport, not real token-level generation streaming — the whole response is computed before the first SSE byte goes out.
+- Message-history search (`search_keyword`/`search_semantic`) and the frontend's own client-side conversation search are two unrelated mechanisms with no shared code — the former needs a real authenticated caller apps/web can't produce yet.
+- The chat UI shell has no authenticated mode — it cannot reach a user's own real conversation history (`list_conversations`) or the claim endpoint until Milestone 9's dashboard exists to authenticate through.
 
 ## Embeddable widget
 
