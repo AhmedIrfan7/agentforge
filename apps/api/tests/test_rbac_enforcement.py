@@ -69,6 +69,7 @@ EXPECTED_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "document:update",
         "document:delete",
         "conversation:create",
+        "message:create",
     },
     "admin": {
         "organization:read",
@@ -92,6 +93,7 @@ EXPECTED_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "document:update",
         "document:delete",
         "conversation:create",
+        "message:create",
     },
     "manager": {
         "organization:read",
@@ -112,13 +114,34 @@ EXPECTED_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "document:update",
         "document:delete",
         "conversation:create",
+        "message:create",
     },
-    "knowledge_manager": {"organization:read", "workspace:read", "conversation:create"},
-    "developer": {"organization:read", "workspace:read", "conversation:create"},
-    "support_agent": {"organization:read", "workspace:read", "conversation:create"},
-    "analyst": {"organization:read", "workspace:read", "conversation:create"},
+    "knowledge_manager": {
+        "organization:read",
+        "workspace:read",
+        "conversation:create",
+        "message:create",
+    },
+    "developer": {
+        "organization:read",
+        "workspace:read",
+        "conversation:create",
+        "message:create",
+    },
+    "support_agent": {
+        "organization:read",
+        "workspace:read",
+        "conversation:create",
+        "message:create",
+    },
+    "analyst": {
+        "organization:read",
+        "workspace:read",
+        "conversation:create",
+        "message:create",
+    },
     "viewer": {"organization:read", "workspace:read"},
-    "end_user": {"workspace:read", "conversation:create"},
+    "end_user": {"workspace:read", "conversation:create", "message:create"},
     "guest": set(),
 }
 

@@ -85,7 +85,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from agents.base import Agent
 from agents.planning import PlanningAgent
-from agents.registry import AgentRegistry
+from agents.registry import AgentRegistry, agent_registry
 from agents.retriever import RetrievedChunk, RetrieverAgent
 from agents.tracing import traced_run
 from db import get_worker_session, set_tenant_context
@@ -184,3 +184,11 @@ class Orchestrator:
         )
         result = cast(OrchestratorState, raw_result)
         return result["response"]
+
+
+# Module-level singleton for real app-wide use (step 179's message-send
+# endpoint is the first real caller) -- same shape agents/registry.py's
+# own `agent_registry` singleton already established; tests construct
+# their own fresh `Orchestrator(AgentRegistry())` instances instead, to
+# avoid cross-test pollution of shared global state.
+orchestrator = Orchestrator(agent_registry)
