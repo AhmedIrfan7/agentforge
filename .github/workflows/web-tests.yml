@@ -10,6 +10,43 @@ jobs:
   build:
     name: Next.js production build
     runs-on: ubuntu-latest
+    # Postgres + Redis back the real apps/api instance step 198's e2e
+    # test needs -- no MinIO/ClamAV here, unlike api-tests.yml's own
+    # services: this test never uploads a document, so nothing in its
+    # path ever touches storage or the virus scanner. Redis is still
+    # required even though nothing consumes from it: message-send
+    # synchronously calls message_embedding.py's `.delay()` inside the
+    # request itself, which needs a reachable Celery broker to publish
+    # to, even with no worker running to consume it.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: agentforge
+          POSTGRES_PASSWORD: agentforge
+          POSTGRES_DB: agentforge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentforge -d agentforge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ENVIRONMENT: test
+      DATABASE_URL: postgresql+asyncpg://agentforge_app:agentforge_app@localhost:5432/agentforge
+      DATABASE_MIGRATIONS_URL: postgresql+asyncpg://agentforge:agentforge@localhost:5432/agentforge
+      REDIS_URL: redis://localhost:6379/0
+      NEXT_PUBLIC_API_URL: http://localhost:8000
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -17,13 +54,49 @@ jobs:
         with:
           node-version: "22"
           cache: "pnpm"
-      - name: Install dependencies
+      - name: Install web dependencies
         run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm --filter @agentforge/web run build
 
-# No unit/e2e test suite exists yet for apps/web — a production build is
-# the meaningful automated check available today (catches type errors,
-# broken imports, and build-time failures). Playwright e2e tests land
-# per docs/ROADMAP.md step 198; this job gains a real `test` step
-# alongside `build` at that point instead of replacing it.
+      # Steps below are new for step 198's e2e test -- a production
+      # build alone never needed a real apps/api instance.
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+      - name: Create least-privilege app role
+        run: PGPASSWORD=agentforge psql -h localhost -U agentforge -d agentforge -f infra/postgres/init/01-app-role.sql
+      - name: Install API dependencies
+        working-directory: apps/api
+        run: uv sync --all-groups
+      - name: Run migrations
+        working-directory: apps/api
+        run: uv run alembic upgrade head
+      - name: Start API server
+        working-directory: apps/api
+        run: |
+          nohup uv run uvicorn main:app --host 0.0.0.0 --port 8000 > uvicorn.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8000/health && break
+            sleep 1
+          done
+      - name: Install Playwright browsers
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+      - name: Run e2e tests
+        run: pnpm --filter @agentforge/web run test:e2e
+      - name: Print API server log on failure
+        if: failure()
+        run: cat apps/api/uvicorn.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7
+
+# Playwright e2e tests (step 198) now run alongside the production
+# build, against a real apps/api instance this job starts itself --
+# see apps/web/e2e/chat.spec.ts's own docstring for why no document
+# upload (and therefore no MinIO/ClamAV) is needed for this particular
+# test.

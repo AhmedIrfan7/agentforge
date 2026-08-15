@@ -17,6 +17,9 @@ dist/
 build/
 *.tsbuildinfo
 .turbo/
+playwright-report/
+test-results/
+blob-report/
 
 # --- Env & secrets ---
 .env

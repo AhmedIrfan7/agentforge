@@ -8,7 +8,7 @@ interface MessageListProps {
 
 export function MessageList({ messages }: MessageListProps) {
   return (
-    <div className={styles.list}>
+    <div className={styles.list} data-testid="message-list">
       {messages.map((message) => (
         <div
           key={message.id}
