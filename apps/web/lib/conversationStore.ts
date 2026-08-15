@@ -63,3 +63,27 @@ export function deriveTitle(firstUserMessage: string): string {
   const trimmed = firstUserMessage.trim();
   return trimmed.length > TITLE_MAX_LENGTH ? `${trimmed.slice(0, TITLE_MAX_LENGTH)}…` : trimmed;
 }
+
+// Client-side conversation search (roadmap step 197) over this
+// device's own stored history -- apps/api's real message search
+// endpoints (routers/conversation.py:search_keyword/search_semantic,
+// step 183) search across the CALLER's OWN conversations via an
+// authenticated request, which this anonymous chat UI shell has no way
+// to make (same constraint step 196's own sidebar already documented).
+// This searches the exact same local corpus the sidebar already
+// renders: a conversation matches if its title OR any message's
+// content contains the query, case-insensitively.
+export function searchConversations(
+  conversations: StoredConversation[],
+  query: string,
+): StoredConversation[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) {
+    return conversations;
+  }
+  return conversations.filter(
+    (conversation) =>
+      conversation.title.toLowerCase().includes(normalized) ||
+      conversation.messages.some((message) => message.content.toLowerCase().includes(normalized)),
+  );
+}

@@ -1,4 +1,7 @@
-import type { StoredConversation } from "@/lib/conversationStore";
+"use client";
+
+import { useState } from "react";
+import { searchConversations, type StoredConversation } from "@/lib/conversationStore";
 import styles from "./ConversationSidebar.module.css";
 
 interface ConversationSidebarProps {
@@ -14,14 +17,31 @@ export function ConversationSidebar({
   onSelect,
   onNewConversation,
 }: ConversationSidebarProps) {
+  const [query, setQuery] = useState("");
+  const filtered = searchConversations(conversations, query);
+
   return (
     <nav className={styles.sidebar} aria-label="Conversations">
       <button type="button" className={styles.newButton} onClick={onNewConversation}>
         + New conversation
       </button>
+      {conversations.length > 0 && (
+        <input
+          type="search"
+          className={styles.search}
+          placeholder="Search conversations…"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          aria-label="Search conversations"
+        />
+      )}
       <ul className={styles.list}>
-        {conversations.length === 0 && <li className={styles.empty}>No conversations yet.</li>}
-        {conversations.map((conversation) => (
+        {filtered.length === 0 && (
+          <li className={styles.empty}>
+            {conversations.length === 0 ? "No conversations yet." : "No matching conversations."}
+          </li>
+        )}
+        {filtered.map((conversation) => (
           <li key={conversation.conversationId}>
             <button
               type="button"
