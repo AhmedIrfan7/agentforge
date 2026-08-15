@@ -1,0 +1,93 @@
+"""Memory-summarization background job (roadmap step 167, AGENTS.md's
+own "MEMORY AGENT" section: "Memory summarization"). Same Celery task
+shape `embeddings_pipeline.py:dispatch_embedding_generation` (108, 112)
+already established: an async `_run_*` function doing the real work
+via `get_worker_session()`, wrapped by a synchronous `@celery_app.task`
+with `autoretry_for`/`retry_backoff` -- registered in `celery_app.py`'s
+own `imports` tuple so the separate worker process actually sees it
+(that file's own docstring already documents the real `KeyError` this
+project hit once from forgetting that step).
+
+This is the first task in this codebase to call a real LLM provider.
+No agent calls one yet, but `llm/openai.py:OpenAIProvider` (151) is
+real, tested, already-live-probed infrastructure sitting unused --
+calling it directly here (not through an agent; summarization isn't
+an `Agent.run()`-shaped decision the way `agents/memory.py:MemoryAgent`
+retention scoring is) is exactly the same "real code, fails closed
+without a key, documented environment gap" pattern
+`embeddings_pipeline.py` already established for embedding generation
+-- not new scaffolding, the established discipline applied to a new
+call. `LLMProviderError` is deliberately NOT caught here: letting it
+propagate lets Celery's own `autoretry_for` retry a real transient
+failure, the same as every other external-API-calling task in this
+codebase; this environment's missing `OPENAI_API_KEY` means every real
+run here fails closed the same documented way embedding generation
+does.
+
+Reuses `agents/memory.py:MemoryAgent` (165) as the retention gate for
+the summary itself -- "not every conversation should become permanent
+memory" applies exactly as much to a generated summary as to a raw
+turn, so the same real decision logic decides whether the summary
+becomes a `Memory` row, not a second, independently invented rule.
+`short_term_memory.clear()` (163) runs after a successful summarization
+attempt either way (retained or not) -- the raw turns have been
+processed once summarized; keeping them around risks re-summarizing
+the same content on a later dispatch.
+"""
+
+import asyncio
+import uuid
+from typing import Any
+
+from agents.memory import MemoryAgent
+from celery_app import celery_app
+from db import get_worker_session, set_tenant_context
+from llm.base import LLMProvider, Message
+from llm.openai import OpenAIProvider
+from repositories.memory import MemoryRepository
+from short_term_memory import clear, get_recent_turns
+
+_llm_provider: LLMProvider = OpenAIProvider()
+_memory_agent = MemoryAgent()
+
+_SUMMARIZATION_SYSTEM_PROMPT = (
+    "Summarize the key facts, preferences, and important information "
+    "from this conversation in two to three sentences. Focus on details "
+    "worth remembering for future conversations."
+)
+
+
+async def _run_memory_summarization(session_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
+    turns = await get_recent_turns(session_id)
+    if not turns:
+        return
+
+    messages = [Message(role="system", content=_SUMMARIZATION_SYSTEM_PROMPT), *turns]
+    response = await _llm_provider.complete(messages)
+
+    decision = await _memory_agent.run(Message(role="assistant", content=response.content))
+    if decision.should_retain:
+        async with get_worker_session() as session:
+            await set_tenant_context(session, tenant_id)
+            repo = MemoryRepository(session, tenant_id)
+            await repo.create(
+                scope="session",
+                session_id=session_id,
+                content=response.content,
+                importance_score=decision.importance_score,
+            )
+            await session.commit()
+
+    await clear(session_id)
+
+
+@celery_app.task(  # type: ignore[untyped-decorator]
+    bind=True,
+    name="dispatch_memory_summarization",
+    max_retries=5,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
+def dispatch_memory_summarization(self: Any, session_id: str, tenant_id: str) -> None:
+    asyncio.run(_run_memory_summarization(uuid.UUID(session_id), uuid.UUID(tenant_id)))

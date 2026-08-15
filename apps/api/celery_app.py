@@ -6,8 +6,9 @@ against a real worker process and real Redis, same as every other piece
 of infrastructure in this project.
 
 conf.imports lists every other module that defines a @celery_app.task --
-extraction.py (step 090), embeddings_pipeline.py (step 108), and
-vector_maintenance.py (step 110) so far. A worker process only knows
+extraction.py (step 090), embeddings_pipeline.py (step 108),
+vector_maintenance.py (step 110), and memory_summarization.py (step
+167) so far. A worker process only knows
 about tasks from modules it has actually imported; `-A celery_app worker`
 alone only imports this file, so without this, a task defined in
 extraction.py would be invisible to the worker (real KeyError caught
@@ -49,7 +50,7 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
-    imports=("extraction", "embeddings_pipeline", "vector_maintenance"),
+    imports=("extraction", "embeddings_pipeline", "vector_maintenance", "memory_summarization"),
 )
 
 
