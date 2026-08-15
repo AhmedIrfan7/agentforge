@@ -14,10 +14,13 @@ need it"), and `llm/__init__.py:PROVIDERS` (152). `orchestrator.py`'s
 production request yet has two genuinely independent real agents to
 run side by side, so `orchestrator.py` is deliberately NOT changed by
 this step. Wiring a single-item list through `run_parallel` would be a
-no-op that only adds indirection; wiring in a second, currently-
-skeleton agent (e.g. `MemoryAgent`, which still raises
+no-op that only adds indirection; wiring in a second, still-skeleton
+agent (e.g. `ConversationAgent`, which still raises
 `NotImplementedError`) to manufacture a "real" second branch would
 break every real document-search request today -- neither is honest.
+(`MemoryAgent` gained real logic at step 165, but its `run()` is a
+pure decision function with no repository/session dependency to
+combine with `retriever`'s own request-scoped inputs here.)
 This ships the capability, verified with real independent fake agents,
 for the day `PlanningAgent` genuinely plans more than one.
 

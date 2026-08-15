@@ -1,12 +1,9 @@
-"""Tests for agents/memory.py (roadmap step 144) -- proves the agent
-is real and constructible, and honestly reports as not-yet-implemented
-rather than silently pretending to work."""
+"""Tests for agents/memory.py (roadmap step 165)."""
 
 import pytest
 
-from agents.base import Agent
-from agents.memory import MemoryAgent
-from agents.registry import AgentRegistry
+from agents.memory import RETENTION_THRESHOLD, MemoryAgent, RetentionDecision
+from llm.base import Message
 
 
 def test_agent_satisfies_the_base_agent_shape() -> None:
@@ -14,25 +11,54 @@ def test_agent_satisfies_the_base_agent_shape() -> None:
     assert agent.name == "memory"
 
 
-def test_run_is_not_overridden_yet() -> None:
-    """A genuine skeleton, not a stub -- no Memory model/migration
-    exists yet (Milestone 5), so run() staying agents/base.py's own
-    NotImplementedError default is the honest state, not a bug."""
-    assert type(MemoryAgent()).run is Agent.run
+@pytest.mark.anyio
+async def test_short_content_is_not_retained() -> None:
+    agent = MemoryAgent()
+
+    decision = await agent.run(Message(role="user", content="ok thanks"))
+
+    assert decision.should_retain is False
+    assert decision.importance_score < RETENTION_THRESHOLD
 
 
 @pytest.mark.anyio
-async def test_calling_run_raises_not_implemented() -> None:
-    with pytest.raises(NotImplementedError):
-        await MemoryAgent().run("anything")
+async def test_content_with_an_identity_signal_is_retained_with_high_importance() -> None:
+    agent = MemoryAgent()
+
+    decision = await agent.run(
+        Message(role="user", content="My name is Jordan and I prefer email over chat.")
+    )
+
+    assert decision.should_retain is True
+    assert decision.importance_score == 0.9
 
 
-def test_registering_it_reports_as_unhealthy() -> None:
-    """The real, intended payoff of AgentRegistry.health_check()'s own
-    design (step 139): a skeleton agent can be registered and
-    discovered without dishonestly claiming to be ready."""
-    registry = AgentRegistry()
-    registry.register(MemoryAgent())
+@pytest.mark.anyio
+async def test_identity_signal_detection_is_case_insensitive() -> None:
+    agent = MemoryAgent()
 
-    assert registry.discover() == ["memory"]
-    assert registry.health_check() == {"memory": False}
+    decision = await agent.run(Message(role="user", content="Please Remember that I work in EU."))
+
+    assert decision.should_retain is True
+
+
+@pytest.mark.anyio
+async def test_substantive_content_with_no_signal_is_not_confidently_retained() -> None:
+    agent = MemoryAgent()
+
+    decision = await agent.run(
+        Message(role="assistant", content="Our standard shipping takes five to seven days.")
+    )
+
+    assert decision.should_retain is False
+    assert 0.1 < decision.importance_score < RETENTION_THRESHOLD
+
+
+@pytest.mark.anyio
+async def test_decision_always_includes_a_real_reason() -> None:
+    agent = MemoryAgent()
+
+    decision = await agent.run(Message(role="user", content="hi"))
+
+    assert isinstance(decision, RetentionDecision)
+    assert decision.reason != ""
