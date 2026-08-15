@@ -21,12 +21,20 @@ semantics -- unlike `list_for_user`, it takes no `limit`/`min_importance`
 not a caller-chosen page or importance cutoff) and orders
 chronologically rather than by importance, matching how a person
 actually reviews their own exported history.
+
+As of step 170, `delete_all_for_user` adds the real "right to erasure"
+operation -- one `DELETE` statement, not a fetch-then-delete-each loop,
+since a bulk erasure has no reason to round-trip every row through
+Python first. Returns the real deleted count (via `RETURNING`) so the
+caller (`routers/memory.py`) can record a meaningful, non-empty audit
+log entry even though there's no single `resource_id` a bulk operation
+naturally has.
 """
 
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.memory import Memory
@@ -80,6 +88,19 @@ class MemoryRepository(TenantScopedRepository[Memory]):
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def delete_all_for_user(self, user_id: uuid.UUID) -> int:
+        stmt = (
+            delete(Memory)
+            .where(
+                Memory.tenant_id == self.tenant_id,
+                Memory.scope == "user",
+                Memory.user_id == user_id,
+            )
+            .returning(Memory.id)
+        )
+        result = await self.session.execute(stmt)
+        return len(result.scalars().all())
 
     async def list_for_organization(
         self, *, min_importance: float = 0.0, limit: int = 50, offset: int = 0

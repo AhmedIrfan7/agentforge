@@ -134,6 +134,42 @@ async def test_list_for_session_is_isolated_per_session() -> None:
 
 
 @pytest.mark.anyio
+async def test_delete_all_for_user_removes_only_that_users_memories() -> None:
+    tenant_id = await _new_org("mem-repo-erase")
+    user_a = await _new_user("mem-repo-erase-a@example.com")
+    user_b = await _new_user("mem-repo-erase-b@example.com")
+    try:
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            repo = MemoryRepository(session, tenant_id)
+            await repo.create(scope="user", user_id=user_a, content="a-1", importance_score=0.5)
+            await repo.create(scope="user", user_id=user_a, content="a-2", importance_score=0.5)
+            await repo.create(scope="user", user_id=user_b, content="b-1", importance_score=0.5)
+            await repo.create(scope="organization", content="org-1", importance_score=0.5)
+            await session.commit()
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            repo = MemoryRepository(session, tenant_id)
+            deleted_count = await repo.delete_all_for_user(user_a)
+            await session.commit()
+
+        assert deleted_count == 2
+
+        async with get_session() as session:
+            await set_tenant_context(session, tenant_id)
+            repo = MemoryRepository(session, tenant_id)
+            assert await repo.list_for_user(user_a) == []
+            remaining_b = await repo.list_for_user(user_b)
+            assert [m.content for m in remaining_b] == ["b-1"]
+            remaining_org = await repo.list_for_organization()
+            assert [m.content for m in remaining_org] == ["org-1"]
+    finally:
+        await _cleanup_user(user_a)
+        await _cleanup_user(user_b)
+
+
+@pytest.mark.anyio
 async def test_created_memory_defaults_to_a_neutral_importance_score() -> None:
     tenant_id = await _new_org("mem-repo-default-score")
     async with get_session() as session:

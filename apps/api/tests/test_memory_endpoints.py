@@ -1,5 +1,5 @@
 """Integration tests against the real FastAPI app for
-routers/memory.py (roadmap step 169).
+routers/memory.py (roadmap steps 169-170).
 """
 
 import uuid
@@ -187,6 +187,48 @@ async def test_cannot_delete_another_users_memory() -> None:
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_erase_my_memory_deletes_everything_of_mine_and_audit_logs_it() -> None:
+    email = "endpoint-test-mem-owner-6@example.com"
+    other_email = "endpoint-test-mem-other-6@example.com"
+    org_id, headers = _new_org(email)
+    user_id = await _user_id_for(email)
+    other_user_id = await _new_bare_user(other_email)
+    try:
+        await _seed_memory(org_id, scope="user", user_id=user_id, content="mine-1")
+        await _seed_memory(org_id, scope="user", user_id=user_id, content="mine-2")
+        await _seed_memory(org_id, scope="user", user_id=other_user_id, content="not mine")
+        await _seed_memory(org_id, scope="organization", content="org-wide")
+
+        response = client.delete(_memory_url(org_id), headers=headers)
+
+        assert response.status_code == 204
+
+        list_response = client.get(_memory_url(org_id), headers=headers)
+        assert list_response.json()["total"] == 0
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            repo = MemoryRepository(session, org_id)
+            assert [m.content for m in await repo.list_for_user(other_user_id)] == ["not mine"]
+            assert [m.content for m in await repo.list_for_organization()] == ["org-wide"]
+
+            audit_result = await session.execute(
+                select(AuditLog).where(
+                    AuditLog.tenant_id == org_id, AuditLog.action == "memory.erase"
+                )
+            )
+            audit_entry = audit_result.scalar_one()
+            assert audit_entry.resource_type == "user_memory"
+            assert audit_entry.resource_id == user_id
+            assert audit_entry.actor_user_id == user_id
+            assert audit_entry.extra == {"deleted_count": 2}
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+        await _cleanup_user(other_email)
         await _cleanup_user(other_email)
 
 
