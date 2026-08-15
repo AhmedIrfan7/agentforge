@@ -37,17 +37,37 @@ before now had a real reason to mutate an existing row in place.
 a new memory that conflicts with and outscores an existing one
 replaces its content/score/expiration rather than creating a
 duplicate.
+
+As of step 174, `list_for_user`/`list_for_organization`/
+`list_for_session` all exclude already-expired rows (`expires_at` in
+the past) -- a real gap found while writing the step-174 lifecycle
+test that ties expiration (168) and retrieval (166) together for the
+first time: `memory_policy.py:expire_stale_memories` is explicitly a
+periodic, operator-triggered sweep, not a scheduled job (that file's
+own docstring), so there is a real window where an expired memory
+still physically exists between when it expires and when the sweep
+next runs. An expired memory shouldn't be usable in that window just
+because nothing has purged it yet -- the sweep's job is storage
+reclamation, not the sole gatekeeper of visibility. `list_all_for_user`
+(the export path, 169) deliberately does NOT filter -- "export
+everything the user owns" should stay honestly complete, including
+whatever hasn't been purged yet, not silently hide it.
 """
 
 import uuid
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import ColumnElement, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.memory import Memory
 from repositories.base import TenantScopedRepository
+
+
+def _not_expired() -> ColumnElement[bool]:
+    now = datetime.now(UTC)
+    return or_(Memory.expires_at.is_(None), Memory.expires_at > now)
 
 
 class MemoryRepository(TenantScopedRepository[Memory]):
@@ -64,6 +84,7 @@ class MemoryRepository(TenantScopedRepository[Memory]):
                 Memory.scope == "user",
                 Memory.user_id == user_id,
                 Memory.importance_score >= min_importance,
+                _not_expired(),
             )
             .order_by(Memory.importance_score.desc(), Memory.created_at.desc())
             .limit(limit)
@@ -134,6 +155,7 @@ class MemoryRepository(TenantScopedRepository[Memory]):
                 Memory.tenant_id == self.tenant_id,
                 Memory.scope == "organization",
                 Memory.importance_score >= min_importance,
+                _not_expired(),
             )
             .order_by(Memory.importance_score.desc(), Memory.created_at.desc())
             .limit(limit)
@@ -157,6 +179,7 @@ class MemoryRepository(TenantScopedRepository[Memory]):
                 Memory.scope == "session",
                 Memory.session_id == session_id,
                 Memory.importance_score >= min_importance,
+                _not_expired(),
             )
             .order_by(Memory.importance_score.desc(), Memory.created_at.desc())
             .limit(limit)
