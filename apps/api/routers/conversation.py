@@ -1,9 +1,22 @@
-"""Conversation-create + message-send endpoints (roadmap steps 178-180),
-nested four/five levels under organization (.../assistants/
+"""Conversation-create/list + message-send endpoints (roadmap steps
+178-182), nested four/five levels under organization (.../assistants/
 {assistant_id}/conversations[/{conversation_id}/messages]) -- one/two
 levels deeper than routers/assistant.py's own nesting, same "mirror
 the product hierarchy" convention every nested router in this codebase
 already follows.
+
+List (182, "paginated conversation-history endpoint") is scoped to the
+CALLER's own conversations only (`ConversationRepository.
+list_for_assistant_and_user`), not every conversation in the org --
+"conversation HISTORY" reads as personal history, and step 179 already
+established a conversation as user-owned, not just tenant-owned (its
+own `get_target_conversation` ownership check). A support/admin-wide
+"every user's conversations" view would be a genuinely different,
+elevated capability this step's literal wording doesn't ask for --
+not built here. New `conversation:read` permission, deliberately
+broader than `conversation:create`/`message:create`: it includes
+`viewer` (reading one's own history is exactly what a read-only role
+is for, unlike creating new conversations), still excludes `guest`.
 
 As of step 181, both message-send endpoints transition a `new`
 conversation to `active` (via `conversation_state.py:transition()`) the
@@ -19,12 +32,10 @@ caller's own JWT, `tenant_id` from context) is already known without
 the client supplying anything; "start a new conversation with this
 assistant" is the whole request.
 
-Only conversation `create` (178) -- unlike routers/assistant.py's full
-create/list/get/delete: list is step 182's own "paginated conversation-
-history endpoint", get/delete are folded into 184's rename/pin/archive/
-delete work. Building those now would be speculating about shapes
-(pagination filters, a status field that doesn't exist until 181)
-those later steps still need to decide.
+`create` (178) + `list` (182) only -- unlike routers/assistant.py's
+full create/list/get/delete: a single-resource `get`/`delete` are
+folded into 184's rename/pin/archive/delete work, which still needs
+its own design decisions this step has no reason to anticipate.
 
 Message-send (179) is genuinely just "wired through orchestrator" --
 `orchestrator.py:orchestrator.handle(query, tenant_id=..., knowledge_base_id=...)`
@@ -127,6 +138,7 @@ from orchestrator import orchestrator
 from repositories.assistant import AssistantRepository
 from repositories.conversation import ConversationRepository
 from repositories.message import MessageRepository
+from schemas.common import Page, PaginationParams
 from schemas.conversation import ConversationRead
 from schemas.message import MessageCreate, MessageRead
 
@@ -181,6 +193,31 @@ async def create_conversation(
         resource_id=conversation.id,
     )
     return ConversationRead.model_validate(conversation)
+
+
+@router.get(
+    "",
+    response_model=Page[ConversationRead],
+    dependencies=[Depends(require_permission("conversation:read"))],
+)
+async def list_conversations(
+    session: TenantDb,
+    tenant_id: TenantId,
+    user_id: UserId,
+    assistant: TargetAssistant,
+    pagination: Annotated[PaginationParams, Depends()],
+) -> Page[ConversationRead]:
+    repo = ConversationRepository(session, tenant_id)
+    conversations = await repo.list_for_assistant_and_user(
+        assistant.id, user_id, limit=pagination.limit, offset=pagination.offset
+    )
+    total = await repo.count_for_assistant_and_user(assistant.id, user_id)
+    return Page(
+        items=[ConversationRead.model_validate(c) for c in conversations],
+        limit=pagination.limit,
+        offset=pagination.offset,
+        total=total,
+    )
 
 
 async def get_target_conversation(

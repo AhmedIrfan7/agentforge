@@ -252,3 +252,138 @@ async def test_assistant_not_visible_under_a_different_knowledge_base() -> None:
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_list_conversations_is_paginated_and_ordered_newest_first() -> None:
+    email = "endpoint-test-conv-owner-6@example.com"
+    org_id, workspace_id, kb_id, assistant_id, headers = _new_org_workspace_kb_assistant(email)
+    try:
+        created_ids = []
+        for _ in range(3):
+            create_response = client.post(
+                _conv_url(org_id, workspace_id, kb_id, assistant_id), headers=headers
+            )
+            created_ids.append(create_response.json()["id"])
+
+        list_response = client.get(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id) + "?limit=2",
+            headers=headers,
+        )
+        assert list_response.status_code == 200
+        body = list_response.json()
+        assert body["total"] == 3
+        assert body["limit"] == 2
+        assert len(body["items"]) == 2
+        # Newest first -- the most recently created conversation (last
+        # in created_ids) should be the first item back.
+        assert body["items"][0]["id"] == created_ids[-1]
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_list_conversations_only_returns_the_callers_own() -> None:
+    """conversation:read's list is personal history, not an org-wide
+    view -- another real member with real conversation:read/create
+    permission still can't see conversations they don't own."""
+    owner_email = "endpoint-test-conv-owner-7@example.com"
+    org_id, workspace_id, kb_id, assistant_id, owner_headers = _new_org_workspace_kb_assistant(
+        owner_email
+    )
+    other_email = "endpoint-test-conv-other-owner@example.com"
+    try:
+        client.post(_conv_url(org_id, workspace_id, kb_id, assistant_id), headers=owner_headers)
+
+        other_token = signup_and_login(
+            client,
+            email=other_email,
+            password="correct horse battery staple",
+            full_name="Other Member",
+        )
+        async with get_session() as session:
+            user_result = await session.execute(select(User).where(User.email == other_email))
+            other_user = user_result.scalar_one()
+            role_result = await session.execute(select(Role).where(Role.name == "manager"))
+            manager_role = role_result.scalar_one()
+            await set_tenant_context(session, org_id)
+            session.add(
+                Membership(
+                    tenant_id=org_id,
+                    user_id=other_user.id,
+                    workspace_id=None,
+                    role_id=manager_role.id,
+                )
+            )
+            await session.commit()
+
+        other_create = client.post(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id),
+            headers=auth_headers(other_token),
+        )
+        other_conversation_id = other_create.json()["id"]
+
+        other_list = client.get(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id),
+            headers=auth_headers(other_token),
+        )
+        assert other_list.status_code == 200
+        ids_seen = {item["id"] for item in other_list.json()["items"]}
+        assert ids_seen == {other_conversation_id}
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(other_email)
+
+
+@pytest.mark.anyio
+async def test_viewer_role_can_list_but_not_create_conversations() -> None:
+    """conversation:read is deliberately broader than conversation:create
+    -- viewer is excluded from create (159/178's own precedent: viewer
+    never creates anything) but included in read (reading one's own
+    history is exactly what a read-only role is for)."""
+    owner_email = "endpoint-test-conv-owner-8@example.com"
+    org_id, workspace_id, kb_id, assistant_id, _owner_headers = _new_org_workspace_kb_assistant(
+        owner_email
+    )
+    viewer_email = "endpoint-test-conv-viewer-list@example.com"
+    try:
+        viewer_token = signup_and_login(
+            client,
+            email=viewer_email,
+            password="correct horse battery staple",
+            full_name="Viewer Member",
+        )
+        async with get_session() as session:
+            user_result = await session.execute(select(User).where(User.email == viewer_email))
+            viewer_user = user_result.scalar_one()
+            role_result = await session.execute(select(Role).where(Role.name == "viewer"))
+            viewer_role = role_result.scalar_one()
+            await set_tenant_context(session, org_id)
+            session.add(
+                Membership(
+                    tenant_id=org_id,
+                    user_id=viewer_user.id,
+                    workspace_id=None,
+                    role_id=viewer_role.id,
+                )
+            )
+            await session.commit()
+
+        create_response = client.post(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id),
+            headers=auth_headers(viewer_token),
+        )
+        assert create_response.status_code == 403
+
+        list_response = client.get(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id),
+            headers=auth_headers(viewer_token),
+        )
+        assert list_response.status_code == 200
+        assert list_response.json()["total"] == 0
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(viewer_email)
