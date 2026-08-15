@@ -387,3 +387,206 @@ async def test_viewer_role_can_list_but_not_create_conversations() -> None:
         await _cleanup_org(org_id)
         await _cleanup_user(owner_email)
         await _cleanup_user(viewer_email)
+
+
+@pytest.mark.anyio
+async def test_rename_and_pin_a_conversation_via_partial_update() -> None:
+    email = "endpoint-test-conv-owner-9@example.com"
+    org_id, workspace_id, kb_id, assistant_id, headers = _new_org_workspace_kb_assistant(email)
+    try:
+        create_response = client.post(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id), headers=headers
+        )
+        conversation_id = create_response.json()["id"]
+        assert create_response.json()["title"] is None
+        assert create_response.json()["is_pinned"] is False
+
+        rename_response = client.patch(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id, f"/{conversation_id}"),
+            json={"title": "Refund questions"},
+            headers=headers,
+        )
+        assert rename_response.status_code == 200
+        assert rename_response.json()["title"] == "Refund questions"
+        # is_pinned wasn't included in the body -- untouched.
+        assert rename_response.json()["is_pinned"] is False
+
+        pin_response = client.patch(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id, f"/{conversation_id}"),
+            json={"is_pinned": True},
+            headers=headers,
+        )
+        assert pin_response.status_code == 200
+        assert pin_response.json()["is_pinned"] is True
+        # title wasn't included this time -- stays from the earlier rename.
+        assert pin_response.json()["title"] == "Refund questions"
+
+        clear_response = client.patch(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id, f"/{conversation_id}"),
+            json={"title": None},
+            headers=headers,
+        )
+        assert clear_response.status_code == 200
+        assert clear_response.json()["title"] is None
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_archive_a_conversation_and_reject_archiving_it_twice() -> None:
+    email = "endpoint-test-conv-owner-10@example.com"
+    org_id, workspace_id, kb_id, assistant_id, headers = _new_org_workspace_kb_assistant(email)
+    try:
+        create_response = client.post(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id), headers=headers
+        )
+        conversation_id = create_response.json()["id"]
+
+        archive_response = client.post(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id, f"/{conversation_id}/archive"),
+            headers=headers,
+        )
+        assert archive_response.status_code == 200
+        assert archive_response.json()["status"] == "archived"
+
+        second_archive_response = client.post(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id, f"/{conversation_id}/archive"),
+            headers=headers,
+        )
+        assert second_archive_response.status_code == 409
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_delete_a_conversation_removes_it_and_its_messages() -> None:
+    email = "endpoint-test-conv-owner-11@example.com"
+    org_id, workspace_id, kb_id, assistant_id, headers = _new_org_workspace_kb_assistant(email)
+    try:
+        create_response = client.post(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id), headers=headers
+        )
+        conversation_id = create_response.json()["id"]
+
+        delete_response = client.delete(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id, f"/{conversation_id}"),
+            headers=headers,
+        )
+        assert delete_response.status_code == 204
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            remaining = await session.get(Conversation, uuid.UUID(conversation_id))
+            assert remaining is None
+
+        # A second delete of the same, now-gone conversation 404s --
+        # same ownership/existence check every other single-resource
+        # operation on this router already uses.
+        second_delete_response = client.delete(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id, f"/{conversation_id}"),
+            headers=headers,
+        )
+        assert second_delete_response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_another_user_cannot_update_archive_or_delete_someone_elses_conversation() -> None:
+    owner_email = "endpoint-test-conv-owner-12@example.com"
+    org_id, workspace_id, kb_id, assistant_id, _owner_headers = _new_org_workspace_kb_assistant(
+        owner_email
+    )
+    other_email = "endpoint-test-conv-other-owner-2@example.com"
+    try:
+        create_response = client.post(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id), headers=_owner_headers
+        )
+        conversation_id = create_response.json()["id"]
+
+        other_token = signup_and_login(
+            client,
+            email=other_email,
+            password="correct horse battery staple",
+            full_name="Other Owner",
+        )
+        await _add_member(org_id, other_email, "manager")
+        other_headers = auth_headers(other_token)
+
+        patch_response = client.patch(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id, f"/{conversation_id}"),
+            json={"title": "Should fail"},
+            headers=other_headers,
+        )
+        assert patch_response.status_code == 404
+
+        archive_response = client.post(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id, f"/{conversation_id}/archive"),
+            headers=other_headers,
+        )
+        assert archive_response.status_code == 404
+
+        delete_response = client.delete(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id, f"/{conversation_id}"),
+            headers=other_headers,
+        )
+        assert delete_response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(other_email)
+
+
+@pytest.mark.anyio
+async def test_viewer_role_cannot_update_or_delete_a_conversation() -> None:
+    """conversation:update/conversation:delete exclude viewer, same
+    reasoning conversation:create/message:create already established --
+    made the REAL owner via direct ORM creation (viewer can't create
+    one through the real endpoint) so this isolates the permission
+    check, same pattern test_message_endpoints.py's own viewer test
+    already established."""
+    owner_email = "endpoint-test-conv-owner-13@example.com"
+    org_id, workspace_id, kb_id, assistant_id, _owner_headers = _new_org_workspace_kb_assistant(
+        owner_email
+    )
+    viewer_email = "endpoint-test-conv-viewer-update@example.com"
+    try:
+        viewer_token = signup_and_login(
+            client,
+            email=viewer_email,
+            password="correct horse battery staple",
+            full_name="Viewer Member",
+        )
+        await _add_member(org_id, viewer_email, "viewer")
+        viewer_headers = auth_headers(viewer_token)
+
+        async with get_session() as session:
+            user_result = await session.execute(select(User).where(User.email == viewer_email))
+            viewer_user = user_result.scalar_one()
+            await set_tenant_context(session, org_id)
+            conversation = Conversation(
+                tenant_id=org_id, assistant_id=assistant_id, user_id=viewer_user.id
+            )
+            session.add(conversation)
+            await session.commit()
+            own_conversation_id = conversation.id
+
+        patch_response = client.patch(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id, f"/{own_conversation_id}"),
+            json={"title": "Should fail"},
+            headers=viewer_headers,
+        )
+        assert patch_response.status_code == 403
+
+        delete_response = client.delete(
+            _conv_url(org_id, workspace_id, kb_id, assistant_id, f"/{own_conversation_id}"),
+            headers=viewer_headers,
+        )
+        assert delete_response.status_code == 403
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(viewer_email)

@@ -53,6 +53,15 @@ the class of bug steps 072/074/090 already found live), and
 -- `archived` is step 184's own explicit job. Same "field exists for
 the real, full taxonomy; only some values are currently reachable"
 precedent `Memory.memory_type`'s own "short_term" value already set.
+
+As of step 184, `title`/`is_pinned` land -- exactly the two fields
+that step's own literal "rename/pin" wording needs, the real gap
+step 176's own docstring flagged above. `title` is nullable with no
+default: a conversation has no title until a caller explicitly renames
+it (no auto-titling from the first message -- a real, useful future
+nicety, but not what "rename" literally asks for). `is_pinned`
+defaults `False`, same "boolean toggle, no separate model" shape any
+plain flag in this codebase already uses.
 """
 
 import uuid
@@ -75,3 +84,5 @@ class Conversation(TenantScopedEntity, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     status: Mapped[str] = mapped_column(nullable=False, default="new")
+    title: Mapped[str | None] = mapped_column(nullable=True)
+    is_pinned: Mapped[bool] = mapped_column(nullable=False, default=False)

@@ -1,9 +1,38 @@
-"""Conversation-create/list + message-send endpoints (roadmap steps
-178-182), nested four/five levels under organization (.../assistants/
-{assistant_id}/conversations[/{conversation_id}/messages]) -- one/two
-levels deeper than routers/assistant.py's own nesting, same "mirror
-the product hierarchy" convention every nested router in this codebase
-already follows.
+"""Conversation-create/list/update/archive/delete + message-send
+endpoints (roadmap steps 178-184), nested four/five levels under
+organization (.../assistants/{assistant_id}/conversations[/
+{conversation_id}/messages]) -- one/two levels deeper than
+routers/assistant.py's own nesting, same "mirror the product
+hierarchy" convention every nested router in this codebase already
+follows.
+
+Step 184 ("rename/pin/archive/delete") is three endpoints, not four --
+rename and pin are folded into ONE `PATCH .../{conversation_id}`
+(`ConversationUpdate`, `model_fields_set`-driven partial update), same
+"one PATCH, multiple optional fields" shape routers/security_settings.
+py:update_security_settings already established, since both are plain
+field writes on the SAME resource, not two different actions. `POST
+.../{conversation_id}/archive` is its own endpoint, not a third PATCH-
+able field, because archiving is a real, VALIDATED state transition
+(`conversation_state.py:transition()`, step 181) -- a raw field write
+would bypass that validation entirely. Archiving an already-archived
+conversation 409s (`InvalidTransitionError` -> `ConflictError`), same
+"409 if already in that terminal state" precedent `routers/
+invitation.py`'s own revoke endpoint (075) already established, not
+silent idempotent success. `DELETE .../{conversation_id}` is a real
+hard delete (`ConversationRepository.delete`, cascading to its
+`Message` rows via the existing FK), matching every other delete
+endpoint in this codebase (Assistant, KnowledgeBase, Workspace) --
+`archived` already covers the reversible-ish "soft removal" case, so
+delete meaning "actually gone" is the honest, undiluted second option.
+
+New `conversation:update`/`conversation:delete` permissions, same
+broad tier as `conversation:create`/`message:create` (every role
+except `guest`/`viewer`) -- renaming, pinning, archiving, or deleting
+one's OWN conversation is the same core product USE as starting or
+continuing one, not admin-tier configuration; `viewer` stays excluded
+for the same reason it's excluded from create -- it never owns a
+conversation via the real endpoint in the first place.
 
 List (182, "paginated conversation-history endpoint") is scoped to the
 CALLER's own conversations only (`ConversationRepository.
@@ -152,13 +181,13 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import write_audit_log
-from conversation_state import transition
+from conversation_state import InvalidTransitionError, transition
 from dependencies.auth import get_current_user_id
 from dependencies.knowledge_base import TargetKnowledgeBase
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from embeddings.openai import OpenAIEmbeddingProvider
-from errors import NotFoundError
+from errors import ConflictError, NotFoundError
 from message_embedding import dispatch_message_embedding
 from models.assistant import Assistant
 from models.conversation import Conversation
@@ -167,7 +196,7 @@ from repositories.assistant import AssistantRepository
 from repositories.conversation import ConversationRepository
 from repositories.message import MessageRepository
 from schemas.common import Page, PaginationParams
-from schemas.conversation import ConversationRead
+from schemas.conversation import ConversationRead, ConversationUpdate
 from schemas.message import (
     ConversationSearchRequest,
     MessageCreate,
@@ -273,6 +302,46 @@ async def get_target_conversation(
 
 
 TargetConversation = Annotated[Conversation, Depends(get_target_conversation)]
+
+
+@router.patch(
+    "/{conversation_id}",
+    response_model=ConversationRead,
+    dependencies=[Depends(require_permission("conversation:update"))],
+)
+async def update_conversation(
+    body: ConversationUpdate,
+    conversation: TargetConversation,
+) -> ConversationRead:
+    for field_name in body.model_fields_set:
+        setattr(conversation, field_name, getattr(body, field_name))
+    return ConversationRead.model_validate(conversation)
+
+
+@router.post(
+    "/{conversation_id}/archive",
+    response_model=ConversationRead,
+    dependencies=[Depends(require_permission("conversation:update"))],
+)
+async def archive_conversation(conversation: TargetConversation) -> ConversationRead:
+    try:
+        transition(conversation, "archived")
+    except InvalidTransitionError as exc:
+        raise ConflictError(str(exc)) from exc
+    return ConversationRead.model_validate(conversation)
+
+
+@router.delete(
+    "/{conversation_id}",
+    status_code=204,
+    dependencies=[Depends(require_permission("conversation:delete"))],
+)
+async def delete_conversation(
+    session: TenantDb,
+    tenant_id: TenantId,
+    conversation: TargetConversation,
+) -> None:
+    await ConversationRepository(session, tenant_id).delete(conversation)
 
 
 @router.post(

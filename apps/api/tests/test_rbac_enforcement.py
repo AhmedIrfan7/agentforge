@@ -70,6 +70,8 @@ EXPECTED_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "document:delete",
         "conversation:create",
         "conversation:read",
+        "conversation:update",
+        "conversation:delete",
         "message:create",
     },
     "admin": {
@@ -95,6 +97,8 @@ EXPECTED_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "document:delete",
         "conversation:create",
         "conversation:read",
+        "conversation:update",
+        "conversation:delete",
         "message:create",
     },
     "manager": {
@@ -117,6 +121,8 @@ EXPECTED_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "document:delete",
         "conversation:create",
         "conversation:read",
+        "conversation:update",
+        "conversation:delete",
         "message:create",
     },
     "knowledge_manager": {
@@ -124,6 +130,8 @@ EXPECTED_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "workspace:read",
         "conversation:create",
         "conversation:read",
+        "conversation:update",
+        "conversation:delete",
         "message:create",
     },
     "developer": {
@@ -131,6 +139,8 @@ EXPECTED_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "workspace:read",
         "conversation:create",
         "conversation:read",
+        "conversation:update",
+        "conversation:delete",
         "message:create",
     },
     "support_agent": {
@@ -138,6 +148,8 @@ EXPECTED_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "workspace:read",
         "conversation:create",
         "conversation:read",
+        "conversation:update",
+        "conversation:delete",
         "message:create",
     },
     "analyst": {
@@ -145,10 +157,19 @@ EXPECTED_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "workspace:read",
         "conversation:create",
         "conversation:read",
+        "conversation:update",
+        "conversation:delete",
         "message:create",
     },
     "viewer": {"organization:read", "workspace:read", "conversation:read"},
-    "end_user": {"workspace:read", "conversation:create", "conversation:read", "message:create"},
+    "end_user": {
+        "workspace:read",
+        "conversation:create",
+        "conversation:read",
+        "conversation:update",
+        "conversation:delete",
+        "message:create",
+    },
     "guest": set(),
 }
 
