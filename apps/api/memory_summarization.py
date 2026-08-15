@@ -46,6 +46,20 @@ As of step 172, both outcomes of the retention decision are logged via
 real `decision.reason` `MemoryAgent` already computed. This is the one
 real "create or not, with a reason" decision point in this codebase
 today, so it's the honest, complete integration point for that step.
+
+As of step 173, a retained summary is checked against this session's
+own existing memories via `memory_conflict.py:find_conflicting_memory`
+before writing -- a session summarized more than once could otherwise
+accumulate near-duplicate summaries. A genuine conflict is resolved by
+score: a new summary that meets or beats the conflicting memory's
+`importance_score` replaces its content via `MemoryRepository.
+update_content` (173's own reason that method exists) and logs
+`"updated"`; one that doesn't beat it changes nothing and logs
+`"ignored"` with a conflict-specific reason, distinct from
+`MemoryAgent`'s own retention-threshold reasons. Only a genuine
+`should_retain` summary is checked at all -- one already rejected by
+`MemoryAgent` has no business being compared against existing memories
+for a *different* reason to keep it.
 """
 
 import asyncio
@@ -57,6 +71,7 @@ from celery_app import celery_app
 from db import get_worker_session, set_tenant_context
 from llm.base import LLMProvider, Message
 from llm.openai import OpenAIProvider
+from memory_conflict import find_conflicting_memory
 from memory_observability import log_memory_event
 from memory_policy import compute_expiration
 from repositories.memory import MemoryRepository
@@ -82,23 +97,50 @@ async def _run_memory_summarization(session_id: uuid.UUID, tenant_id: uuid.UUID)
 
     decision = await _memory_agent.run(Message(role="assistant", content=response.content))
     if decision.should_retain:
+        expires_at = compute_expiration(decision.importance_score)
         async with get_worker_session() as session:
             await set_tenant_context(session, tenant_id)
             repo = MemoryRepository(session, tenant_id)
-            await repo.create(
-                scope="session",
-                session_id=session_id,
-                content=response.content,
-                importance_score=decision.importance_score,
-                expires_at=compute_expiration(decision.importance_score),
-            )
-            await session.commit()
-        log_memory_event(
-            "created",
-            scope="session",
-            reason=decision.reason,
-            importance_score=decision.importance_score,
-        )
+            existing = await repo.list_for_session(session_id)
+            conflict = find_conflicting_memory(existing, response.content)
+
+            if conflict is not None and decision.importance_score < conflict.importance_score:
+                await session.commit()
+                log_memory_event(
+                    "ignored",
+                    scope="session",
+                    reason="conflicts with an existing higher-importance memory",
+                    importance_score=decision.importance_score,
+                )
+            elif conflict is not None:
+                await repo.update_content(
+                    conflict,
+                    content=response.content,
+                    importance_score=decision.importance_score,
+                    expires_at=expires_at,
+                )
+                await session.commit()
+                log_memory_event(
+                    "updated",
+                    scope="session",
+                    reason="replaces a lower- or equal-importance conflicting memory",
+                    importance_score=decision.importance_score,
+                )
+            else:
+                await repo.create(
+                    scope="session",
+                    session_id=session_id,
+                    content=response.content,
+                    importance_score=decision.importance_score,
+                    expires_at=expires_at,
+                )
+                await session.commit()
+                log_memory_event(
+                    "created",
+                    scope="session",
+                    reason=decision.reason,
+                    importance_score=decision.importance_score,
+                )
     else:
         log_memory_event(
             "ignored",

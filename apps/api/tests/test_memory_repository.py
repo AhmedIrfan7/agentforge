@@ -7,6 +7,7 @@ step 156).
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -167,6 +168,37 @@ async def test_delete_all_for_user_removes_only_that_users_memories() -> None:
     finally:
         await _cleanup_user(user_a)
         await _cleanup_user(user_b)
+
+
+@pytest.mark.anyio
+async def test_update_content_mutates_and_persists_the_real_row() -> None:
+    tenant_id = await _new_org("mem-repo-update")
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        repo = MemoryRepository(session, tenant_id)
+        memory = await repo.create(scope="organization", content="original", importance_score=0.5)
+        await session.commit()
+        memory_id = memory.id
+
+    new_expires_at = datetime.now(UTC) + timedelta(days=90)
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        repo = MemoryRepository(session, tenant_id)
+        existing = await repo.get(memory_id)
+        assert existing is not None
+        await repo.update_content(
+            existing, content="updated", importance_score=0.9, expires_at=new_expires_at
+        )
+        await session.commit()
+
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        repo = MemoryRepository(session, tenant_id)
+        fetched = await repo.get(memory_id)
+        assert fetched is not None
+        assert fetched.content == "updated"
+        assert fetched.importance_score == 0.9
+        assert fetched.expires_at == new_expires_at
 
 
 @pytest.mark.anyio

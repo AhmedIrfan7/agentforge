@@ -22,6 +22,7 @@ from memory_summarization import _run_memory_summarization
 from models.memory import Memory
 from models.organization import Organization
 from redis_client import redis_client
+from repositories.memory import MemoryRepository
 from short_term_memory import append_turn, get_recent_turns
 
 
@@ -154,6 +155,103 @@ async def test_a_low_value_summary_is_not_retained_but_short_term_memory_still_c
     lifecycle_events = [e for e in logs if e["event"] == "memory_lifecycle"]
     assert len(lifecycle_events) == 1
     assert lifecycle_events[0]["outcome"] == "ignored"
+
+
+@pytest.mark.anyio
+async def test_a_higher_importance_conflicting_summary_updates_the_existing_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tenant_id = await _new_org("mem-summ-conflict-update")
+    session_id = uuid.uuid4()
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        repo = MemoryRepository(session, tenant_id)
+        existing = await repo.create(
+            scope="session",
+            session_id=session_id,
+            content="Jordan prefers email over chat.",
+            importance_score=0.4,
+        )
+        await session.commit()
+        existing_id = existing.id
+
+    await append_turn(session_id, Message(role="user", content="My name is Jordan."))
+    summary_text = "Remember that Jordan prefers email over chat."
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _mock_completion_response(summary_text)
+
+    monkeypatch.setattr(
+        "llm.openai.httpx.AsyncClient", _client_factory(httpx.MockTransport(handler))
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        await _run_memory_summarization(session_id, tenant_id)
+
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        result = await session.execute(select(Memory).where(Memory.tenant_id == tenant_id))
+        memories = result.scalars().all()
+        # Still one row -- the conflicting memory was updated, not
+        # duplicated.
+        assert len(memories) == 1
+        assert memories[0].id == existing_id
+        assert memories[0].content == summary_text
+        assert memories[0].importance_score == 0.9
+
+    lifecycle_events = [e for e in logs if e["event"] == "memory_lifecycle"]
+    assert lifecycle_events[0]["outcome"] == "updated"
+
+
+@pytest.mark.anyio
+async def test_a_lower_importance_conflicting_summary_is_ignored_and_leaves_existing_memory_intact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tenant_id = await _new_org("mem-summ-conflict-ignore")
+    session_id = uuid.uuid4()
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        repo = MemoryRepository(session, tenant_id)
+        # 0.95 -- deliberately higher than any score MemoryAgent's own
+        # three-tier heuristic (165) can ever produce (max 0.9), the
+        # same way a manually curated/promoted memory could genuinely
+        # end up scored -- so a real, retained (>= RETENTION_THRESHOLD)
+        # new summary can still lose the conflict comparison.
+        await repo.create(
+            scope="session",
+            session_id=session_id,
+            content="Jordan works in the EU timezone.",
+            importance_score=0.95,
+        )
+        await session.commit()
+
+    await append_turn(session_id, Message(role="user", content="What timezone am I in?"))
+    # Contains a signal phrase (scores 0.9, clears RETENTION_THRESHOLD
+    # so it reaches the conflict-check branch at all) and overlaps
+    # with the existing memory's content -- but 0.9 < 0.95.
+    summary_text = "Remember that Jordan works in the EU timezone."
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _mock_completion_response(summary_text)
+
+    monkeypatch.setattr(
+        "llm.openai.httpx.AsyncClient", _client_factory(httpx.MockTransport(handler))
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        await _run_memory_summarization(session_id, tenant_id)
+
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        result = await session.execute(select(Memory).where(Memory.tenant_id == tenant_id))
+        memories = result.scalars().all()
+        assert len(memories) == 1
+        assert memories[0].content == "Jordan works in the EU timezone."
+        assert memories[0].importance_score == 0.95
+
+    lifecycle_events = [e for e in logs if e["event"] == "memory_lifecycle"]
+    assert lifecycle_events[0]["outcome"] == "ignored"
+    assert "conflict" in lifecycle_events[0]["reason"]
 
 
 @pytest.mark.anyio

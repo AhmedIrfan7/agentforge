@@ -29,10 +29,19 @@ Python first. Returns the real deleted count (via `RETURNING`) so the
 caller (`routers/memory.py`) can record a meaningful, non-empty audit
 log entry even though there's no single `resource_id` a bulk operation
 naturally has.
+
+As of step 173, `update_content` adds this repository's first real
+update path -- every prior write was a `create` or a `delete`; nothing
+before now had a real reason to mutate an existing row in place.
+`memory_conflict.py`'s conflict-resolution logic (173) is that reason:
+a new memory that conflicts with and outscores an existing one
+replaces its content/score/expiration rather than creating a
+duplicate.
 """
 
 import uuid
 from collections.abc import Sequence
+from datetime import datetime
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -101,6 +110,20 @@ class MemoryRepository(TenantScopedRepository[Memory]):
         )
         result = await self.session.execute(stmt)
         return len(result.scalars().all())
+
+    async def update_content(
+        self,
+        memory: Memory,
+        *,
+        content: str,
+        importance_score: float,
+        expires_at: datetime | None,
+    ) -> Memory:
+        memory.content = content
+        memory.importance_score = importance_score
+        memory.expires_at = expires_at
+        await self.session.flush()
+        return memory
 
     async def list_for_organization(
         self, *, min_importance: float = 0.0, limit: int = 50, offset: int = 0
