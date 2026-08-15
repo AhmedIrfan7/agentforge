@@ -225,15 +225,34 @@ message-send (keeping that endpoint's own "works in every environment"
 property intact) and why nothing is persisted. Reuses `get_target_
 message`/`get_preceding_user_message`, the same "find the real query
 this reply answers" building block `regenerate` already established.
+
+`GET .../{conversation_id}/export` (step 191) is ONE endpoint with a
+`format` query param (`"json"`/`"markdown"`), not a URL-path split
+like `/search/keyword` vs `/search/semantic` -- that split exists for
+genuinely different retrieval MECHANISMS; export is one data fetch
+(the full, ordered transcript, `MessageRepository.list_for_conversation`,
+new this step -- nothing needed the whole conversation back in order
+until now) with two SERIALIZATION choices over the identical data,
+much closer to `ContextSearchRequest.strategy`'s own "one endpoint,
+a field picks the shape" precedent than to the mechanism split.
+`ConversationExportRead` (JSON) and `_render_conversation_markdown`
+both build from `ConversationRead`/`MessageRead`/the same message list
+-- no separate query for each format. Both responses carry a real
+`Content-Disposition: attachment` header -- AGENTS.md's own "Download
+conversations" phrasing (not just "view/read them"), so this behaves
+like an actual file download, not just a differently-shaped read.
+Reuses `conversation:read` -- exporting one's own conversation is a
+read action, same "same capability, different view" reasoning already
+established elsewhere in this router.
 """
 
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncIterator
-from typing import Annotated
+from collections.abc import AsyncIterator, Sequence
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -259,7 +278,7 @@ from repositories.document import DocumentRepository
 from repositories.knowledge_base import KnowledgeBaseRepository
 from repositories.message import MessageRepository
 from schemas.common import Page, PaginationParams
-from schemas.conversation import ConversationRead, ConversationUpdate
+from schemas.conversation import ConversationExportRead, ConversationRead, ConversationUpdate
 from schemas.message import (
     CitationRead,
     ConversationSearchRequest,
@@ -408,6 +427,58 @@ async def delete_conversation(
     conversation: TargetConversation,
 ) -> None:
     await ConversationRepository(session, tenant_id).delete(conversation)
+
+
+def _render_conversation_markdown(
+    assistant: Assistant, conversation: Conversation, messages: Sequence[Message]
+) -> str:
+    title = conversation.title or f"Conversation with {assistant.name}"
+    lines = [
+        f"# {title}",
+        "",
+        f"**Status:** {conversation.status}  ",
+        f"**Started:** {conversation.created_at.isoformat()}",
+        "",
+    ]
+    for message in messages:
+        heading = "User" if message.role == "user" else "Assistant"
+        lines.append(f"## {heading} — {message.created_at.isoformat()}")
+        lines.append("")
+        lines.append(message.content)
+        lines.append("")
+    return "\n".join(lines)
+
+
+@router.get(
+    "/{conversation_id}/export",
+    dependencies=[Depends(require_permission("conversation:read"))],
+)
+async def export_conversation(
+    session: TenantDb,
+    tenant_id: TenantId,
+    assistant: TargetAssistant,
+    conversation: TargetConversation,
+    format: Literal["json", "markdown"] = "json",
+) -> Response:
+    messages = await MessageRepository(session, tenant_id).list_for_conversation(conversation.id)
+
+    if format == "markdown":
+        content = _render_conversation_markdown(assistant, conversation, messages)
+        return Response(
+            content=content,
+            media_type="text/markdown",
+            headers={"Content-Disposition": 'attachment; filename="conversation.md"'},
+        )
+
+    export = ConversationExportRead(
+        conversation=ConversationRead.model_validate(conversation),
+        messages=[MessageRead.model_validate(m) for m in messages],
+    )
+    return Response(
+        content=export.model_dump_json(),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="conversation.json"'},
+    )
 
 
 def _citation_json(citation: Citation) -> dict[str, object]:

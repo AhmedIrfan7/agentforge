@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -59,6 +60,24 @@ class MessageRepository(TenantScopedRepository[Message]):
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def list_for_conversation(self, conversation_id: uuid.UUID) -> Sequence[Message]:
+        """Roadmap step 191 -- the full, ordered transcript a real
+        export needs; no repository method for this existed before
+        this step because nothing needed the WHOLE conversation back
+        in order until now (list_conversations/182 returns
+        Conversations, not their Messages; search returns individual
+        matches, not a transcript)."""
+        stmt = (
+            select(Message)
+            .where(
+                Message.tenant_id == self.tenant_id,
+                Message.conversation_id == conversation_id,
+            )
+            .order_by(Message.created_at)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
 
     async def search_keyword(
         self,

@@ -3,6 +3,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from schemas.message import MessageRead
+
 
 class ConversationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -28,3 +30,14 @@ class ConversationUpdate(BaseModel):
 
     title: str | None = Field(default=None, min_length=1, max_length=200)
     is_pinned: bool | None = None
+
+
+class ConversationExportRead(BaseModel):
+    """Roadmap step 191's own JSON export shape -- reuses ConversationRead/
+    MessageRead wholesale rather than inventing a third representation
+    of the same data; the markdown export (routers/conversation.py's
+    own _render_conversation_markdown) is built from these same two
+    already-real shapes too, not a separate query."""
+
+    conversation: ConversationRead
+    messages: list[MessageRead]
