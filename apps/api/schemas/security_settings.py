@@ -15,6 +15,7 @@ class SecuritySettingsRead(BaseModel):
     password_require_number: bool
     password_require_symbol: bool
     mfa_required: bool
+    allowed_domains: list[str]
     created_at: datetime
     updated_at: datetime
 
@@ -30,3 +31,9 @@ class SecuritySettingsUpdate(BaseModel):
     password_require_number: bool | None = None
     password_require_symbol: bool | None = None
     mfa_required: bool | None = None
+    # None (the field simply omitted) means "don't touch it" -- an
+    # explicit [] IS a real, meaningful value (clears the restriction,
+    # re-opening the assistant to every origin), distinct from omitting
+    # the field entirely, same model_fields_set-driven PATCH semantics
+    # every other field here already uses.
+    allowed_domains: list[str] | None = None

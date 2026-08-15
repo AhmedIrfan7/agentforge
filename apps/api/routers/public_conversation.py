@@ -76,12 +76,37 @@ whether it arrived through this zero-auth door or the authenticated
 one, and this door is the more abuse-prone of the two -- reachable
 with zero signup friction, the exact "prompt flooding"/"resource
 exhaustion" scenario AGENTS.md's own "ABUSE PREVENTION" section names.
+
+`get_public_assistant` (step 208) also enforces the org's own
+`SecuritySettings.allowed_domains` (AGENTS.md's own "SECURITY
+SETTINGS" section names "Allowed domains" verbatim) -- the single
+resolution point every endpoint in this router already goes through
+for `is_public`, so checking domain restriction here covers all three
+uniformly rather than wiring a second dependency into each route.
+Empty `allowed_domains` (the default) means no restriction -- every
+existing public assistant/embed keeps working unchanged. Matched
+against the request's real `Origin` header (hostname, case-
+insensitive, subdomains of an allowed domain implicitly allowed) --
+this is a real, honest CORS-adjacent check, not the browser-enforced
+CORS policy itself (`main.py`'s own wildcard `CORSMiddleware` stays
+global; FastAPI's CORSMiddleware has no per-request dynamic-origin
+support, and a pure CORS header can't meaningfully stop a non-browser
+caller anyway). **Honest, tracked limitation, not silently worked
+around:** a request with NO Origin header (any non-browser HTTP
+client, or a server-side proxy that strips it) is allowed through
+regardless of `allowed_domains` -- this feature constrains BROWSER-
+based embedding on an unauthorized site, the real threat AGENTS.md's
+own "ABUSE PREVENTION" section names, not a general API firewall
+against a caller who already has a valid `assistant_id` and is willing
+to spoof or omit headers; every real product's own "allowed domains"
+feature has this identical, well-understood limitation.
 """
 
 import uuid
 from typing import Annotated
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,13 +115,14 @@ from audit import write_audit_log
 from auth.jwt import TokenError, create_anonymous_session_token, decode_anonymous_session_token
 from db import set_tenant_context
 from dependencies.db import get_db
-from errors import NotFoundError, UnauthorizedError
+from errors import ForbiddenError, NotFoundError, UnauthorizedError
 from message_processing import build_message_stream, generate_assistant_reply
 from models.assistant import Assistant
 from models.conversation import Conversation
 from rate_limit import MESSAGE_SEND_RATE_LIMIT, check_rate_limit
 from repositories.assistant import get_public_assistant_by_id
 from repositories.conversation import ConversationRepository
+from repositories.security_settings import SecuritySettingsRepository
 from schemas.conversation import AnonymousConversationRead
 from schemas.message import MessageCreate, MessageRead
 
@@ -107,11 +133,33 @@ PublicDb = Annotated[AsyncSession, Depends(get_db)]
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def get_public_assistant(assistant_id: uuid.UUID, session: PublicDb) -> Assistant:
+def _origin_is_allowed(origin: str, allowed_domains: list[str]) -> bool:
+    hostname = urlparse(origin).hostname
+    if not hostname:
+        return False
+    hostname = hostname.lower()
+    return any(
+        hostname == domain or hostname.endswith(f".{domain}")
+        for domain in (raw.lower().strip() for raw in allowed_domains)
+    )
+
+
+async def get_public_assistant(
+    assistant_id: uuid.UUID, session: PublicDb, request: Request
+) -> Assistant:
     assistant = await get_public_assistant_by_id(session, assistant_id)
     if assistant is None:
         raise NotFoundError(f"Assistant {assistant_id} not found.")
     await set_tenant_context(session, assistant.tenant_id)
+
+    security_settings = await SecuritySettingsRepository(
+        session, assistant.tenant_id
+    ).get_singleton()
+    origin = request.headers.get("origin")
+    allowed_domains = security_settings.allowed_domains if security_settings else []
+    if allowed_domains and origin and not _origin_is_allowed(origin, allowed_domains):
+        raise ForbiddenError("This assistant is not permitted to be embedded on this domain.")
+
     return assistant
 
 

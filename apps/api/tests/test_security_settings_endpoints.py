@@ -84,6 +84,39 @@ async def test_get_returns_defaults_for_new_org() -> None:
         assert body["session_timeout_minutes"] is None
         assert body["password_min_length"] is None
         assert body["password_require_uppercase"] is False
+        # Empty list — no restriction — is the honest default (step
+        # 208): every existing public assistant/embed keeps working
+        # unchanged unless an org explicitly opts into restricting it.
+        assert body["allowed_domains"] == []
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_patch_can_set_and_clear_allowed_domains() -> None:
+    email = "endpoint-test-sec-owner-domains@example.com"
+    org_id, headers = _new_org(email)
+    try:
+        set_response = client.patch(
+            f"/organizations/{org_id}/security-settings",
+            json={"allowed_domains": ["example.com", "app.example.org"]},
+            headers=headers,
+        )
+        assert set_response.status_code == 200
+        assert set_response.json()["allowed_domains"] == ["example.com", "app.example.org"]
+
+        # An explicit [] is a real, meaningful value (clears the
+        # restriction) — distinct from omitting the field, same
+        # model_fields_set-driven PATCH semantics every other field
+        # here already uses.
+        clear_response = client.patch(
+            f"/organizations/{org_id}/security-settings",
+            json={"allowed_domains": []},
+            headers=headers,
+        )
+        assert clear_response.status_code == 200
+        assert clear_response.json()["allowed_domains"] == []
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)

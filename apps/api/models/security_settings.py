@@ -14,9 +14,21 @@ One row per organization, auto-created alongside it in
 routers/organization.py:create_organization (same pattern as the
 auto-created org_owner Membership) — simpler than a nullable "no
 settings yet" state to special-case everywhere this gets read.
+
+`allowed_domains` (step 208, AGENTS.md's own "SECURITY SETTINGS"
+section names "Allowed domains" verbatim) is a SECOND enforced field,
+alongside `mfa_required` — see routers/public_conversation.py's own
+docstring for where and how. JSONB list of hostnames, not a Postgres
+ARRAY column — matches this codebase's own consistent choice for
+every other list-shaped field (Message.citations, Document.
+doc_metadata, Assistant.agent_configuration), not a new convention.
+Empty list (the default) means "no restriction" — every existing
+public assistant/embed keeps working unchanged unless an org
+explicitly opts into restricting it.
 """
 
 from sqlalchemy import UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db import Base
@@ -37,3 +49,4 @@ class SecuritySettings(TenantScopedEntity, TimestampMixin, Base):
 
     # Enforced — see module docstring.
     mfa_required: Mapped[bool] = mapped_column(default=False, nullable=False)
+    allowed_domains: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)

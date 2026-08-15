@@ -93,6 +93,48 @@ def _public_url(assistant_id: uuid.UUID, suffix: str = "") -> str:
     return f"/public/assistants/{assistant_id}/conversations{suffix}"
 
 
+def _new_org_workspace_kb_assistant_and_headers(
+    email: str, *, is_public: bool
+) -> tuple[uuid.UUID, uuid.UUID, dict[str, str]]:
+    """Same real org/workspace/kb/assistant chain as
+    _new_org_workspace_kb_assistant, plus the owner's own auth headers
+    -- needed only by the allowed_domains tests below, which have to
+    PATCH the org's real security-settings as its real owner. Kept
+    separate rather than changing the existing helper's return shape,
+    which every other test in this file already unpacks as a 2-tuple.
+    """
+    token = signup_and_login(
+        client, email=email, password="correct horse battery staple", full_name="Public Test"
+    )
+    headers = auth_headers(token)
+    local_part = email.split("@", 1)[0]
+    org_response = client.post(
+        "/organizations",
+        json={"name": "Public Test Org", "slug": f"endpoint-test-public-org-{local_part}"},
+        headers=headers,
+    )
+    org_id = uuid.UUID(org_response.json()["id"])
+    ws_response = client.post(
+        f"/organizations/{org_id}/workspaces",
+        json={"name": "Public Test WS", "slug": "endpoint-test-public-ws"},
+        headers=headers,
+    )
+    workspace_id = uuid.UUID(ws_response.json()["id"])
+    kb_response = client.post(
+        f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases",
+        json={"name": "Public Test KB", "slug": "endpoint-test-public-kb"},
+        headers=headers,
+    )
+    kb_id = uuid.UUID(kb_response.json()["id"])
+    asst_response = client.post(
+        f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases/{kb_id}/assistants",
+        json={"name": "Public Bot", "slug": "endpoint-test-public-bot", "is_public": is_public},
+        headers=headers,
+    )
+    assistant_id = uuid.UUID(asst_response.json()["id"])
+    return org_id, assistant_id, headers
+
+
 @pytest.mark.anyio
 async def test_create_anonymous_conversation_for_a_public_assistant() -> None:
     email = "endpoint-test-public-owner-1@example.com"
@@ -294,6 +336,91 @@ async def test_a_conversation_that_somehow_has_a_real_user_id_404s() -> None:
             headers=auth_headers(access_token),
         )
         assert response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_allowed_domains_blocks_a_disallowed_origin() -> None:
+    email = "endpoint-test-public-owner-8@example.com"
+    org_id, assistant_id, headers = _new_org_workspace_kb_assistant_and_headers(
+        email, is_public=True
+    )
+    try:
+        patch_response = client.patch(
+            f"/organizations/{org_id}/security-settings",
+            json={"allowed_domains": ["example.com"]},
+            headers=headers,
+        )
+        assert patch_response.status_code == 200
+
+        response = client.post(_public_url(assistant_id), headers={"Origin": "https://evil.com"})
+        assert response.status_code == 403
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_allowed_domains_allows_a_matching_origin_and_its_subdomains() -> None:
+    email = "endpoint-test-public-owner-9@example.com"
+    org_id, assistant_id, headers = _new_org_workspace_kb_assistant_and_headers(
+        email, is_public=True
+    )
+    try:
+        client.patch(
+            f"/organizations/{org_id}/security-settings",
+            json={"allowed_domains": ["example.com"]},
+            headers=headers,
+        )
+
+        exact = client.post(_public_url(assistant_id), headers={"Origin": "https://example.com"})
+        assert exact.status_code == 201
+
+        subdomain = client.post(
+            _public_url(assistant_id), headers={"Origin": "https://widget.example.com"}
+        )
+        assert subdomain.status_code == 201
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_allowed_domains_allows_requests_with_no_origin_header() -> None:
+    """Honest, documented limitation (routers/public_conversation.py's
+    own docstring): a request with no Origin header at all (any non-
+    browser HTTP client) is allowed through regardless of
+    allowed_domains -- this feature constrains BROWSER-based embedding
+    on an unauthorized site, not a general API firewall."""
+    email = "endpoint-test-public-owner-10@example.com"
+    org_id, assistant_id, headers = _new_org_workspace_kb_assistant_and_headers(
+        email, is_public=True
+    )
+    try:
+        client.patch(
+            f"/organizations/{org_id}/security-settings",
+            json={"allowed_domains": ["example.com"]},
+            headers=headers,
+        )
+
+        response = client.post(_public_url(assistant_id))
+        assert response.status_code == 201
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_empty_allowed_domains_permits_any_origin() -> None:
+    email = "endpoint-test-public-owner-11@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email, is_public=True)
+    try:
+        response = client.post(
+            _public_url(assistant_id), headers={"Origin": "https://anything-at-all.com"}
+        )
+        assert response.status_code == 201
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)
