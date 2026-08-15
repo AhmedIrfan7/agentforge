@@ -28,7 +28,11 @@ export default async function ChatPage({
 
   return (
     <main className={styles.main}>
-      <ChatShell assistantId={assistantId} />
+      {/* key forces a full remount if assistantId ever changes via
+          client-side navigation -- ChatShell's own sidebar/session
+          state is only ever correct for the assistant it mounted
+          with. */}
+      <ChatShell key={assistantId} assistantId={assistantId} />
     </main>
   );
 }

@@ -1,7 +1,19 @@
-.shell {
+.layout {
+  display: flex;
+  height: 100%;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+.chatPanel {
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: 100%;
   max-width: 48rem;
   margin: 0 auto;
   border-left: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
@@ -13,6 +25,7 @@
   align-items: center;
   justify-content: center;
   height: 100%;
+  width: 100%;
   padding: 2rem;
   text-align: center;
   opacity: 0.7;
