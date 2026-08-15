@@ -12,9 +12,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from db import get_session, set_tenant_context
+from models.assistant import Assistant
+from models.conversation import Conversation
+from models.knowledge_base import KnowledgeBase
 from models.memory import Memory
 from models.organization import Organization
 from models.user import User
+from models.workspace import Workspace
 from repositories.memory import MemoryRepository
 
 
@@ -25,6 +29,37 @@ async def _new_org(slug: str) -> uuid.UUID:
         await session.flush()
         await session.commit()
         return org.id
+
+
+async def _new_conversation(tenant_id: uuid.UUID, slug: str) -> uuid.UUID:
+    # session_id has a real FK to Conversation as of step 176 -- a
+    # session-scoped Memory row needs a genuine one to point at.
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        workspace = Workspace(tenant_id=tenant_id, name="Mem Repo WS", slug=f"{slug}-ws")
+        session.add(workspace)
+        await session.flush()
+
+        knowledge_base = KnowledgeBase(
+            tenant_id=tenant_id, workspace_id=workspace.id, name="Mem Repo KB", slug=f"{slug}-kb"
+        )
+        session.add(knowledge_base)
+        await session.flush()
+
+        assistant = Assistant(
+            tenant_id=tenant_id,
+            knowledge_base_id=knowledge_base.id,
+            name="Mem Repo Bot",
+            slug="bot",
+        )
+        session.add(assistant)
+        await session.flush()
+
+        conversation = Conversation(tenant_id=tenant_id, assistant_id=assistant.id)
+        session.add(conversation)
+        await session.flush()
+        await session.commit()
+        return conversation.id
 
 
 async def _new_user(email: str) -> uuid.UUID:
@@ -113,8 +148,8 @@ async def test_list_for_user_is_isolated_per_user_and_excludes_other_scopes() ->
 @pytest.mark.anyio
 async def test_list_for_session_is_isolated_per_session() -> None:
     tenant_id = await _new_org("mem-repo-session")
-    session_a = uuid.uuid4()
-    session_b = uuid.uuid4()
+    session_a = await _new_conversation(tenant_id, "mem-repo-session-a")
+    session_b = await _new_conversation(tenant_id, "mem-repo-session-b")
     async with get_session() as session:
         await set_tenant_context(session, tenant_id)
         repo = MemoryRepository(session, tenant_id)

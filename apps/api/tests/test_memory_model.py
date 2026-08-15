@@ -8,11 +8,16 @@ import uuid
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from db import get_session, set_tenant_context
+from models.assistant import Assistant
+from models.conversation import Conversation
+from models.knowledge_base import KnowledgeBase
 from models.memory import Memory
 from models.organization import Organization
 from models.user import User
+from models.workspace import Workspace
 
 
 async def _new_org(slug: str) -> uuid.UUID:
@@ -22,6 +27,36 @@ async def _new_org(slug: str) -> uuid.UUID:
         await session.flush()
         await session.commit()
         return org.id
+
+
+async def _new_org_workspace_kb_assistant(slug: str) -> tuple[uuid.UUID, uuid.UUID]:
+    # For the session-scoped tests below -- session_id gained a real FK to
+    # Conversation at step 176, and a Conversation needs a real Assistant
+    # to hang off, same hierarchy test_assistant_model.py's own
+    # _new_org_workspace_kb already walks one level further.
+    async with get_session() as session:
+        org = Organization(name="Memory Test Org", slug=f"{slug}-org")
+        session.add(org)
+        await session.flush()
+        await set_tenant_context(session, org.id)
+
+        workspace = Workspace(tenant_id=org.id, name="Mem WS", slug=f"{slug}-ws")
+        session.add(workspace)
+        await session.flush()
+
+        knowledge_base = KnowledgeBase(
+            tenant_id=org.id, workspace_id=workspace.id, name="Mem KB", slug=f"{slug}-kb"
+        )
+        session.add(knowledge_base)
+        await session.flush()
+
+        assistant = Assistant(
+            tenant_id=org.id, knowledge_base_id=knowledge_base.id, name="Mem Bot", slug="bot"
+        )
+        session.add(assistant)
+        await session.flush()
+        await session.commit()
+        return org.id, assistant.id
 
 
 async def _new_user(email: str) -> uuid.UUID:
@@ -95,17 +130,21 @@ async def test_create_and_read_user_scoped_memory() -> None:
 
 
 @pytest.mark.anyio
-async def test_create_and_read_session_scoped_memory_with_an_unconstrained_session_id() -> None:
-    """session_id has no foreign key -- no Conversation/ConversationSession
-    model exists yet (Milestone 6), so any UUID is accepted here."""
-    tenant_id = await _new_org("mem-session-scope")
-    fake_session_id = uuid.uuid4()
+async def test_create_and_read_session_scoped_memory_with_a_real_conversation() -> None:
+    """session_id gained a real foreign key to Conversation at step 176
+    -- supersedes the old "unconstrained" test this docstring used to
+    describe, back when no Conversation model existed yet."""
+    tenant_id, assistant_id = await _new_org_workspace_kb_assistant("mem-session-scope")
     async with get_session() as session:
         await set_tenant_context(session, tenant_id)
+        conversation = Conversation(tenant_id=tenant_id, assistant_id=assistant_id)
+        session.add(conversation)
+        await session.flush()
+
         memory = Memory(
             tenant_id=tenant_id,
             scope="session",
-            session_id=fake_session_id,
+            session_id=conversation.id,
             content="Asked about refund policy earlier in this conversation.",
         )
         session.add(memory)
@@ -114,7 +153,24 @@ async def test_create_and_read_session_scoped_memory_with_an_unconstrained_sessi
         result = await session.execute(select(Memory).where(Memory.tenant_id == tenant_id))
         fetched = result.scalar_one()
         assert fetched.scope == "session"
-        assert fetched.session_id == fake_session_id
+        assert fetched.session_id == conversation.id
+
+
+@pytest.mark.anyio
+async def test_session_id_rejects_a_value_with_no_real_conversation() -> None:
+    tenant_id = await _new_org("mem-session-fk")
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        session.add(
+            Memory(
+                tenant_id=tenant_id,
+                scope="session",
+                session_id=uuid.uuid4(),
+                content="orphaned",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await session.flush()
 
 
 @pytest.mark.anyio

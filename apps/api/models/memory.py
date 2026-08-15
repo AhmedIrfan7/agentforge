@@ -23,13 +23,17 @@ already established.
 `scope` distinguishes who a memory belongs to: "user" (`user_id`
 populated), "session" (`session_id` populated), or "organization"
 (neither -- `tenant_id`, already required on every row, already
-identifies the organization; no second column needed). `session_id`
-is deliberately NOT a foreign key: no Conversation/ConversationSession
-model exists yet (Milestone 6, "Conversation engine") -- this is a
-real, honestly-unconstrained column ahead of the table it will
-eventually reference, the same "field lands ahead of its full wiring,
-documented as a real gap" precedent `AuditLog.actor_user_id` already
-established for Milestone 2 before auth existed.
+identifies the organization; no second column needed).
+
+As of step 176, `session_id` gets the real foreign key this docstring
+originally promised: `models/conversation.py:Conversation` now exists,
+so the "honestly-unconstrained column ahead of the table it will
+eventually reference" (the same "field lands ahead of its full wiring"
+precedent `AuditLog.actor_user_id` established for Milestone 2 before
+auth existed) becomes a real, enforced reference, `CASCADE` on delete
+-- same reasoning `Memory.user_id`'s own `CASCADE` already established:
+a session-scoped memory has no reason to survive the conversation it
+was scoped to.
 
 As of step 164, `importance_score` lands: a plain `float`, app-level
 convention 0.0 (negligible) to 1.0 (critical), no DB `CHECK` constraint
@@ -72,7 +76,9 @@ class Memory(TenantScopedEntity, TimestampMixin, Base):
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
     )
-    session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True
+    )
     content: Mapped[str] = mapped_column(nullable=False)
     importance_score: Mapped[float] = mapped_column(nullable=False, default=0.5)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -28,9 +28,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_session, set_tenant_context
+from models.assistant import Assistant
+from models.conversation import Conversation
+from models.knowledge_base import KnowledgeBase
 from models.memory import Memory
 from models.organization import Organization
 from models.user import User
+from models.workspace import Workspace
 from repositories.memory import MemoryRepository
 
 
@@ -52,7 +56,28 @@ async def _seed_tenant(
     )
     await session.flush()
 
-    session_id = uuid.uuid4()
+    # session_id has a real FK to Conversation as of step 176 -- needs a
+    # genuine one, not a random UUID, for the session-scoped Memory below.
+    workspace = Workspace(tenant_id=org.id, name=f"Isolation {slug} WS", slug=f"{slug}-ws")
+    session.add(workspace)
+    await session.flush()
+    knowledge_base = KnowledgeBase(
+        tenant_id=org.id, workspace_id=workspace.id, name=f"Isolation {slug} KB", slug=f"{slug}-kb"
+    )
+    session.add(knowledge_base)
+    await session.flush()
+    assistant = Assistant(
+        tenant_id=org.id,
+        knowledge_base_id=knowledge_base.id,
+        name=f"Isolation {slug} Bot",
+        slug="bot",
+    )
+    session.add(assistant)
+    await session.flush()
+    conversation = Conversation(tenant_id=org.id, assistant_id=assistant.id)
+    session.add(conversation)
+    await session.flush()
+    session_id = conversation.id
     session.add(
         Memory(
             tenant_id=org.id,

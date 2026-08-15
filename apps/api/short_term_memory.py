@@ -20,10 +20,10 @@ read-modify-write blob cycle wouldn't have under concurrent writers.
 Entries are `llm.base.Message` (role/content) -- the exact shape a
 real chat call will eventually need to reconstruct a prompt, not a
 parallel dataclass reinventing the same two fields. `session_id` is
-the same unconstrained identifier `models/memory.py:Memory.session_id`
-already anticipates -- no Conversation/ConversationSession model
-exists yet (Milestone 6); both will reference the same real
-conversation once that model lands.
+the same identifier `models/memory.py:Memory.session_id` uses -- that
+column gained a real foreign key to `models/conversation.py:Conversation`
+at step 176; this one stays a plain UUID regardless, since Redis keys
+have no foreign-key concept to enforce one against.
 
 Each write refreshes the key's TTL (`DEFAULT_TTL_SECONDS`, one hour) --
 genuinely short-term: an idle conversation's working memory should

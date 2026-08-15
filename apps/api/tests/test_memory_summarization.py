@@ -19,8 +19,12 @@ from sqlalchemy import select
 from db import get_session, set_tenant_context
 from llm.base import LLMProviderError, Message
 from memory_summarization import _run_memory_summarization
+from models.assistant import Assistant
+from models.conversation import Conversation
+from models.knowledge_base import KnowledgeBase
 from models.memory import Memory
 from models.organization import Organization
+from models.workspace import Workspace
 from redis_client import redis_client
 from repositories.memory import MemoryRepository
 from short_term_memory import append_turn, get_recent_turns
@@ -33,6 +37,39 @@ async def _new_org(slug: str) -> uuid.UUID:
         await session.flush()
         await session.commit()
         return org.id
+
+
+async def _new_conversation(tenant_id: uuid.UUID, slug: str) -> uuid.UUID:
+    # session_id has a real FK to Conversation as of step 176 -- any test
+    # here that actually persists a Memory row (not just Redis turns)
+    # needs a genuine one, unlike the Redis-only tests in this file which
+    # never touch Postgres for their session_id.
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        workspace = Workspace(tenant_id=tenant_id, name="Mem Summ WS", slug=f"{slug}-ws")
+        session.add(workspace)
+        await session.flush()
+
+        knowledge_base = KnowledgeBase(
+            tenant_id=tenant_id, workspace_id=workspace.id, name="Mem Summ KB", slug=f"{slug}-kb"
+        )
+        session.add(knowledge_base)
+        await session.flush()
+
+        assistant = Assistant(
+            tenant_id=tenant_id,
+            knowledge_base_id=knowledge_base.id,
+            name="Mem Summ Bot",
+            slug="bot",
+        )
+        session.add(assistant)
+        await session.flush()
+
+        conversation = Conversation(tenant_id=tenant_id, assistant_id=assistant.id)
+        session.add(conversation)
+        await session.flush()
+        await session.commit()
+        return conversation.id
 
 
 def _client_factory(handler: httpx.MockTransport) -> type[httpx.AsyncClient]:
@@ -89,7 +126,7 @@ async def test_a_retainable_summary_is_written_as_a_session_scoped_memory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tenant_id = await _new_org("mem-summ-retain")
-    session_id = uuid.uuid4()
+    session_id = await _new_conversation(tenant_id, "mem-summ-retain")
     await append_turn(session_id, Message(role="user", content="My name is Jordan."))
 
     # MemoryAgent's real retention signal phrases (165) are first-person
@@ -162,7 +199,7 @@ async def test_a_higher_importance_conflicting_summary_updates_the_existing_memo
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tenant_id = await _new_org("mem-summ-conflict-update")
-    session_id = uuid.uuid4()
+    session_id = await _new_conversation(tenant_id, "mem-summ-conflict-update")
     async with get_session() as session:
         await set_tenant_context(session, tenant_id)
         repo = MemoryRepository(session, tenant_id)
@@ -208,7 +245,7 @@ async def test_a_lower_importance_conflicting_summary_is_ignored_and_leaves_exis
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tenant_id = await _new_org("mem-summ-conflict-ignore")
-    session_id = uuid.uuid4()
+    session_id = await _new_conversation(tenant_id, "mem-summ-conflict-ignore")
     async with get_session() as session:
         await set_tenant_context(session, tenant_id)
         repo = MemoryRepository(session, tenant_id)
