@@ -1,5 +1,6 @@
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,44 @@ class MessageSearchResult:
 class MessageRepository(TenantScopedRepository[Message]):
     def __init__(self, session: AsyncSession, tenant_id: uuid.UUID) -> None:
         super().__init__(session, tenant_id, Message)
+
+    async def get_preceding_user_message(
+        self, conversation_id: uuid.UUID, *, before: datetime
+    ) -> Message | None:
+        """Roadmap step 188 -- finds the real user turn that produced a
+        given assistant reply, so regenerate_response can re-run the
+        orchestrator against the SAME original query rather than
+        inventing a new one. Messages alternate user/assistant in this
+        codebase's own real flow (every send_message call writes
+        exactly one of each, in that order), so the nearest earlier
+        user message in the same conversation is unambiguously the
+        right one -- no explicit parent/reply-to link needed for a
+        shape this simple.
+
+        `<=`, not `<` -- verified live before trusting it: Postgres's
+        `now()` (models/mixins.py:TimestampMixin's own `created_at`
+        server_default) returns the TRANSACTION's start time, constant
+        for its whole duration, not per-statement -- send_message
+        writes both messages in one uncommitted transaction, so a
+        user/assistant pair's `created_at` values are byte-identical,
+        confirmed by a real insert with a real 1-second sleep between
+        them. A strict `<` silently found nothing for every real pair.
+        `<=` is still safe: the one-user-then-one-assistant-per-call
+        invariant guarantees at most one `role="user"` row can ever
+        share that exact timestamp."""
+        stmt = (
+            select(Message)
+            .where(
+                Message.tenant_id == self.tenant_id,
+                Message.conversation_id == conversation_id,
+                Message.role == "user",
+                Message.created_at <= before,
+            )
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def search_keyword(
         self,

@@ -183,6 +183,26 @@ assistant `Message` as `CitationRead.model_dump(mode="json")` dicts
 never on the user's own message -- nothing retrieves on their behalf,
 so `[]` (the column's own default) is already the honest value there,
 no need to pass it explicitly.
+
+`POST .../{conversation_id}/messages/{message_id}/regenerate` (step
+188) UPDATES the existing assistant `Message` row in place rather than
+creating a new one or building message versioning/branching -- no
+roadmap step through 200 asks for parallel response versions, and this
+codebase's `Message` model has no parent/sibling/version link to
+support one; "regenerate THE response" (singular) reads as replacing
+it, the simplest honest interpretation. `get_target_message` (another
+inline, first-consumer dependency) resolves the message and requires
+`role == "assistant"` -- regenerating a user's own turn is
+nonsensical. `MessageRepository.get_preceding_user_message` finds the
+real query that produced this reply by nearest-earlier-`created_at`
+in the same conversation, not a stored reply-to link -- messages
+strictly alternate user/assistant in this codebase's own real flow (a
+guarantee `send_message`/`send_message_streaming` both maintain), so
+that's unambiguous without one. Re-dispatches embedding for the
+updated content -- the old embedding is now stale, describing text
+that no longer exists at that message id. Reuses `message:create`,
+not a new permission -- regenerating is the same capability tier as
+originally producing that reply, not a distinct action.
 """
 
 import asyncio
@@ -208,6 +228,7 @@ from errors import ConflictError, NotFoundError
 from message_embedding import dispatch_message_embedding
 from models.assistant import Assistant
 from models.conversation import Conversation
+from models.message import Message
 from orchestrator import OrchestratorResult, orchestrator
 from repositories.assistant import AssistantRepository
 from repositories.conversation import ConversationRepository
@@ -507,6 +528,57 @@ async def send_message_streaming(
         yield f"event: done\ndata: {message_read.model_dump_json()}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+async def get_target_message(
+    message_id: uuid.UUID,
+    conversation: TargetConversation,
+    session: TenantDb,
+    tenant_id: TenantId,
+) -> Message:
+    message = await MessageRepository(session, tenant_id).get(message_id)
+    if message is None or message.conversation_id != conversation.id or message.role != "assistant":
+        raise NotFoundError(f"Message {message_id} not found.")
+    return message
+
+
+TargetMessage = Annotated[Message, Depends(get_target_message)]
+
+
+@router.post(
+    "/{conversation_id}/messages/{message_id}/regenerate",
+    response_model=MessageRead,
+    dependencies=[Depends(require_permission("message:create"))],
+)
+async def regenerate_response(
+    session: TenantDb,
+    tenant_id: TenantId,
+    assistant: TargetAssistant,
+    conversation: TargetConversation,
+    message: TargetMessage,
+) -> MessageRead:
+    repo = MessageRepository(session, tenant_id)
+    user_message = await repo.get_preceding_user_message(conversation.id, before=message.created_at)
+    if user_message is None:
+        raise NotFoundError(f"No preceding user message found for message {message.id}.")
+
+    result = await orchestrator.handle(
+        user_message.content, tenant_id=tenant_id, knowledge_base_id=assistant.knowledge_base_id
+    )
+    citations = await _build_citations(session, tenant_id, result)
+
+    message.content = result.response
+    message.citations = [_citation_json(c) for c in citations]
+    dispatch_message_embedding.delay(str(message.id), str(tenant_id))
+
+    await write_audit_log(
+        session,
+        tenant_id=tenant_id,
+        action="message.regenerate",
+        resource_type="message",
+        resource_id=message.id,
+    )
+    return MessageRead.model_validate(message)
 
 
 @router.post(
