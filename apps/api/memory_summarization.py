@@ -39,6 +39,13 @@ As of step 168, a retained summary's `expires_at` comes from
 `MemoryAgent`'s own decision already computed -- one real policy
 governs every `Memory` row this codebase writes, not a second,
 independently invented expiration rule for summaries specifically.
+
+As of step 172, both outcomes of the retention decision are logged via
+`memory_observability.py:log_memory_event` -- a retained summary logs
+`"created"`, a rejected one logs `"ignored"`, each carrying the same
+real `decision.reason` `MemoryAgent` already computed. This is the one
+real "create or not, with a reason" decision point in this codebase
+today, so it's the honest, complete integration point for that step.
 """
 
 import asyncio
@@ -50,6 +57,7 @@ from celery_app import celery_app
 from db import get_worker_session, set_tenant_context
 from llm.base import LLMProvider, Message
 from llm.openai import OpenAIProvider
+from memory_observability import log_memory_event
 from memory_policy import compute_expiration
 from repositories.memory import MemoryRepository
 from short_term_memory import clear, get_recent_turns
@@ -85,6 +93,19 @@ async def _run_memory_summarization(session_id: uuid.UUID, tenant_id: uuid.UUID)
                 expires_at=compute_expiration(decision.importance_score),
             )
             await session.commit()
+        log_memory_event(
+            "created",
+            scope="session",
+            reason=decision.reason,
+            importance_score=decision.importance_score,
+        )
+    else:
+        log_memory_event(
+            "ignored",
+            scope="session",
+            reason=decision.reason,
+            importance_score=decision.importance_score,
+        )
 
     await clear(session_id)
 

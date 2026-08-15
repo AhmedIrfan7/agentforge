@@ -13,6 +13,7 @@ from collections.abc import AsyncGenerator
 
 import httpx
 import pytest
+import structlog.testing
 from sqlalchemy import select
 
 from db import get_session, set_tenant_context
@@ -104,7 +105,8 @@ async def test_a_retainable_summary_is_written_as_a_session_scoped_memory(
         "llm.openai.httpx.AsyncClient", _client_factory(httpx.MockTransport(handler))
     )
 
-    await _run_memory_summarization(session_id, tenant_id)
+    with structlog.testing.capture_logs() as logs:
+        await _run_memory_summarization(session_id, tenant_id)
 
     async with get_session() as session:
         await set_tenant_context(session, tenant_id)
@@ -117,6 +119,11 @@ async def test_a_retainable_summary_is_written_as_a_session_scoped_memory(
 
     # Short-term memory is cleared after a successful summarization.
     assert await get_recent_turns(session_id) == []
+
+    lifecycle_events = [e for e in logs if e["event"] == "memory_lifecycle"]
+    assert len(lifecycle_events) == 1
+    assert lifecycle_events[0]["outcome"] == "created"
+    assert lifecycle_events[0]["reason"] == "contains an explicit identity or preference signal"
 
 
 @pytest.mark.anyio
@@ -134,7 +141,8 @@ async def test_a_low_value_summary_is_not_retained_but_short_term_memory_still_c
         "llm.openai.httpx.AsyncClient", _client_factory(httpx.MockTransport(handler))
     )
 
-    await _run_memory_summarization(session_id, tenant_id)
+    with structlog.testing.capture_logs() as logs:
+        await _run_memory_summarization(session_id, tenant_id)
 
     async with get_session() as session:
         await set_tenant_context(session, tenant_id)
@@ -142,6 +150,10 @@ async def test_a_low_value_summary_is_not_retained_but_short_term_memory_still_c
         assert result.scalars().all() == []
 
     assert await get_recent_turns(session_id) == []
+
+    lifecycle_events = [e for e in logs if e["event"] == "memory_lifecycle"]
+    assert len(lifecycle_events) == 1
+    assert lifecycle_events[0]["outcome"] == "ignored"
 
 
 @pytest.mark.anyio
