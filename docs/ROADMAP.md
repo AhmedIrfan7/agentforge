@@ -204,7 +204,7 @@ Every provider-facing piece (LLM, embeddings, speech, vector store) sits behind 
 
 ## Milestone 6 — Conversation Engine (steps 176–200)
 
-- [ ] 176. Create `Conversation` model + migration
+- [x] 176. Create `Conversation` model + migration — `models/conversation.py:Conversation` sits under `Assistant` (`assistant_id` FK CASCADE), `user_id` nullable FK `SET NULL` (anonymous widget visitors, and a transcript should outlive the user per `AuditLog.actor_user_id`'s own precedent). Retrofits the real FK `models/memory.py:Memory.session_id` had promised since step 162 (`ondelete="CASCADE"` — a session-scoped memory has no reason to outlive its conversation). Migration `f567d67cde4e` defensively deletes any pre-existing orphaned `memories.session_id` rows before adding the constraint (the new table starts empty, so any non-null value at that point is orphaned by definition) — a real production-safety concern, not just local cleanup, since CI's fresh DB would never hit it but a real deploy against existing data could. RLS verified live. Every Milestone 5 test that persisted a session-scoped `Memory` row with a fake `uuid.uuid4()` session id was updated to create a real `Conversation` first. `test_conversation_model.py` added, genuinely model-only (no repository/endpoint yet). Full suite (689 tests) green.
 - [ ] 177. Create `Message` model + migration
 - [ ] 178. Add conversation-create endpoint
 - [ ] 179. Add message-send endpoint wired through orchestrator
