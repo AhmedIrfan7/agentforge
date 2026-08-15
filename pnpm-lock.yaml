@@ -48,6 +48,24 @@ importers:
         specifier: ^5
         version: 5.9.3
 
+  apps/widget:
+    devDependencies:
+      eslint:
+        specifier: ^9
+        version: 9.39.5(supports-color@7.2.0)
+      eslint-config-prettier:
+        specifier: ^10.1.8
+        version: 10.1.8(eslint@9.39.5(supports-color@7.2.0))
+      prettier:
+        specifier: ^3.9.6
+        version: 3.9.6
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8
+        version: 8.66.0(eslint@9.39.5(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
+
   packages/shared:
     devDependencies:
       typescript:

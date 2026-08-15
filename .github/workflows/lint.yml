@@ -46,3 +46,22 @@ jobs:
         run: pnpm --filter @agentforge/web run format:check
       - name: Typecheck shared package
         run: pnpm --filter @agentforge/shared run typecheck
+
+  widget-lint:
+    name: Lint apps/widget (eslint + prettier + tsc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm --filter @agentforge/widget run typecheck
+      - name: ESLint
+        run: pnpm --filter @agentforge/widget run lint
+      - name: Prettier check
+        run: pnpm --filter @agentforge/widget run format:check
