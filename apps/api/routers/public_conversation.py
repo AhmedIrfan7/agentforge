@@ -51,12 +51,27 @@ resolution/authorization layer above it differs. No RBAC permission
 check anywhere in this router -- there is no Membership/role for an
 anonymous caller to hold one; the anonymous session token itself is
 the entire authorization model.
+
+`POST .../{conversation_id}/messages/stream` (step 194) is this
+router's own anonymous counterpart to `routers/conversation.py:
+send_message_streaming` (180) -- added specifically so the real chat UI
+shell step 194 builds in `apps/web` has a genuine SSE transport to
+render against: no dashboard auth UI exists yet (`docs/ROADMAP.md`
+step 233, "auth-gated layout," is well after this one), so the public,
+zero-auth anonymous flow is the only backend surface a real frontend
+page can honestly stream from today, the same reasoning that made this
+whole router's anonymous session model worth building at 192. Built on
+the same `message_processing.py:generate_assistant_reply`/`build_
+message_stream` pair the authenticated endpoint now uses (see that
+module's own docstring) -- not a second, duplicated inline
+implementation.
 """
 
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,7 +80,7 @@ from auth.jwt import TokenError, create_anonymous_session_token, decode_anonymou
 from db import set_tenant_context
 from dependencies.db import get_db
 from errors import NotFoundError, UnauthorizedError
-from message_processing import generate_assistant_reply
+from message_processing import build_message_stream, generate_assistant_reply
 from models.assistant import Assistant
 from models.conversation import Conversation
 from repositories.assistant import get_public_assistant_by_id
@@ -158,3 +173,26 @@ async def send_anonymous_message(
         resource_id=assistant_message.id,
     )
     return MessageRead.model_validate(assistant_message)
+
+
+@router.post("/{conversation_id}/messages/stream")
+async def send_anonymous_message_streaming(
+    body: MessageCreate,
+    session: PublicDb,
+    assistant: PublicAssistant,
+    conversation: AnonymousConversation,
+) -> StreamingResponse:
+    assistant_message = await generate_assistant_reply(
+        session, assistant.tenant_id, assistant, conversation, body.content
+    )
+
+    await write_audit_log(
+        session,
+        tenant_id=assistant.tenant_id,
+        action="message.create",
+        resource_type="message",
+        resource_id=assistant_message.id,
+    )
+    message_read = MessageRead.model_validate(assistant_message)
+
+    return StreamingResponse(build_message_stream(message_read), media_type="text/event-stream")

@@ -123,25 +123,30 @@ through 200 asks for token-level streaming out of the orchestrator/LLM
 layer itself) -- what this step delivers is the real, correct SSE
 TRANSPORT (a genuinely incremental, chunked HTTP response a browser's
 `EventSource`/`fetch` can consume progressively today), word-chunked
-for a realistic typing effect, with a real `await asyncio.sleep(0)`
-between chunks so Starlette actually flushes each one rather than
-coalescing the whole body into a single write. A future token-
-streaming generation source can plug into this same transport without
-changing the client contract. Both the user's and the assistant's
-messages are still persisted in full via the normal ORM/session path
--- streaming only changes how the FINAL response is delivered to this
-one caller, not what's stored.
+for a realistic typing effect. A future token-streaming generation
+source can plug into this same transport without changing the client
+contract. Both the user's and the assistant's messages are still
+persisted in full via the normal ORM/session path -- streaming only
+changes how the FINAL response is delivered to this one caller, not
+what's stored.
 
-The response's `assistant_message` ORM object is converted to a plain
-`MessageRead` (`message_read`) BEFORE the generator closure is built,
-never touched from inside `event_stream()` itself -- `get_tenant_db`
-commits (and, by SQLAlchemy's `expire_on_commit` default, expires
-every attribute on every object tracked by that session) the instant
-this endpoint function returns, which happens well before Starlette
-ever starts iterating a `StreamingResponse`'s body. Reading ORM
-attributes from inside the generator would race that commit against
-an already-closed session; capturing an already-validated Pydantic
-model by closure sidesteps the issue entirely.
+As of step 194, this endpoint calls `generate_assistant_reply` for
+persistence (the same helper `send_message` already used) and
+`message_processing.py:build_message_stream` for the SSE formatting,
+rather than inlining both -- `routers/public_conversation.py`'s own new
+anonymous streaming endpoint (built the same step, for the real chat UI
+shell in `apps/web`, which has no auth UI yet to reach this
+authenticated router) needed the identical word-chunked SSE shape, one
+real second caller being exactly the bar this codebase already applies
+before sharing logic. The response's `assistant_message` ORM object is
+still converted to a plain `MessageRead` BEFORE the generator is built,
+never touched from inside it -- `get_tenant_db` commits (and, by
+SQLAlchemy's `expire_on_commit` default, expires every attribute on
+every object tracked by that session) the instant this endpoint
+function returns, well before Starlette ever starts iterating a
+`StreamingResponse`'s body; `build_message_stream` only ever reads from
+the already-validated `MessageRead`, never the ORM object, preserving
+that same safety property.
 
 Both message-send endpoints dispatch `message_embedding.py:
 dispatch_message_embedding` (`.delay()`) right after EVERY `Message.
@@ -292,10 +297,8 @@ reachable through the normal authenticated list, so returning it again
 here would just be duplicating an existing capability, not adding one.
 """
 
-import asyncio
-import json
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import Sequence
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Response
@@ -314,7 +317,12 @@ from errors import ConflictError, NotFoundError, UnauthorizedError
 from follow_up_questions import generate_follow_up_questions
 from memory_retrieval import retrieve_memory_for_conversation_start
 from message_embedding import dispatch_message_embedding
-from message_processing import build_citations_for_result, citation_json, generate_assistant_reply
+from message_processing import (
+    build_citations_for_result,
+    build_message_stream,
+    citation_json,
+    generate_assistant_reply,
+)
 from models.assistant import Assistant
 from models.conversation import Conversation
 from models.message import Message
@@ -626,29 +634,9 @@ async def send_message_streaming(
     assistant: TargetAssistant,
     conversation: TargetConversation,
 ) -> StreamingResponse:
-    if conversation.status == "new":
-        transition(conversation, "active")
-
-    repo = MessageRepository(session, tenant_id)
-    user_message = await repo.create(
-        conversation_id=conversation.id,
-        role="user",
-        content=body.content,
+    assistant_message = await generate_assistant_reply(
+        session, tenant_id, assistant, conversation, body.content
     )
-    dispatch_message_embedding.delay(str(user_message.id), str(tenant_id))
-
-    result = await orchestrator.handle(
-        body.content, tenant_id=tenant_id, knowledge_base_id=assistant.knowledge_base_id
-    )
-    citations = await build_citations_for_result(session, tenant_id, result)
-
-    assistant_message = await repo.create(
-        conversation_id=conversation.id,
-        role="assistant",
-        content=result.response,
-        citations=[citation_json(c) for c in citations],
-    )
-    dispatch_message_embedding.delay(str(assistant_message.id), str(tenant_id))
 
     await write_audit_log(
         session,
@@ -657,20 +645,12 @@ async def send_message_streaming(
         resource_type="message",
         resource_id=assistant_message.id,
     )
-    # Captured by the generator below via closure -- see this module's
+    # Captured by build_message_stream via closure -- see this module's
     # own docstring for why the ORM object itself must not be touched
-    # from inside event_stream().
+    # from inside that generator.
     message_read = MessageRead.model_validate(assistant_message)
 
-    async def event_stream() -> AsyncIterator[str]:
-        words = result.response.split(" ")
-        for i, word in enumerate(words):
-            chunk = word if i == len(words) - 1 else f"{word} "
-            yield f"event: message\ndata: {json.dumps(chunk)}\n\n"
-            await asyncio.sleep(0)
-        yield f"event: done\ndata: {message_read.model_dump_json()}\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(build_message_stream(message_read), media_type="text/event-stream")
 
 
 async def get_target_message(

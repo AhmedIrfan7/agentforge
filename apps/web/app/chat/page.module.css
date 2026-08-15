@@ -1,0 +1,15 @@
+.main {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.missingAssistant {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 2rem;
+  text-align: center;
+  opacity: 0.7;
+}

@@ -1,0 +1,39 @@
+.inputBar {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border-top: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+
+.textarea {
+  flex: 1;
+  resize: none;
+  max-height: 8rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 0.6rem;
+  border: 1px solid color-mix(in srgb, var(--foreground) 20%, transparent);
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  line-height: 1.4;
+}
+
+.textarea:disabled {
+  opacity: 0.5;
+}
+
+.sendButton {
+  padding: 0.6rem 1.1rem;
+  border-radius: 0.6rem;
+  border: none;
+  background: var(--foreground);
+  color: var(--background);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sendButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

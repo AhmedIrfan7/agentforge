@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from errors import register_exception_handlers
@@ -24,6 +25,32 @@ configure_logging()
 logger = get_logger(__name__)
 
 app = FastAPI(title="AgentForge API")
+
+# Wide open, deliberately: every real JSON API route in this codebase
+# authenticates via a Bearer token attached by the caller's own JS
+# (see auth/jwt.py -- there is no cookie-based session anywhere for
+# an actual API route; routers/oauth.py's CSRF state cookie belongs to
+# a top-level browser redirect, which CORS never gates in the first
+# place). `allow_credentials=False` is what makes a wildcard origin
+# safe here -- a malicious page can point a cross-origin fetch at this
+# API, but it can never get the browser to auto-attach a real user's
+# credentials the way it could for a cookie-authenticated API. The
+# embeddable-widget deployment channel (routers/public_conversation.py,
+# step 192) needs exactly this: an anonymous visitor's browser, running
+# a widget script embedded on ANY third-party site, calling this API
+# from an origin that can never be known in advance -- the same reason
+# `apps/web`'s own real chat UI shell (step 194, a different, same-
+# origin-limited caller) surfaced the gap live in the first place: with
+# no CORS configured at all, even a same-product, first-party dev
+# server on a different localhost port was silently blocked.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 register_exception_handlers(app)
 app.include_router(auth.router)
 app.include_router(mfa.router)

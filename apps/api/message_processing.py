@@ -17,17 +17,29 @@ explains why it stays DB-free and expects a caller-supplied
 
 `generate_assistant_reply` does NOT write an audit log entry or build
 a `MessageRead` response -- callers differ there for real reasons (an
-anonymous caller has no `actor_user_id` to log; `send_message_
-streaming` builds its own SSE response instead of a plain
-`MessageRead`), so those stay each caller's own job.
-`send_message_streaming` is deliberately NOT built on top of this
-helper -- its own generator/session-lifecycle concerns (see routers/
-conversation.py's own docstring on why touching the ORM object from
-inside that generator is unsafe) are enough of a distinct shape that
-folding it in here would obscure both, not simplify either.
+anonymous caller has no `actor_user_id` to log), so those stay each
+caller's own job.
+
+`build_message_stream` (step 194) is the SSE-formatting half of what
+was originally `routers/conversation.py:send_message_streaming`'s own
+inlined body (step 180) -- persistence now goes through `generate_
+assistant_reply` there too (the same helper `send_message` already
+used), once `routers/public_conversation.py`'s own new anonymous
+streaming endpoint became a second real caller needing the identical
+word-chunked SSE shape. Takes only an already-validated `MessageRead`,
+never the ORM `Message` object -- preserves the exact safety property
+`send_message_streaming`'s own docstring already established: the
+request-scoped session commits (and, by SQLAlchemy's `expire_on_
+commit` default, expires every ORM attribute) the instant the endpoint
+function returns, well before Starlette starts iterating a
+`StreamingResponse` body, so nothing inside the generator may touch
+the ORM object itself.
 """
 
+import asyncio
+import json
 import uuid
+from collections.abc import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,7 +54,7 @@ from orchestrator import OrchestratorResult, orchestrator
 from repositories.document import DocumentRepository
 from repositories.knowledge_base import KnowledgeBaseRepository
 from repositories.message import MessageRepository
-from schemas.message import CitationRead
+from schemas.message import CitationRead, MessageRead
 
 
 def citation_json(citation: Citation) -> dict[str, object]:
@@ -116,3 +128,12 @@ async def generate_assistant_reply(
     )
     dispatch_message_embedding.delay(str(assistant_message.id), str(tenant_id))
     return assistant_message
+
+
+async def build_message_stream(message_read: MessageRead) -> AsyncIterator[str]:
+    words = message_read.content.split(" ")
+    for i, word in enumerate(words):
+        chunk = word if i == len(words) - 1 else f"{word} "
+        yield f"event: message\ndata: {json.dumps(chunk)}\n\n"
+        await asyncio.sleep(0)
+    yield f"event: done\ndata: {message_read.model_dump_json()}\n\n"
