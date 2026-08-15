@@ -8,7 +8,14 @@ packages:
 onlyBuiltDependencies:
   - sharp
 
-# Explicitly reviewed and denied — pure-JS fallback exists, no native
-# build script needed for this dependency.
+# esbuild: reviewed and allowed — postinstall only selects/downloads
+# the correct prebuilt native binary for the current platform (roadmap
+# step 202, apps/widget's own build pipeline), the same class of
+# legitimate native-binary need `sharp` already has above, not an
+# arbitrary script.
+#
+# unrs-resolver: explicitly reviewed and denied — pure-JS fallback
+# exists, no native build script needed for this dependency.
 allowBuilds:
+  esbuild: true
   unrs-resolver: false

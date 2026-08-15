@@ -4,12 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "esbuild src/index.ts --bundle --minify --format=iife --global-name=AgentForgeWidget --outfile=dist/widget.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.9.6",

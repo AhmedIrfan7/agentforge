@@ -1,0 +1,30 @@
+name: Widget Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build widget bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm --filter @agentforge/widget run build
+
+# No smoke test yet -- step 214 ("widget smoke test: loads on fixture
+# HTML page, sends message") is what needs a real fixture page and a
+# real assistant to send a message to, matching web-tests.yml's own
+# "the build job gains a real test step once there's something real to
+# run" precedent (that job itself started build-only too, until step
+# 198's e2e test landed).
