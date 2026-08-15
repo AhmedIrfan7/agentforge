@@ -9,6 +9,7 @@ from routers import (
     document,
     invitation,
     knowledge_base,
+    memory,
     mfa,
     oauth,
     organization,
@@ -34,6 +35,7 @@ app.include_router(knowledge_base.router)
 app.include_router(document.router)
 app.include_router(retrieval.router)
 app.include_router(assistant.router)
+app.include_router(memory.router)
 
 
 @app.get("/health")

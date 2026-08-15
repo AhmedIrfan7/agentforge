@@ -14,12 +14,19 @@ Computing a real importance score is deliberately NOT this step's job
 retention") owns that decision; this repository only stores and
 retrieves by whatever score a caller (eventually the Memory Agent)
 provides.
+
+As of step 169, `list_all_for_user` adds real "export my own data"
+semantics -- unlike `list_for_user`, it takes no `limit`/`min_importance`
+(a data-portability export means genuinely everything the user owns,
+not a caller-chosen page or importance cutoff) and orders
+chronologically rather than by importance, matching how a person
+actually reviews their own exported history.
 """
 
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.memory import Memory
@@ -44,6 +51,32 @@ class MemoryRepository(TenantScopedRepository[Memory]):
             .order_by(Memory.importance_score.desc(), Memory.created_at.desc())
             .limit(limit)
             .offset(offset)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def count_for_user(self, user_id: uuid.UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(Memory)
+            .where(
+                Memory.tenant_id == self.tenant_id,
+                Memory.scope == "user",
+                Memory.user_id == user_id,
+            )
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
+
+    async def list_all_for_user(self, user_id: uuid.UUID) -> Sequence[Memory]:
+        stmt = (
+            select(Memory)
+            .where(
+                Memory.tenant_id == self.tenant_id,
+                Memory.scope == "user",
+                Memory.user_id == user_id,
+            )
+            .order_by(Memory.created_at)
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()
