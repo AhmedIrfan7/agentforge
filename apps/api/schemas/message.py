@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from message_rendering import render_markdown
 
 
 class MessageCreate(BaseModel):
@@ -18,6 +20,14 @@ class MessageRead(BaseModel):
     content: str
     created_at: datetime
     updated_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def content_html(self) -> str:
+        """Roadmap step 185 -- sanitized markdown->HTML, computed fresh
+        on every serialization (see message_rendering.py's own
+        docstring for why this isn't stored/cached)."""
+        return render_markdown(self.content)
 
 
 class ConversationSearchRequest(BaseModel):

@@ -156,6 +156,9 @@ async def test_send_message_persists_both_turns_and_returns_the_assistant_reply(
         assert body["conversation_id"] == str(conversation_id)
         assert body["role"] == "assistant"
         assert body["content"]
+        # Real markdown->HTML rendering (step 185), not just a copy of
+        # the raw content.
+        assert body["content_html"] == f"<p>{body['content']}</p>"
 
         async with get_session() as session:
             await set_tenant_context(session, org_id)
