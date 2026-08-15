@@ -29,7 +29,7 @@ const CHAT_WINDOW_STYLES = `
   .header {
     padding: 12px 16px;
     font-weight: 600;
-    background: #4f46e5;
+    background: var(--af-primary-color);
     color: white;
     flex-shrink: 0;
   }
@@ -58,7 +58,7 @@ const CHAT_WINDOW_STYLES = `
     white-space: pre-wrap;
     word-break: break-word;
   }
-  .message.user .bubble { background: #4f46e5; color: white; }
+  .message.user .bubble { background: var(--af-primary-color); color: white; }
   .message.assistant .bubble { background: #f3f4f6; color: #111827; }
   .citations {
     display: flex;
@@ -92,7 +92,7 @@ const CHAT_WINDOW_STYLES = `
   .input-row button {
     border: none;
     border-radius: 8px;
-    background: #4f46e5;
+    background: var(--af-primary-color);
     color: white;
     padding: 0 14px;
     font: inherit;

@@ -17,6 +17,22 @@
 // panel's shell (position/size/shadow/base visibility), chat-window.ts
 // owns what "open" looks like internally (flex layout) and everything
 // inside it.
+//
+// As of step 206, color/font are real CSS custom properties
+// (`--af-primary-color`/`--af-font-family`), given their real,
+// per-embed values via `host.style.setProperty()` (a safe way to set
+// an arbitrary customer-supplied value -- unlike concatenating it into
+// a <style> textContent string, the CSSOM property-value API can't be
+// used to break out into new CSS rules or markup). `filter:
+// brightness()` derives a real hover shade from whatever color was
+// supplied, rather than requiring a second "hover color" the customer
+// would also have to configure. Position (bottom-right/bottom-left)
+// toggles which CSS rule set applies via a class, since which
+// property (`left` vs `right`) is even in play can't be expressed as
+// a single custom property's value. A custom logo replaces the
+// default chat-bubble icon in the CLOSED state only -- the close (X)
+// icon always shows once open, regardless of branding, so "click to
+// close" stays unambiguous.
 
 import { renderChatWindow } from "./chat-window";
 import type { WidgetConfig } from "./config";
@@ -27,16 +43,19 @@ const CLOSE_ICON =
   '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
 const STYLES = `
-  :host { all: initial; }
+  :host {
+    all: initial;
+    --af-primary-color: #4f46e5;
+    --af-font-family: system-ui, sans-serif;
+  }
   .launcher {
     position: fixed;
     bottom: 20px;
-    right: 20px;
     width: 56px;
     height: 56px;
     border-radius: 50%;
     border: none;
-    background: #4f46e5;
+    background: var(--af-primary-color);
     color: white;
     display: flex;
     align-items: center;
@@ -44,13 +63,18 @@ const STYLES = `
     cursor: pointer;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
     z-index: 2147483647;
-    font-family: system-ui, sans-serif;
+    font-family: var(--af-font-family);
+    overflow: hidden;
   }
-  .launcher:hover { background: #4338ca; }
+  .launcher:hover { filter: brightness(90%); }
+  .launcher img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
   .panel {
     position: fixed;
     bottom: 88px;
-    right: 20px;
     width: 360px;
     height: 480px;
     background: white;
@@ -59,12 +83,17 @@ const STYLES = `
     z-index: 2147483646;
     display: none;
     overflow: hidden;
+    font-family: var(--af-font-family);
   }
+  .position-right { right: 20px; left: auto; }
+  .position-left { left: 20px; right: auto; }
 `;
 
 export function mountLauncher(config: WidgetConfig): void {
   const host = document.createElement("div");
   host.id = "agentforge-widget-root";
+  host.style.setProperty("--af-primary-color", config.theme.primaryColor);
+  host.style.setProperty("--af-font-family", config.theme.fontFamily);
   document.body.appendChild(host);
 
   const shadow = host.attachShadow({ mode: "open" });
@@ -73,23 +102,47 @@ export function mountLauncher(config: WidgetConfig): void {
   style.textContent = STYLES;
   shadow.appendChild(style);
 
+  const positionClass = `position-${config.theme.position === "bottom-left" ? "left" : "right"}`;
+
   const panel = document.createElement("div");
-  panel.className = "panel";
+  panel.className = `panel ${positionClass}`;
   shadow.appendChild(panel);
   renderChatWindow(shadow, panel, config);
 
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "launcher";
+  button.className = `launcher ${positionClass}`;
   button.setAttribute("aria-label", "Open chat");
-  button.innerHTML = CHAT_ICON;
+  setClosedIcon(button, config.theme.logoUrl);
   shadow.appendChild(button);
 
   let isOpen = false;
   button.addEventListener("click", () => {
     isOpen = !isOpen;
     panel.classList.toggle("open", isOpen);
-    button.innerHTML = isOpen ? CLOSE_ICON : CHAT_ICON;
+    if (isOpen) {
+      button.innerHTML = CLOSE_ICON;
+    } else {
+      setClosedIcon(button, config.theme.logoUrl);
+    }
     button.setAttribute("aria-label", isOpen ? "Close chat" : "Open chat");
   });
+}
+
+function setClosedIcon(button: HTMLButtonElement, logoUrl: string | null): void {
+  if (!logoUrl) {
+    button.innerHTML = CHAT_ICON;
+    return;
+  }
+  const img = document.createElement("img");
+  img.src = logoUrl;
+  img.alt = "";
+  // A broken/unreachable logo URL shouldn't leave the launcher blank --
+  // fall back to the default icon the same way a missing config value
+  // already does elsewhere in this app.
+  img.addEventListener("error", () => {
+    button.innerHTML = CHAT_ICON;
+  });
+  button.innerHTML = "";
+  button.appendChild(img);
 }

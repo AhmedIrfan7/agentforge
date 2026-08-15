@@ -11,10 +11,27 @@
 // so asking the embedding site to also know and supply them would be
 // redundant, error-prone configuration this platform's own backend
 // design already made unnecessary.
+//
+// As of step 206, also resolves theme customization -- AGENTS.md's own
+// "EMBEDDABLE WIDGET" section names "colors/fonts/logo/position" among
+// its customization examples, and "support future configuration
+// through dashboard controls instead of code changes" (the embeddable
+// chatbot section) -- all four are real `data-*` attributes here,
+// config-driven rather than something a customer edits in CSS/JS.
+// Dark/light mode is deliberately NOT part of this -- that's step
+// 211's own later, real step, not this one's literal wording.
+
+export interface WidgetTheme {
+  primaryColor: string;
+  fontFamily: string;
+  logoUrl: string | null;
+  position: "bottom-right" | "bottom-left";
+}
 
 export interface WidgetConfig {
   assistantId: string;
   apiUrl: string;
+  theme: WidgetTheme;
 }
 
 // Same "default to localhost for local dev, a real deployment
@@ -23,6 +40,13 @@ export interface WidgetConfig {
 // (Milestone 11's own infrastructure/deployment work), so defaulting
 // to anything else here would be a guess, not a real default.
 const DEFAULT_API_URL = "http://localhost:8000";
+
+const DEFAULT_THEME: WidgetTheme = {
+  primaryColor: "#4f46e5",
+  fontFamily: "system-ui, sans-serif",
+  logoUrl: null,
+  position: "bottom-right",
+};
 
 function findScriptTag(): HTMLScriptElement | null {
   // document.currentScript is the reliable case: it's set for the
@@ -38,6 +62,10 @@ function findScriptTag(): HTMLScriptElement | null {
   return document.querySelector<HTMLScriptElement>("script[data-assistant-id]");
 }
 
+function resolvePosition(value: string | undefined): WidgetTheme["position"] {
+  return value === "bottom-left" ? "bottom-left" : DEFAULT_THEME.position;
+}
+
 export function loadWidgetConfig(): WidgetConfig {
   const script = findScriptTag();
   const assistantId = script?.dataset.assistantId;
@@ -49,5 +77,11 @@ export function loadWidgetConfig(): WidgetConfig {
   return {
     assistantId,
     apiUrl: script.dataset.apiUrl ?? DEFAULT_API_URL,
+    theme: {
+      primaryColor: script.dataset.primaryColor ?? DEFAULT_THEME.primaryColor,
+      fontFamily: script.dataset.fontFamily ?? DEFAULT_THEME.fontFamily,
+      logoUrl: script.dataset.logoUrl ?? DEFAULT_THEME.logoUrl,
+      position: resolvePosition(script.dataset.position),
+    },
   };
 }
