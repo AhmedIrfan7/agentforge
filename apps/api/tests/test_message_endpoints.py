@@ -159,6 +159,10 @@ async def test_send_message_persists_both_turns_and_returns_the_assistant_reply(
         # Real markdown->HTML rendering (step 185), not just a copy of
         # the raw content.
         assert body["content_html"] == f"<p>{body['content']}</p>"
+        # No documents in this KB -- no real retrieval hit, so no
+        # citations (step 187's own real test coverage for the hit
+        # case lives in test_message_citations.py).
+        assert body["citations"] == []
 
         async with get_session() as session:
             await set_tenant_context(session, org_id)

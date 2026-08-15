@@ -10,6 +10,23 @@ class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
 
 
+class CitationRead(BaseModel):
+    """Roadmap step 187 -- mirrors citations.py:Citation's own field
+    shape exactly (a genuine Pydantic twin, not a reinvention), so
+    routers/conversation.py can build real Citation objects and store
+    them as JSON-safe dicts (`.model_dump(mode="json")`) on
+    Message.citations -- see that column's own docstring for why a
+    plain Pydantic model, not the dataclass itself, is what actually
+    gets serialized into JSONB (real, checked UUID-in-JSON handling,
+    not assumed)."""
+
+    chunk_id: uuid.UUID
+    document_id: uuid.UUID
+    document_title: str
+    knowledge_base_name: str
+    section: str | None
+
+
 class MessageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -18,6 +35,7 @@ class MessageRead(BaseModel):
     conversation_id: uuid.UUID
     role: str
     content: str
+    citations: list[CitationRead]
     created_at: datetime
     updated_at: datetime
 

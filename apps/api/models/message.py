@@ -11,11 +11,11 @@ its own migration every time a new role value is ever needed.
 Deliberately minimal beyond `conversation_id`/`role`/`content` -- same
 "don't speculate about fields a real later step hasn't asked for yet"
 discipline every model in this codebase already follows (`KnowledgeBase`
-082, `Assistant` 159, `Conversation` 176). No `citations` (step 187's
-own job), no `feedback` (189's own job), no token counts (no step
-between here and 200 asks for them on a per-message basis the way
-`agents/tracing.py`'s own per-request event already covers execution
-tracing) -- each lands with the step that actually needs it.
+082, `Assistant` 159, `Conversation` 176). No `feedback` (189's own
+job), no token counts (no step between here and 200 asks for them on
+a per-message basis the way `agents/tracing.py`'s own per-request
+event already covers execution tracing) -- each lands with the step
+that actually needs it.
 
 `conversation_id` is `ondelete="CASCADE"` -- a message has no meaning
 independent of the conversation it belongs to, the same "child has no
@@ -36,13 +36,29 @@ Chunk's own docstring already established at step 108); a message
 created before that task completes is real but not yet semantically
 searchable, the same honest, real, temporary gap `search_excludes_
 chunks_without_embeddings_yet` already covers for Chunk.
+
+As of step 187, `citations` lands: JSONB, a plain `list[dict[str,
+object]]` (not a dict, unlike `Assistant.agent_configuration`/
+`Document.doc_metadata`) -- a message can genuinely cite zero, one, or
+several chunks, so a list is the honest shape, not a single dict with
+speculative keys. Defaults to `[]`, not `None` -- a user message (no
+retrieval behind it) and an assistant reply with nothing to cite are
+both real, valid "no citations" states, not "not computed yet" ones;
+`None` would conflate those. Written by `routers/conversation.py` as
+`schemas/message.py:CitationRead.model_dump(mode="json")` dicts, not
+raw `citations.py:Citation` dataclasses -- `Citation.chunk_id`/
+`document_id` are `uuid.UUID`, and neither Postgres's JSONB codec nor
+plain `json.dumps` knows how to serialize those; routing through a
+Pydantic model's own `mode="json"` dump (which converts UUIDs to
+strings automatically) sidesteps that without inventing a custom JSON
+encoder for one column.
 """
 
 import uuid
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import Computed, ForeignKey, Index
-from sqlalchemy.dialects.postgresql import TSVECTOR, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db import Base
@@ -75,3 +91,4 @@ class Message(TenantScopedEntity, TimestampMixin, Base):
     search_vector: Mapped[str] = mapped_column(
         TSVECTOR, Computed("to_tsvector('english', content)", persisted=True), nullable=False
     )
+    citations: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False, default=list)

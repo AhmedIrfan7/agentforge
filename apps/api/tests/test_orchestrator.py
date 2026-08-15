@@ -121,6 +121,7 @@ async def test_a_blank_query_short_circuits_to_an_echoed_empty_response() -> Non
             "intent": "",
             "agent_names": [],
             "response": "",
+            "chunks": [],
         }
     )
 
@@ -141,6 +142,7 @@ async def test_a_real_query_plans_to_run_the_retriever() -> None:
             "intent": "",
             "agent_names": [],
             "response": "",
+            "chunks": [],
         }
     )
 
@@ -162,7 +164,8 @@ async def test_handle_returns_no_results_message_when_nothing_matches() -> None:
         "find the refund policy", tenant_id=tenant_id, knowledge_base_id=kb_id
     )
 
-    assert result == "No results found."
+    assert result.response == "No results found."
+    assert result.chunks == []
 
 
 @pytest.mark.anyio
@@ -176,7 +179,11 @@ async def test_handle_returns_real_retrieved_chunk_text() -> None:
         "refund policy", tenant_id=tenant_id, knowledge_base_id=kb_id
     )
 
-    assert result == "Our refund policy allows returns within thirty days."
+    assert result.response == "Our refund policy allows returns within thirty days."
+    # As of step 187 -- the real chunks that fed the response, so a
+    # caller (routers/conversation.py) can build real citations.
+    assert len(result.chunks) == 1
+    assert result.chunks[0].text == "Our refund policy allows returns within thirty days."
 
 
 @pytest.mark.anyio
@@ -191,7 +198,7 @@ async def test_handle_is_scoped_to_the_given_knowledge_base() -> None:
         "refund policy", tenant_id=other_tenant_id, knowledge_base_id=other_kb_id
     )
 
-    assert result == "No results found."
+    assert result.response == "No results found."
     assert tenant_id != other_tenant_id
     assert kb_id != other_kb_id
 
@@ -218,7 +225,7 @@ async def test_handle_produces_a_full_trace_across_every_real_agent_step() -> No
             "refund policy", tenant_id=tenant_id, knowledge_base_id=kb_id
         )
 
-    assert result == "Our refund policy allows returns within thirty days."
+    assert result.response == "Our refund policy allows returns within thirty days."
     events = _agent_execution_events(logs)
     assert [e["agent_name"] for e in events] == ["planning", "retriever"]
     assert all(e["status"] == "success" for e in events)
@@ -238,6 +245,6 @@ async def test_handle_traces_planning_but_not_retriever_for_an_empty_query() -> 
             "   ", tenant_id=uuid.uuid4(), knowledge_base_id=uuid.uuid4()
         )
 
-    assert result == "   "
+    assert result.response == "   "
     events = _agent_execution_events(logs)
     assert [e["agent_name"] for e in events] == ["planning"]

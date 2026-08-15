@@ -75,9 +75,30 @@ the retrieved chunks' own raw text, not a synthesized answer -- no
 chat/generation model exists yet (steps 150+) to produce one honestly;
 surfacing the real retrieved content is the honest thing to return
 today, not a faked summary.
+
+As of step 187, `handle()` returns `OrchestratorResult` (`response`
++ `chunks: list[RetrievedChunk]`), not a bare `str` -- a real,
+motivated widening of a signature this project has otherwise kept
+deliberately narrow (step 179's own docstring explicitly declined to
+add conversation history for the identical reason: don't extend ahead
+of a step that actually needs it). Step 187 ("citation display in
+chat responses") is that step: `routers/conversation.py` needs to know
+WHICH chunks actually fed a response to build real `citations.py:
+Citation` objects, and `chunks` is the one new field that makes that
+possible without the orchestrator itself reaching into `citations.py`
+or a DB session it doesn't otherwise need (document/knowledge-base
+lookups stay the caller's job, matching that module's own "no DB
+access of its own" design). `OrchestratorState` gained the matching
+`chunks` field for the same reason `response`/`agent_names` etc. are
+graph state -- every node that can produce chunks (today, only
+`_execute_node`) sets it; every path sets it explicitly (`[]` for the
+echo/no-results cases) rather than leaving it implicit, so `handle()`
+never has to guess whether an omitted key means "none" or "not run
+yet".
 """
 
 import uuid
+from dataclasses import dataclass
 from typing import TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
@@ -104,6 +125,7 @@ class OrchestratorState(TypedDict):
     intent: str
     agent_names: list[str]
     response: str
+    chunks: list[RetrievedChunk]
 
 
 def _classify_intent(query: str) -> str:
@@ -135,15 +157,21 @@ class _RetrieverGraphAgent(Agent[str, list[RetrievedChunk]]):
             return await _retriever_agent.search_keyword(repo, self._knowledge_base_id, input)
 
 
-async def _execute_node(state: OrchestratorState) -> dict[str, str]:
+async def _execute_node(state: OrchestratorState) -> dict[str, object]:
     if "retriever" not in state["agent_names"]:
-        return {"response": state["query"]}
+        return {"response": state["query"], "chunks": []}
 
     agent = _RetrieverGraphAgent(state["tenant_id"], state["knowledge_base_id"])
     results = await traced_run(agent, state["query"])
     if not results:
-        return {"response": "No results found."}
-    return {"response": "\n\n".join(r.text for r in results)}
+        return {"response": "No results found.", "chunks": []}
+    return {"response": "\n\n".join(r.text for r in results), "chunks": results}
+
+
+@dataclass(frozen=True)
+class OrchestratorResult:
+    response: str
+    chunks: list[RetrievedChunk]
 
 
 class Orchestrator:
@@ -166,12 +194,12 @@ class Orchestrator:
 
     async def handle(
         self, query: str, *, tenant_id: uuid.UUID, knowledge_base_id: uuid.UUID
-    ) -> str:
+    ) -> OrchestratorResult:
         # ainvoke() is typed `dict[str, Any] | Any` by LangGraph itself
         # (verified live) -- cast() narrows the real, known-at-runtime
         # shape back to OrchestratorState (matching _build_graph()'s
         # own state schema) rather than letting Any leak into handle()'s
-        # own real str return type.
+        # own real return type.
         raw_result = await self._graph.ainvoke(
             {
                 "query": query,
@@ -180,10 +208,11 @@ class Orchestrator:
                 "intent": "",
                 "agent_names": [],
                 "response": "",
+                "chunks": [],
             }
         )
         result = cast(OrchestratorState, raw_result)
-        return result["response"]
+        return OrchestratorResult(response=result["response"], chunks=result["chunks"])
 
 
 # Module-level singleton for real app-wide use (step 179's message-send
