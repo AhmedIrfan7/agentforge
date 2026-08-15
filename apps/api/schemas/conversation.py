@@ -3,6 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from schemas.memory import MemoryRead
 from schemas.message import MessageRead
 
 
@@ -55,3 +56,31 @@ class AnonymousConversationRead(BaseModel):
 
     conversation_id: uuid.UUID
     access_token: str
+
+
+class ConversationClaimRequest(BaseModel):
+    """Roadmap step 193's own claim request -- the ONLY input a
+    newly-identified (real, authenticated) caller needs to supply.
+    `conversation_id` is deliberately NOT a body/path field here: the
+    anonymous session token itself already names exactly one
+    conversation (auth/jwt.py:decode_anonymous_session_token), so
+    accepting a second, independent conversation_id would just be a
+    value that has to be checked against the token's own for
+    agreement -- routers/public_conversation.py's own `get_anonymous_
+    conversation` rejected that same redundancy already."""
+
+    anonymous_token: str
+
+
+class ConversationClaimRead(BaseModel):
+    """AGENTS.md's own "USER IDENTIFICATION" section lists "Relevant
+    memories"/"Saved context" among the things a newly-identified user
+    should be reconnected with -- returned here directly in the claim
+    response rather than silently injected into a future orchestrator
+    call, since no chat UI or orchestrator signature change exists yet
+    that could consume it; a client surfaces these, the same way the
+    section's own examples read (a user-facing reconnection, not a
+    hidden prompt-engineering detail)."""
+
+    conversation: ConversationRead
+    memories: list[MemoryRead]

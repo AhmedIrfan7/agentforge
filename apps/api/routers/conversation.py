@@ -249,6 +249,47 @@ like an actual file download, not just a differently-shaped read.
 Reuses `conversation:read` -- exporting one's own conversation is a
 read action, same "same capability, different view" reasoning already
 established elsewhere in this router.
+
+`POST .../conversations/claim` (step 193, AGENTS.md's own "USER
+IDENTIFICATION" section: "when a user provides identifying
+information... the system should intelligently reconnect them with
+their previous history... relevant memories") is this router's own
+side of the anonymous-to-identified handoff step 192's public router
+made possible. Deliberately takes NO `conversation_id` path/body
+field beyond the anonymous token itself -- `auth/jwt.py:decode_
+anonymous_session_token` already names exactly one conversation, and a
+second, independently-supplied id would only exist to be checked
+against the token's own for agreement, the same redundancy `routers/
+public_conversation.py:get_anonymous_conversation` already declined to
+introduce. Requires a REAL authenticated caller (this router's normal
+JWT + RBAC + tenant context, unlike the public router) -- proving
+"who I am now" is the whole point of a claim, so this is deliberately
+NOT reachable from the unauthenticated public router at all. Rejects
+(404, not 200-with-no-op) a conversation that doesn't belong to THIS
+assistant or that already has a `user_id` -- an already-claimed or
+foreign conversation is not this caller's to reconnect with, same
+"mismatch 404s" precedent `get_target_conversation` itself already
+established. Reuses `conversation:update`, not a new permission --
+changing who owns a conversation is the same tier as renaming/pinning
+it, not a distinct capability. Does NOT touch `conversation.status` --
+claiming is purely an ownership change, not a lifecycle transition
+`conversation_state.py`'s own `VALID_TRANSITIONS` has any real state
+for. Calls `memory_retrieval.py:retrieve_memory_for_conversation_start`
+(166, unwired until this step -- its own docstring says as much) with
+the now-real `tenant_id`/`user_id` and returns the result directly in
+the response rather than threading it into `orchestrator.handle()`:
+no chat UI exists yet to consume a prompt-injected version, and
+AGENTS.md's own example list ("Relevant memories," "Saved context")
+reads as things a CLIENT surfaces to the user, not necessarily
+something silently fed into generation -- widening `handle()`'s
+signature again, so soon after step 187's own deliberate widening,
+would be speculating ahead of a step that actually needs it.
+Deliberately stays scoped to MEMORY reconnection only (this step's own
+literal name), not conversation-HISTORY reconnection (AGENTS.md's
+"Previous conversations" example) -- `list_conversations` (182)
+already provides that separately once a conversation is claimed and
+reachable through the normal authenticated list, so returning it again
+here would just be duplicating an existing capability, not adding one.
 """
 
 import asyncio
@@ -262,14 +303,16 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import write_audit_log
+from auth.jwt import TokenError, decode_anonymous_session_token
 from conversation_state import InvalidTransitionError, transition
 from dependencies.auth import get_current_user_id
 from dependencies.knowledge_base import TargetKnowledgeBase
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from embeddings.openai import OpenAIEmbeddingProvider
-from errors import ConflictError, NotFoundError
+from errors import ConflictError, NotFoundError, UnauthorizedError
 from follow_up_questions import generate_follow_up_questions
+from memory_retrieval import retrieve_memory_for_conversation_start
 from message_embedding import dispatch_message_embedding
 from message_processing import build_citations_for_result, citation_json, generate_assistant_reply
 from models.assistant import Assistant
@@ -280,7 +323,14 @@ from repositories.assistant import AssistantRepository
 from repositories.conversation import ConversationRepository
 from repositories.message import MessageRepository
 from schemas.common import Page, PaginationParams
-from schemas.conversation import ConversationExportRead, ConversationRead, ConversationUpdate
+from schemas.conversation import (
+    ConversationClaimRead,
+    ConversationClaimRequest,
+    ConversationExportRead,
+    ConversationRead,
+    ConversationUpdate,
+)
+from schemas.memory import MemoryRead
 from schemas.message import (
     ConversationSearchRequest,
     FollowUpQuestionsRead,
@@ -367,6 +417,62 @@ async def list_conversations(
         limit=pagination.limit,
         offset=pagination.offset,
         total=total,
+    )
+
+
+@router.post(
+    "/claim",
+    response_model=ConversationClaimRead,
+    dependencies=[Depends(require_permission("conversation:update"))],
+)
+async def claim_conversation(
+    body: ConversationClaimRequest,
+    session: TenantDb,
+    tenant_id: TenantId,
+    user_id: UserId,
+    assistant: TargetAssistant,
+) -> ConversationClaimRead:
+    try:
+        conversation_id = decode_anonymous_session_token(body.anonymous_token)
+    except TokenError as exc:
+        raise UnauthorizedError("Invalid or expired anonymous session.") from exc
+
+    repo = ConversationRepository(session, tenant_id)
+    conversation = await repo.get(conversation_id)
+    if (
+        conversation is None
+        or conversation.assistant_id != assistant.id
+        or conversation.user_id is not None
+    ):
+        raise NotFoundError(f"Conversation {conversation_id} not found.")
+
+    # flush()+refresh() is load-bearing here, same root cause step 189's
+    # own diagnostic already confirmed for Message.feedback_type: this
+    # row's `updated_at` (onupdate=func.now(), server-computed) is left
+    # expired once ANY flush executes this UPDATE -- unlike update_
+    # conversation/archive_conversation (which return straight through
+    # to model_validate() with no other query in between, so autoflush
+    # never fires before validation), retrieve_memory_for_conversation_
+    # start's own SELECT queries below trigger exactly that autoflush.
+    # Without refresh(), ConversationRead.model_validate() raises a real
+    # MissingGreenlet trying to lazily reload an expired attribute from
+    # Pydantic's own synchronous validation code.
+    conversation.user_id = user_id
+    await session.flush()
+    await session.refresh(conversation)
+
+    await write_audit_log(
+        session,
+        tenant_id=tenant_id,
+        action="conversation.claim",
+        resource_type="conversation",
+        resource_id=conversation.id,
+    )
+
+    memories = await retrieve_memory_for_conversation_start(session, tenant_id, user_id)
+    return ConversationClaimRead(
+        conversation=ConversationRead.model_validate(conversation),
+        memories=[MemoryRead.model_validate(m) for m in memories],
     )
 
 
