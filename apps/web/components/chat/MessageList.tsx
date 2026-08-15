@@ -1,5 +1,6 @@
 import type { ChatMessage } from "@/lib/types";
 import styles from "./MessageList.module.css";
+import { TypingIndicator } from "./TypingIndicator";
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -23,6 +24,8 @@ export function MessageList({ messages }: MessageListProps) {
               // ever reaches this client.
               dangerouslySetInnerHTML={{ __html: message.contentHtml }}
             />
+          ) : message.pending && message.content === "" ? (
+            <TypingIndicator />
           ) : (
             <div className={styles.content}>
               {message.content}
