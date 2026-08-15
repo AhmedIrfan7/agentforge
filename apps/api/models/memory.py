@@ -1,0 +1,61 @@
+"""Memory model (roadmap step 162, Milestone 5) -- the long-term,
+Postgres-backed half of this codebase's memory system. AGENTS.md's own
+"MEMORY ARCHITECTURE"/"MEMORY REQUIREMENTS" sections name several
+memory types (short-term, long-term, user, session, organization,
+assistant, workspace, agent) -- step 162's own parenthetical scopes
+this model tightly to exactly five of them: short-term/long-term (a
+persistence-tier column) and user/organization/session (a
+who-does-this-belong-to column). Assistant/workspace/agent memory
+aren't part of this step's own literal wording and have no real
+caller yet.
+
+`memory_type` genuinely supports both "short_term" and "long_term" as
+values, but only "long_term" is ever written by real code today --
+step 163's own "Redis-backed short-term memory store" is a
+conversation-scoped, entirely separate Redis mechanism that never
+touches this table; nothing in this codebase creates a Postgres row
+tagged "short_term" yet. The column exists honestly as the full, real
+taxonomy this subsystem's design commits to, not a speculative guess
+-- same "field exists, only some values are currently reachable"
+precedent `models/document.py`'s own `chunking_strategy_source`
+already established.
+
+`scope` distinguishes who a memory belongs to: "user" (`user_id`
+populated), "session" (`session_id` populated), or "organization"
+(neither -- `tenant_id`, already required on every row, already
+identifies the organization; no second column needed). `session_id`
+is deliberately NOT a foreign key: no Conversation/ConversationSession
+model exists yet (Milestone 6, "Conversation engine") -- this is a
+real, honestly-unconstrained column ahead of the table it will
+eventually reference, the same "field lands ahead of its full wiring,
+documented as a real gap" precedent `AuditLog.actor_user_id` already
+established for Milestone 2 before auth existed.
+
+No `importance_score` here -- step 164's own parenthetical
+("Postgres-backed long-term memory store (importance-scored)") makes
+that column's owner explicit; speculating about its shape (a raw
+float? a category? who computes it?) before that step exists would be
+designing against a guess, the same restraint `KnowledgeBase`'s own
+docstring already applied to its own deferred fields.
+"""
+
+import uuid
+
+from sqlalchemy import ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from db import Base
+from models.mixins import TenantScopedEntity, TimestampMixin
+
+
+class Memory(TenantScopedEntity, TimestampMixin, Base):
+    __tablename__ = "memories"
+
+    scope: Mapped[str] = mapped_column(nullable=False)
+    memory_type: Mapped[str] = mapped_column(nullable=False, default="long_term")
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
+    session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    content: Mapped[str] = mapped_column(nullable=False)

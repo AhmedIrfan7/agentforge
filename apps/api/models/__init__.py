@@ -9,6 +9,7 @@ from models.document_version import DocumentVersion
 from models.invitation import Invitation
 from models.knowledge_base import KnowledgeBase
 from models.membership import Membership
+from models.memory import Memory
 from models.mfa_backup_code import MfaBackupCode
 from models.oauth_identity import OAuthIdentity
 from models.organization import Organization
@@ -29,6 +30,7 @@ __all__ = [
     "Invitation",
     "KnowledgeBase",
     "Membership",
+    "Memory",
     "MfaBackupCode",
     "OAuthIdentity",
     "Organization",
