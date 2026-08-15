@@ -31,12 +31,15 @@ eventually reference, the same "field lands ahead of its full wiring,
 documented as a real gap" precedent `AuditLog.actor_user_id` already
 established for Milestone 2 before auth existed.
 
-No `importance_score` here -- step 164's own parenthetical
-("Postgres-backed long-term memory store (importance-scored)") makes
-that column's owner explicit; speculating about its shape (a raw
-float? a category? who computes it?) before that step exists would be
-designing against a guess, the same restraint `KnowledgeBase`'s own
-docstring already applied to its own deferred fields.
+As of step 164, `importance_score` lands: a plain `float`, app-level
+convention 0.0 (negligible) to 1.0 (critical), no DB `CHECK` constraint
+-- same "convention, not a hard constraint" choice `scope`/
+`memory_type` already made rather than a Postgres enum. Defaults to
+0.5 (neutral) since no real scorer exists yet -- step 165's own job
+("Memory Agent logic: decide what deserves long-term retention") is to
+compute a real score before a memory is even created, not to leave
+this default in place; the default only matters for whatever creates a
+`Memory` row before that logic exists (today, only tests).
 """
 
 import uuid
@@ -59,3 +62,4 @@ class Memory(TenantScopedEntity, TimestampMixin, Base):
     )
     session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     content: Mapped[str] = mapped_column(nullable=False)
+    importance_score: Mapped[float] = mapped_column(nullable=False, default=0.5)
