@@ -56,6 +56,7 @@ celery_app.conf.update(
         "vector_maintenance",
         "memory_summarization",
         "memory_policy",
+        "message_embedding",
     ),
 )
 

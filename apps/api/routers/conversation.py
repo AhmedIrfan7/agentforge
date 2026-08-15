@@ -113,6 +113,32 @@ ever starts iterating a `StreamingResponse`'s body. Reading ORM
 attributes from inside the generator would race that commit against
 an already-closed session; capturing an already-validated Pydantic
 model by closure sidesteps the issue entirely.
+
+Both message-send endpoints dispatch `message_embedding.py:
+dispatch_message_embedding` (`.delay()`) right after EVERY `Message.
+create()` -- both the user's turn and the assistant's reply, since
+either kind of turn needs to become semantically searchable.
+
+`/search/keyword` and `/search/semantic` (step 183) are two separate
+endpoints, not one endpoint with a `mode=` parameter -- same "two
+genuinely different mechanisms, not one abstraction" precedent
+routers/retrieval.py's own dense/keyword/hybrid split already
+established (confirmed there at step 118's own design). Both reuse
+`conversation:read`, not a new permission -- searching one's own
+conversation history is a read action on that same resource, same
+"same capability, different view" reasoning routers/retrieval.py's own
+reuse of `knowledge_base:read` already set. `search_semantic`
+constructs its own `OpenAIEmbeddingProvider()` singleton
+(`_embedding_provider`, module-level, same "each consuming
+module gets its own instance" pattern `message_embedding.py`'s own
+docstring explains) and computes the QUERY embedding inline,
+synchronously -- the same real, live embedding call `routers/
+retrieval.py:dense_search` already makes at request time. In an
+environment with no real `OPENAI_API_KEY` (documented at steps
+107/108/111-114/117/120-122), this fails closed with a plain 500, the
+same accepted, honest gap `dense_search` already has; `search_keyword`
+has no such dependency and works for real in every environment,
+including this one.
 """
 
 import asyncio
@@ -131,7 +157,9 @@ from dependencies.auth import get_current_user_id
 from dependencies.knowledge_base import TargetKnowledgeBase
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
+from embeddings.openai import OpenAIEmbeddingProvider
 from errors import NotFoundError
+from message_embedding import dispatch_message_embedding
 from models.assistant import Assistant
 from models.conversation import Conversation
 from orchestrator import orchestrator
@@ -140,7 +168,12 @@ from repositories.conversation import ConversationRepository
 from repositories.message import MessageRepository
 from schemas.common import Page, PaginationParams
 from schemas.conversation import ConversationRead
-from schemas.message import MessageCreate, MessageRead
+from schemas.message import (
+    ConversationSearchRequest,
+    MessageCreate,
+    MessageRead,
+    MessageSearchResultRead,
+)
 
 router = APIRouter(
     prefix=(
@@ -153,6 +186,8 @@ router = APIRouter(
 TenantDb = Annotated[AsyncSession, Depends(get_tenant_db)]
 TenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
 UserId = Annotated[uuid.UUID, Depends(get_current_user_id)]
+
+_embedding_provider = OpenAIEmbeddingProvider()
 
 
 async def get_target_assistant(
@@ -257,11 +292,12 @@ async def send_message(
         transition(conversation, "active")
 
     repo = MessageRepository(session, tenant_id)
-    await repo.create(
+    user_message = await repo.create(
         conversation_id=conversation.id,
         role="user",
         content=body.content,
     )
+    dispatch_message_embedding.delay(str(user_message.id), str(tenant_id))
 
     response_text = await orchestrator.handle(
         body.content, tenant_id=tenant_id, knowledge_base_id=assistant.knowledge_base_id
@@ -272,6 +308,7 @@ async def send_message(
         role="assistant",
         content=response_text,
     )
+    dispatch_message_embedding.delay(str(assistant_message.id), str(tenant_id))
 
     await write_audit_log(
         session,
@@ -298,11 +335,12 @@ async def send_message_streaming(
         transition(conversation, "active")
 
     repo = MessageRepository(session, tenant_id)
-    await repo.create(
+    user_message = await repo.create(
         conversation_id=conversation.id,
         role="user",
         content=body.content,
     )
+    dispatch_message_embedding.delay(str(user_message.id), str(tenant_id))
 
     response_text = await orchestrator.handle(
         body.content, tenant_id=tenant_id, knowledge_base_id=assistant.knowledge_base_id
@@ -313,6 +351,7 @@ async def send_message_streaming(
         role="assistant",
         content=response_text,
     )
+    dispatch_message_embedding.delay(str(assistant_message.id), str(tenant_id))
 
     await write_audit_log(
         session,
@@ -335,3 +374,54 @@ async def send_message_streaming(
         yield f"event: done\ndata: {message_read.model_dump_json()}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.post(
+    "/search/keyword",
+    response_model=list[MessageSearchResultRead],
+    dependencies=[Depends(require_permission("conversation:read"))],
+)
+async def search_conversations_keyword(
+    body: ConversationSearchRequest,
+    session: TenantDb,
+    tenant_id: TenantId,
+    user_id: UserId,
+    assistant: TargetAssistant,
+) -> list[MessageSearchResultRead]:
+    repo = MessageRepository(session, tenant_id)
+    results = await repo.search_keyword(assistant.id, user_id, body.query, top_k=body.top_k)
+    return [
+        MessageSearchResultRead(
+            message_id=r.message_id,
+            conversation_id=r.conversation_id,
+            content=r.content,
+            score=r.score,
+        )
+        for r in results
+    ]
+
+
+@router.post(
+    "/search/semantic",
+    response_model=list[MessageSearchResultRead],
+    dependencies=[Depends(require_permission("conversation:read"))],
+)
+async def search_conversations_semantic(
+    body: ConversationSearchRequest,
+    session: TenantDb,
+    tenant_id: TenantId,
+    user_id: UserId,
+    assistant: TargetAssistant,
+) -> list[MessageSearchResultRead]:
+    vectors = await _embedding_provider.embed([body.query])
+    repo = MessageRepository(session, tenant_id)
+    results = await repo.search_semantic(assistant.id, user_id, vectors[0], top_k=body.top_k)
+    return [
+        MessageSearchResultRead(
+            message_id=r.message_id,
+            conversation_id=r.conversation_id,
+            content=r.content,
+            score=r.score,
+        )
+        for r in results
+    ]

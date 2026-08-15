@@ -21,23 +21,57 @@ tracing) -- each lands with the step that actually needs it.
 independent of the conversation it belongs to, the same "child has no
 reason to outlive its parent" reasoning `Assistant.knowledge_base_id`
 and `Memory.session_id` (as of 176) both already established.
+
+As of step 183, `embedding`/`search_vector` land -- exactly
+`models/chunk.py`'s own two-mechanism shape (nullable `pgvector.
+sqlalchemy.Vector(1536)` for semantic search, a DB-`Computed` tsvector
+for keyword search, same ivfflat-cosine / GIN index pair), reused
+because step 183's own literal wording ("conversation search endpoint
+(keyword+semantic)") is the identical two-mechanism problem Chunk
+already solved -- no reason to invent a different shape for the same
+problem one table over. `embedding` starts `None` (computed
+asynchronously by `message_embedding.py`, dispatched right after a
+message is created, same "exists before its embedding does" precedent
+Chunk's own docstring already established at step 108); a message
+created before that task completes is real but not yet semantically
+searchable, the same honest, real, temporary gap `search_excludes_
+chunks_without_embeddings_yet` already covers for Chunk.
 """
 
 import uuid
 
-from sqlalchemy import ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import Computed, ForeignKey, Index
+from sqlalchemy.dialects.postgresql import TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db import Base
 from models.mixins import TenantScopedEntity, TimestampMixin
 
+EMBEDDING_DIMENSIONS = 1536
+
 
 class Message(TenantScopedEntity, TimestampMixin, Base):
     __tablename__ = "messages"
+    __table_args__ = (
+        Index(
+            "ix_messages_embedding_ivfflat",
+            "embedding",
+            postgresql_using="ivfflat",
+            postgresql_with={"lists": 100},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index("ix_messages_search_vector_gin", "search_vector", postgresql_using="gin"),
+    )
 
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )
     role: Mapped[str] = mapped_column(nullable=False)
     content: Mapped[str] = mapped_column(nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(EMBEDDING_DIMENSIONS), nullable=True
+    )
+    search_vector: Mapped[str] = mapped_column(
+        TSVECTOR, Computed("to_tsvector('english', content)", persisted=True), nullable=False
+    )
