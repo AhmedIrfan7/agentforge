@@ -1,6 +1,8 @@
-"""Unit tests for message_rendering.py (roadmap step 185). Pure
+"""Unit tests for message_rendering.py (roadmap steps 185-186). Pure
 function tests, no DB needed.
 """
+
+import pytest
 
 from message_rendering import render_markdown
 
@@ -43,15 +45,41 @@ def test_strips_an_inline_event_handler_attribute() -> None:
     assert "onerror" not in html
 
 
-def test_fenced_code_blocks_are_not_rendered_yet() -> None:
-    """Step 186's own job -- no extensions are enabled here, so a
-    fenced code block renders as plain markdown-untouched text inside
-    a paragraph, not a real <pre><code> block."""
-    html = render_markdown("```\nsome code\n```")
-    assert "<pre>" not in html
+def test_renders_a_plain_fenced_code_block() -> None:
+    html = render_markdown("```\nprint(1)\n```")
+    assert "<pre><code>" in html
+    assert "print(1)" in html
 
 
-def test_tables_are_not_rendered_yet() -> None:
-    """Step 186's own job -- table syntax passes through unrendered."""
+def test_renders_a_fenced_code_block_and_preserves_the_language_class() -> None:
+    html = render_markdown("```python\nprint(1)\n```")
+    assert '<code class="language-python">' in html
+
+
+def test_renders_a_table() -> None:
     html = render_markdown("| a | b |\n|---|---|\n| 1 | 2 |")
-    assert "<table>" not in html
+    assert "<table>" in html
+    assert "<th>a</th>" in html
+    assert "<td>1</td>" in html
+
+
+def test_inline_code_gets_no_class_attribute() -> None:
+    html = render_markdown("Some text with `inline code` in it")
+    assert "<code>inline code</code>" in html
+    assert "class=" not in html
+
+
+def test_the_language_prefix_filter_rejects_a_non_language_class_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real defense in depth, not decorative -- proves the filter
+    itself rejects a class value that doesn't start with "language-",
+    independent of whether Python-Markdown's own fence parser would
+    ever actually produce one (it doesn't, confirmed live in this
+    module's own docstring)."""
+    monkeypatch.setattr(
+        "message_rendering.markdown.markdown",
+        lambda content, extensions: '<code class="evil-payload">x</code>',
+    )
+    html = render_markdown("irrelevant, markdown.markdown is monkeypatched above")
+    assert "class=" not in html
