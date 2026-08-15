@@ -6,6 +6,7 @@ from logging_config import configure_logging, get_logger
 from routers import (
     assistant,
     auth,
+    conversation,
     document,
     invitation,
     knowledge_base,
@@ -35,6 +36,7 @@ app.include_router(knowledge_base.router)
 app.include_router(document.router)
 app.include_router(retrieval.router)
 app.include_router(assistant.router)
+app.include_router(conversation.router)
 app.include_router(memory.router)
 
 
