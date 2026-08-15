@@ -1,9 +1,17 @@
-"""Conversation-create + message-send endpoints (roadmap steps 178-179),
+"""Conversation-create + message-send endpoints (roadmap steps 178-180),
 nested four/five levels under organization (.../assistants/
 {assistant_id}/conversations[/{conversation_id}/messages]) -- one/two
 levels deeper than routers/assistant.py's own nesting, same "mirror
 the product hierarchy" convention every nested router in this codebase
 already follows.
+
+As of step 181, both message-send endpoints transition a `new`
+conversation to `active` (via `conversation_state.py:transition()`) the
+first time a message is sent into it -- the one real, automatic state
+change this codebase can honestly trigger today; see that module's own
+docstring and `models/conversation.py`'s for why `waiting`/
+`processing`/`completed`/`archived` stay real, legal, but currently
+unreached states rather than something faked a trigger for here.
 
 Conversation-create takes no request body -- every field a
 Conversation needs (`assistant_id` from the URL, `user_id` from the
@@ -107,6 +115,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import write_audit_log
+from conversation_state import transition
 from dependencies.auth import get_current_user_id
 from dependencies.knowledge_base import TargetKnowledgeBase
 from dependencies.rbac import require_permission
@@ -207,6 +216,9 @@ async def send_message(
     assistant: TargetAssistant,
     conversation: TargetConversation,
 ) -> MessageRead:
+    if conversation.status == "new":
+        transition(conversation, "active")
+
     repo = MessageRepository(session, tenant_id)
     await repo.create(
         conversation_id=conversation.id,
@@ -245,6 +257,9 @@ async def send_message_streaming(
     assistant: TargetAssistant,
     conversation: TargetConversation,
 ) -> StreamingResponse:
+    if conversation.status == "new":
+        transition(conversation, "active")
+
     repo = MessageRepository(session, tenant_id)
     await repo.create(
         conversation_id=conversation.id,

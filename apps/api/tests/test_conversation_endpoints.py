@@ -157,6 +157,7 @@ async def test_create_conversation_as_org_owner() -> None:
         assert body["tenant_id"] == str(org_id)
         assert body["assistant_id"] == str(assistant_id)
         assert body["user_id"] is not None
+        assert body["status"] == "new"
 
         async with get_session() as session:
             await set_tenant_context(session, org_id)

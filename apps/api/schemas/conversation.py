@@ -11,5 +11,6 @@ class ConversationRead(BaseModel):
     tenant_id: uuid.UUID
     assistant_id: uuid.UUID
     user_id: uuid.UUID | None
+    status: str
     created_at: datetime
     updated_at: datetime

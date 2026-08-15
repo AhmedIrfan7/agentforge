@@ -174,6 +174,13 @@ async def test_send_message_persists_both_turns_and_returns_the_assistant_reply(
                 select(AuditLog).where(AuditLog.action == "message.create")
             )
             assert audit_result.scalar_one_or_none() is not None
+
+            # The conversation started "new" (178) -- the first message
+            # sent into it is the one real, automatic status transition
+            # this codebase triggers today (181).
+            conversation = await session.get(Conversation, conversation_id)
+            assert conversation is not None
+            assert conversation.status == "active"
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)

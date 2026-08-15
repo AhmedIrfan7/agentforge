@@ -32,6 +32,27 @@ one) -- both land with the step that actually needs them.
 key in this same step's migration -- the exact retrofit that model's
 own step-162 docstring committed to once this table existed, not new
 scope invented here.
+
+As of step 181, `status` lands: the real, full six-value taxonomy the
+roadmap step itself names ("new/active/waiting/processing/completed/
+archived"), plain `str` not a Postgres enum -- same "convention, not a
+hard DB constraint" choice `Memory.scope`/`memory_type` already made.
+Real transition validation lives in `conversation_state.py`, not on
+this model -- same "column here, real logic lives in its own module"
+split `Memory.importance_score` (164) and `agents/memory.py:
+MemoryAgent` (165) already established. Only `new` -> `active` (first
+message sent) is wired into a real caller today
+(`routers/conversation.py`); `waiting`/`processing`/`completed` are
+real, legal states with no current writer -- `waiting` needs a
+human-handoff/clarification mechanism this codebase doesn't have yet,
+`processing` would need either background execution or a genuinely
+safe intermediate-commit pattern inside a request-scoped session
+(neither asked for by this step, and doing it carelessly is exactly
+the class of bug steps 072/074/090 already found live), and
+`completed` has no product signal for "this conversation is done" yet
+-- `archived` is step 184's own explicit job. Same "field exists for
+the real, full taxonomy; only some values are currently reachable"
+precedent `Memory.memory_type`'s own "short_term" value already set.
 """
 
 import uuid
@@ -53,3 +74,4 @@ class Conversation(TenantScopedEntity, TimestampMixin, Base):
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    status: Mapped[str] = mapped_column(nullable=False, default="new")
