@@ -62,12 +62,48 @@ codebase). Unlike `assistant:create`/`knowledge_base:create`
 continuing a conversation is core product USE, not configuration, so
 it belongs to every role that isn't purely read-only or explicitly
 permissionless.
+
+`/messages/stream` (step 180) is a separate endpoint from `/messages`,
+not the same route content-negotiated on an `Accept` header or a
+`stream: true` body flag -- SSE's response shape (`text/event-stream`,
+no `response_model`) is genuinely different from `/messages`'s tested
+JSON contract, and FastAPI's `response_model` validation doesn't mix
+cleanly with a `StreamingResponse` return. Deliberately honest about
+what's actually being streamed: `orchestrator.handle()` still computes
+the FULL response before this endpoint ever runs (no roadmap step
+through 200 asks for token-level streaming out of the orchestrator/LLM
+layer itself) -- what this step delivers is the real, correct SSE
+TRANSPORT (a genuinely incremental, chunked HTTP response a browser's
+`EventSource`/`fetch` can consume progressively today), word-chunked
+for a realistic typing effect, with a real `await asyncio.sleep(0)`
+between chunks so Starlette actually flushes each one rather than
+coalescing the whole body into a single write. A future token-
+streaming generation source can plug into this same transport without
+changing the client contract. Both the user's and the assistant's
+messages are still persisted in full via the normal ORM/session path
+-- streaming only changes how the FINAL response is delivered to this
+one caller, not what's stored.
+
+The response's `assistant_message` ORM object is converted to a plain
+`MessageRead` (`message_read`) BEFORE the generator closure is built,
+never touched from inside `event_stream()` itself -- `get_tenant_db`
+commits (and, by SQLAlchemy's `expire_on_commit` default, expires
+every attribute on every object tracked by that session) the instant
+this endpoint function returns, which happens well before Starlette
+ever starts iterating a `StreamingResponse`'s body. Reading ORM
+attributes from inside the generator would race that commit against
+an already-closed session; capturing an already-validated Pydantic
+model by closure sidesteps the issue entirely.
 """
 
+import asyncio
+import json
 import uuid
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import write_audit_log
@@ -196,3 +232,54 @@ async def send_message(
         resource_id=assistant_message.id,
     )
     return MessageRead.model_validate(assistant_message)
+
+
+@router.post(
+    "/{conversation_id}/messages/stream",
+    dependencies=[Depends(require_permission("message:create"))],
+)
+async def send_message_streaming(
+    body: MessageCreate,
+    session: TenantDb,
+    tenant_id: TenantId,
+    assistant: TargetAssistant,
+    conversation: TargetConversation,
+) -> StreamingResponse:
+    repo = MessageRepository(session, tenant_id)
+    await repo.create(
+        conversation_id=conversation.id,
+        role="user",
+        content=body.content,
+    )
+
+    response_text = await orchestrator.handle(
+        body.content, tenant_id=tenant_id, knowledge_base_id=assistant.knowledge_base_id
+    )
+
+    assistant_message = await repo.create(
+        conversation_id=conversation.id,
+        role="assistant",
+        content=response_text,
+    )
+
+    await write_audit_log(
+        session,
+        tenant_id=tenant_id,
+        action="message.create",
+        resource_type="message",
+        resource_id=assistant_message.id,
+    )
+    # Captured by the generator below via closure -- see this module's
+    # own docstring for why the ORM object itself must not be touched
+    # from inside event_stream().
+    message_read = MessageRead.model_validate(assistant_message)
+
+    async def event_stream() -> AsyncIterator[str]:
+        words = response_text.split(" ")
+        for i, word in enumerate(words):
+            chunk = word if i == len(words) - 1 else f"{word} "
+            yield f"event: message\ndata: {json.dumps(chunk)}\n\n"
+            await asyncio.sleep(0)
+        yield f"event: done\ndata: {message_read.model_dump_json()}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
