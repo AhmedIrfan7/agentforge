@@ -93,3 +93,11 @@ class MessageSearchResultRead(BaseModel):
     conversation_id: uuid.UUID
     content: str
     score: float
+
+
+class FollowUpQuestionsRead(BaseModel):
+    """Roadmap step 190 -- not persisted anywhere (see follow_up_
+    questions.py's own docstring for why), so this is the whole
+    response shape, no id/timestamps."""
+
+    questions: list[str]

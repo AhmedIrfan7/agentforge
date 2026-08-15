@@ -216,6 +216,15 @@ sub-resource" convention rather than `ConversationUpdate`'s multi-
 field `model_fields_set` partial-update shape, which exists
 specifically for resources with MULTIPLE independent optional fields
 -- feedback has exactly one.
+
+`POST .../{conversation_id}/messages/{message_id}/follow-up-questions`
+(step 190) calls `follow_up_questions.py:generate_follow_up_questions`
+-- a real LLM call, see that module's own docstring for why it's a
+separate endpoint rather than something computed inline during
+message-send (keeping that endpoint's own "works in every environment"
+property intact) and why nothing is persisted. Reuses `get_target_
+message`/`get_preceding_user_message`, the same "find the real query
+this reply answers" building block `regenerate` already established.
 """
 
 import asyncio
@@ -238,6 +247,7 @@ from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from embeddings.openai import OpenAIEmbeddingProvider
 from errors import ConflictError, NotFoundError
+from follow_up_questions import generate_follow_up_questions
 from message_embedding import dispatch_message_embedding
 from models.assistant import Assistant
 from models.conversation import Conversation
@@ -253,6 +263,7 @@ from schemas.conversation import ConversationRead, ConversationUpdate
 from schemas.message import (
     CitationRead,
     ConversationSearchRequest,
+    FollowUpQuestionsRead,
     MessageCreate,
     MessageFeedbackCreate,
     MessageRead,
@@ -650,6 +661,26 @@ async def clear_message_feedback(
         resource_type="message",
         resource_id=message.id,
     )
+
+
+@router.post(
+    "/{conversation_id}/messages/{message_id}/follow-up-questions",
+    response_model=FollowUpQuestionsRead,
+    dependencies=[Depends(require_permission("message:create"))],
+)
+async def generate_message_follow_up_questions(
+    session: TenantDb,
+    tenant_id: TenantId,
+    conversation: TargetConversation,
+    message: TargetMessage,
+) -> FollowUpQuestionsRead:
+    repo = MessageRepository(session, tenant_id)
+    user_message = await repo.get_preceding_user_message(conversation.id, before=message.created_at)
+    if user_message is None:
+        raise NotFoundError(f"No preceding user message found for message {message.id}.")
+
+    questions = await generate_follow_up_questions(user_message.content, message.content)
+    return FollowUpQuestionsRead(questions=questions)
 
 
 @router.post(
