@@ -33,6 +33,12 @@ becomes a `Memory` row, not a second, independently invented rule.
 attempt either way (retained or not) -- the raw turns have been
 processed once summarized; keeping them around risks re-summarizing
 the same content on a later dispatch.
+
+As of step 168, a retained summary's `expires_at` comes from
+`memory_policy.py:compute_expiration`, fed the same `importance_score`
+`MemoryAgent`'s own decision already computed -- one real policy
+governs every `Memory` row this codebase writes, not a second,
+independently invented expiration rule for summaries specifically.
 """
 
 import asyncio
@@ -44,6 +50,7 @@ from celery_app import celery_app
 from db import get_worker_session, set_tenant_context
 from llm.base import LLMProvider, Message
 from llm.openai import OpenAIProvider
+from memory_policy import compute_expiration
 from repositories.memory import MemoryRepository
 from short_term_memory import clear, get_recent_turns
 
@@ -75,6 +82,7 @@ async def _run_memory_summarization(session_id: uuid.UUID, tenant_id: uuid.UUID)
                 session_id=session_id,
                 content=response.content,
                 importance_score=decision.importance_score,
+                expires_at=compute_expiration(decision.importance_score),
             )
             await session.commit()
 

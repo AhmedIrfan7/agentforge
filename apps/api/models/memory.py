@@ -40,11 +40,23 @@ convention 0.0 (negligible) to 1.0 (critical), no DB `CHECK` constraint
 compute a real score before a memory is even created, not to leave
 this default in place; the default only matters for whatever creates a
 `Memory` row before that logic exists (today, only tests).
+
+As of step 168, `expires_at` lands: nullable, because
+`memory_policy.py:compute_expiration`'s own real policy leaves it
+`None` for high-importance memories -- "not everything deserves
+permanent memory" (AGENTS.md's own "MEMORY LIFECYCLE" section) cuts
+both ways, and something genuinely important should stay permanent,
+not force-expire on a fixed schedule regardless of value. Computing a
+real value is that policy module's job, not this column's -- same
+"column here, real logic lives in its own module" split
+`importance_score` (164) and `agents/memory.py:MemoryAgent` (165)
+already established.
 """
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey
+from sqlalchemy import DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -63,3 +75,4 @@ class Memory(TenantScopedEntity, TimestampMixin, Base):
     session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     content: Mapped[str] = mapped_column(nullable=False)
     importance_score: Mapped[float] = mapped_column(nullable=False, default=0.5)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
