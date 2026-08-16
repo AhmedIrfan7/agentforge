@@ -1,0 +1,54 @@
+.loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(128, 128, 128, 0.8);
+}
+
+.shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.brand {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.navSpacer {
+  flex: 1;
+}
+
+.userEmail {
+  font-size: 0.875rem;
+  color: rgba(128, 128, 128, 0.9);
+}
+
+.logoutButton {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.logoutButton:hover {
+  filter: brightness(90%);
+}
+
+.content {
+  flex: 1;
+  padding: 24px;
+}

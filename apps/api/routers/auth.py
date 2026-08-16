@@ -23,6 +23,7 @@ from auth.jwt import (
 from auth.passwords import hash_password, needs_rehash, verify_password
 from auth.verification import generate_verification_token, hash_verification_token
 from config import settings
+from dependencies.auth import get_current_user_id
 from dependencies.db import get_db
 from errors import ConflictError, UnauthorizedError
 from models.user import User
@@ -118,6 +119,17 @@ async def signup(
         raise ConflictError(f"An account with email '{body.email}' already exists.") from exc
 
     await _send_verification_email(session, user.id, user.email)
+    return UserRead.model_validate(user)
+
+
+@router.get("/me", response_model=UserRead)
+async def get_me(
+    user_id: Annotated[uuid.UUID, Depends(get_current_user_id)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> UserRead:
+    user = await UserRepository(session).get(user_id)
+    if user is None:
+        raise UnauthorizedError("Invalid or expired token.")
     return UserRead.model_validate(user)
 
 

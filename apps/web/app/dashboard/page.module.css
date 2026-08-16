@@ -1,0 +1,15 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.heading {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.subtext {
+  color: rgba(128, 128, 128, 0.9);
+  font-size: 0.9375rem;
+}
