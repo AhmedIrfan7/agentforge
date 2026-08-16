@@ -25,12 +25,19 @@
 // `loadWidgetConfig` verbatim -- this is the one place generating text
 // FOR that consumer, so drifting from its exact attribute names would
 // silently produce a broken embed snippet.
+//
+// Real gap found+fixed while writing docs/embedding.md (215): this
+// module predates config.ts's own `colorScheme` addition (211) and had
+// silently never been updated to emit `data-color-scheme` -- caught
+// while cross-checking this file's attribute list against config.ts's
+// real, current one before documenting it as a customer-facing option.
 
 export interface EmbedTheme {
   primaryColor?: string;
   fontFamily?: string;
   logoUrl?: string;
   position?: "bottom-right" | "bottom-left";
+  colorScheme?: "auto" | "light" | "dark";
 }
 
 export interface EmbedCodeOptions {
@@ -56,6 +63,7 @@ export function generateEmbedCode(options: EmbedCodeOptions): string {
     attribute("data-font-family", options.theme?.fontFamily),
     attribute("data-logo-url", options.theme?.logoUrl),
     attribute("data-position", options.theme?.position),
+    attribute("data-color-scheme", options.theme?.colorScheme),
     attribute("src", options.widgetScriptUrl),
   ].filter((value): value is string => value !== null);
 

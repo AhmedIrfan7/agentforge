@@ -4,7 +4,7 @@ This document describes the system **as implemented**, not as aspired to — it 
 
 ## Status
 
-Milestone 6 (Conversation Engine) complete; Milestone 7 (Embeddable Widget) next. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
+Milestone 7 (Embeddable Widget) complete; Milestone 8 (Voice Platform) next. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
 
 ## Repository layout
 
@@ -238,7 +238,31 @@ A real `/chat?assistantId=<id>` page — message list, input, a genuine SSE-cons
 
 ## Embeddable widget
 
-_To be filled in as Milestone 7 lands._
+`apps/widget` — vanilla TypeScript, zero framework (ADR-0001), bundled to a single minified IIFE (`esbuild`) a customer loads via one `<script>` tag. Deliberately talks only to the conversation engine's [anonymous door](#anonymous-access-embeddable-widget-channel) — the same public router `apps/web`'s own chat page uses, not a separate integration.
+
+### Config and mounting
+
+`src/config.ts:loadWidgetConfig` reads the embed `<script>` tag's own `data-*` attributes (`document.currentScript`, falling back to `querySelector('script[data-assistant-id]')` for async/deferred embeds) — `data-assistant-id` is the one required identifier; org/workspace/knowledge base are all resolved server-side from it. `src/launcher.ts:mountLauncher` mounts into a real Shadow DOM root (`attachShadow({mode:"open"})`, `:host{all:initial}`) for genuine CSS isolation from whatever host page it's dropped into — a hard requirement for this product class, not speculative isolation. Theme (`primaryColor`/`fontFamily`/`logoUrl`/`position`/`colorScheme`) is real CSS custom properties set via `host.style.setProperty()`, safe against a customer-supplied value being used to break out into new CSS. `src/chat-window.ts:renderChatWindow` is the vanilla-DOM functional equivalent of `apps/web`'s own React `ChatShell`/`MessageList` — same message list/streaming/citation behavior, sharing wire-format types and the anonymous-conversation API client with `apps/web` through `packages/shared` (promoted there once `apps/widget` became a second real consumer, not built shared from the start).
+
+### Theming and responsiveness
+
+Dark/light mode (`colorScheme: "auto"|"light"|"dark"`) follows the visitor's real `prefers-color-scheme` by default; only structural surfaces (panel/bubbles/borders) change, the customer's own brand `primaryColor` stays identical in both modes. Below a 480px viewport the panel switches to a real full-screen layout — the same pattern Intercom/Drift-class products already use, since the normal fixed 360×480 corner panel would overflow a real phone screen.
+
+### Deployment and distribution
+
+`.github/workflows/widget-deploy.yml` (`workflow_dispatch`, a deliberate release action, not continuous deploy) builds the bundle and publishes it to GitHub Pages — genuinely Fastly-CDN-backed (confirmed via real response headers, not assumed), needing no new cloud account this project doesn't already have. `scripts/assemble-pages-artifact.mjs` works around Pages' full-content-replace-per-deploy behavior: it fetches every prior version a `versions.json` manifest already lists and re-publishes them alongside the new one, so `widget.js` (root) always serves latest while `v{version}/widget.js` stays a permanent pinned URL for any customer who wants one. `scripts/check-bundle-size.mjs` fails CI if the built bundle exceeds a 30 KB raw budget (real bundle is ~10 KB as of this writing).
+
+### Testing
+
+`e2e/widget.spec.ts` (Playwright) is a real, unmocked smoke test: a real browser loads the real built bundle on a real static fixture host page (`e2e/fixtures/host-page.html`), opens the launcher (Playwright locators pierce open Shadow DOM automatically), and sends a real message through a real running `apps/api` instance the CI job provisions itself.
+
+**Honest, tracked gaps, not silently worked around:**
+- No dashboard UI exists yet to generate/copy an embed snippet for a customer — `apps/web/lib/embedCode.ts:generateEmbedCode` is real and tested (`e2e/embedCode.spec.ts`) but has no caller until Milestone 9's dashboard (step 233+).
+- No custom greeting message, animation customization, i18n/language selection, or arbitrary custom-CSS injection — AGENTS.md's own customization list names all of these; only theme (color/font/logo/position/color-scheme) is implemented.
+- Same generation gap the conversation engine has generally: a real hit's response is the retrieved knowledge-base text itself, or "No results found." — no LLM synthesizes it.
+- The GitHub Pages CDN URL is a real, live, working deployment, but a personal-repo URL — not the permanent production domain a real customer-facing default should eventually point at (Milestone 11's infrastructure work).
+
+Full customer-facing setup instructions (the embed snippet, every `data-*` attribute, domain restriction, version pinning) live in [`docs/embedding.md`](embedding.md), not duplicated here.
 
 ## Voice platform
 
@@ -256,4 +280,5 @@ _To be filled in as Milestone 11 lands._
 
 - [`docs/ROADMAP.md`](ROADMAP.md) — the 300-step implementation plan
 - [`docs/adr/`](adr/) — Architecture Decision Records
+- [`docs/embedding.md`](embedding.md) — customer-facing widget embedding guide
 - [`AGENTS.md`](../AGENTS.md) — the project's full engineering constitution

@@ -29,6 +29,7 @@ test.describe("generateEmbedCode", () => {
         fontFamily: "Georgia, serif",
         logoUrl: "https://example.com/logo.png",
         position: "bottom-left",
+        colorScheme: "dark",
       },
     });
     expect(code).toContain('data-api-url="https://api.example.com"');
@@ -36,6 +37,7 @@ test.describe("generateEmbedCode", () => {
     expect(code).toContain('data-font-family="Georgia, serif"');
     expect(code).toContain('data-logo-url="https://example.com/logo.png"');
     expect(code).toContain('data-position="bottom-left"');
+    expect(code).toContain('data-color-scheme="dark"');
   });
 
   test("omits an optional attribute entirely when not provided", () => {
@@ -48,6 +50,7 @@ test.describe("generateEmbedCode", () => {
     expect(code).not.toContain("data-logo-url");
     expect(code).not.toContain("data-position");
     expect(code).not.toContain("data-api-url");
+    expect(code).not.toContain("data-color-scheme");
   });
 
   test("escapes double quotes and ampersands in attribute values", () => {
