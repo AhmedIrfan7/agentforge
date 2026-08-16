@@ -1,5 +1,5 @@
 """Integration tests for the streaming audio ingestion WebSocket
-(roadmap steps 221-223). Same real org/workspace/kb/public-assistant
+(roadmap steps 221-224). Same real org/workspace/kb/public-assistant
 setup `test_public_conversation.py` already established, plus a real
 anonymous conversation + voice session started through the actual REST
 endpoints (192, 220) -- nothing here is mocked except
@@ -17,6 +17,14 @@ runs the ASGI app in a real background thread with its own real event
 loop, so `asyncio.wait_for`'s timer genuinely elapses in real wall-
 clock time; a short, real wait keeps these tests fast without faking
 the timing mechanism itself.
+
+Step 224's own `_voice_activity_has_stopped` tests are split in two:
+plain, synchronous unit tests directly against the pure function
+(no websocket needed at all, matching `_filename_for_mime_type`'s own
+test precedent in `test_whisper_stt_provider.py`), plus one real
+integration test proving the whole mechanism actually finalizes a turn
+early through the real websocket, real content-size-driven, not just
+the isolated function returning the right boolean.
 """
 
 import json
@@ -564,6 +572,76 @@ async def test_a_message_before_the_timeout_prevents_auto_finalize(
         # proves the mid-turn gap never triggered a premature silence
         # finalize, which would have cleared the buffer early.
         assert received_audio == [b"chunk-one-chunk-two"]
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+def test_vad_does_not_fire_with_too_few_chunks() -> None:
+    # Real, big-vs-tiny sizes, but only 3 samples -- below
+    # VAD_MIN_CHUNKS_BEFORE_CHECK (4).
+    assert public_voice_module._voice_activity_has_stopped([1000, 10, 10]) is False
+
+
+def test_vad_does_not_fire_without_a_consecutive_quiet_run() -> None:
+    # 4 samples, but the loud one is in the middle of the trailing
+    # window -- not 3 CONSECUTIVE quiet chunks.
+    assert public_voice_module._voice_activity_has_stopped([1000, 10, 1000, 10]) is False
+
+
+def test_vad_does_not_fire_when_chunk_sizes_stay_consistent() -> None:
+    # Real, steady speech-sized chunks -- no real drop at all.
+    assert public_voice_module._voice_activity_has_stopped([980, 1000, 950, 990, 970]) is False
+
+
+def test_vad_fires_after_a_real_consecutive_quiet_run() -> None:
+    # A real loud peak, then 3 consecutive chunks well under 30% of it.
+    assert public_voice_module._voice_activity_has_stopped([1000, 900, 50, 40, 30]) is True
+
+
+def test_vad_handles_an_all_zero_peak_without_dividing_by_zero() -> None:
+    assert public_voice_module._voice_activity_has_stopped([0, 0, 0, 0]) is False
+
+
+@pytest.mark.anyio
+async def test_voice_activity_detection_finalizes_a_turn_without_end_turn_or_silence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A real silence-timeout well longer than this test could plausibly
+    # take -- if VAD did NOT fire on its own, this test would hang until
+    # pytest's own timeout, not silently pass.
+    monkeypatch.setattr(public_voice_module, "SILENCE_TIMEOUT_SECONDS", 30.0)
+
+    received_audio: list[bytes] = []
+
+    async def _fake_transcribe(
+        self: object, audio: bytes, *, mime_type: str
+    ) -> TranscriptionResult:
+        received_audio.append(audio)
+        return TranscriptionResult(text="ok", language="english")
+
+    monkeypatch.setattr(type(public_voice_module._stt_provider), "transcribe", _fake_transcribe)
+
+    email = "endpoint-test-voice-owner-18@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws:
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            # Real loud-sized chunks, establishing a real peak...
+            ws.send_bytes(b"x" * 1000)
+            ws.send_bytes(b"x" * 950)
+            # ...then a real consecutive quiet run -- content-driven,
+            # not a timing gap (no sleeps here at all).
+            ws.send_bytes(b"x" * 40)
+            ws.send_bytes(b"x" * 30)
+            ws.send_bytes(b"x" * 20)
+
+            response = ws.receive_json()
+            assert response == {"type": "transcript", "text": "ok", "language": "english"}
+        assert received_audio == [b"x" * 1000 + b"x" * 950 + b"x" * 40 + b"x" * 30 + b"x" * 20]
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)

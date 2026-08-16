@@ -93,6 +93,39 @@ reasoning. The timeout only ever applies once the buffer is non-empty
 uses a plain, un-timed `receive()`, so silence BEFORE a turn starts
 never spuriously fires a transcription of nothing.
 
+As of step 224, a second, CONTENT-aware layer complements step 223's
+own pure-timing one: `_voice_activity_has_stopped` tracks the real
+byte size of each binary chunk received during a turn and finalizes
+early once several CONSECUTIVE recent chunks are all much smaller than
+the turn's own peak chunk size so far. This closes a real gap 223
+alone can't: a client that keeps sending frames on a fixed interval
+regardless of whether the user is actually still talking (many real
+`MediaRecorder` configurations do exactly this) would never trip
+223's own inter-arrival-gap timer, since bytes never stop arriving --
+but a real silent/background-noise period still compresses to
+genuinely fewer bytes than active speech, even without decoding the
+audio. This is the SAME real, well-known property that makes
+Opus/webm's own variable-bitrate encoding what it is; leaning on it
+needs zero new dependencies, unlike a real PCM-level/spectral VAD
+(which would need an audio codec library or `ffmpeg` this codebase
+doesn't otherwise depend on anywhere).
+
+Honest about what this is and isn't: it is NOT real acoustic voice-
+activity detection -- no decoding, no energy/spectral analysis of the
+actual waveform, just a real, legitimate proxy on compressed chunk
+size. It also can't distinguish "genuinely quiet speech" from "real
+silence" as precisely as a decoded-PCM VAD model could, and the very
+first chunk(s) of a container format like webm can be disproportionately
+large purely from header/init-segment overhead, unrelated to whether
+speech is present yet -- `VAD_MIN_CHUNKS_BEFORE_CHECK` (a real
+minimum sample count before judging) and `VAD_QUIET_CHUNK_COUNT` (a
+real run of CONSECUTIVE quiet chunks, not a single one) both exist
+specifically to keep this heuristic from over-triggering on that kind
+of noise. Runs INLINE, synchronously, right after each new chunk is
+buffered -- no new timer, no new task, since it only needs to react to
+chunks that have already arrived; 223's own timeout-based check still
+independently covers the case where chunks stop arriving at all.
+
 As of step 222, the same connection also carries real synthesized
 speech back to the client: `{"type": "synthesize", "text": "..."}`
 calls the real `OpenAITTSProvider` (218) and streams its audio back as
@@ -137,9 +170,26 @@ router = APIRouter(prefix="/public/assistants/{assistant_id}/voice-sessions", ta
 MAX_AUDIO_BUFFER_BYTES = 20 * 1024 * 1024
 AUDIO_STREAM_CHUNK_BYTES = 4096
 SILENCE_TIMEOUT_SECONDS = 1.5
+VAD_MIN_CHUNKS_BEFORE_CHECK = 4
+VAD_QUIET_CHUNK_COUNT = 3
+VAD_QUIET_THRESHOLD_RATIO = 0.3
 
 _stt_provider = WhisperSTTProvider()
 _tts_provider = OpenAITTSProvider()
+
+
+def _voice_activity_has_stopped(chunk_sizes: list[int]) -> bool:
+    """Real content-size heuristic (224) -- see this module's own
+    docstring for the full reasoning. Pure and synchronous on purpose:
+    no I/O, easy to unit-test in isolation from the websocket/async
+    machinery around it."""
+    if len(chunk_sizes) < VAD_MIN_CHUNKS_BEFORE_CHECK:
+        return False
+    peak = max(chunk_sizes)
+    if peak == 0:
+        return False
+    recent = chunk_sizes[-VAD_QUIET_CHUNK_COUNT:]
+    return all(size < peak * VAD_QUIET_THRESHOLD_RATIO for size in recent)
 
 
 async def _authenticate(
@@ -222,11 +272,15 @@ async def _authenticate(
     return mime_type
 
 
-async def _finalize_turn(websocket: WebSocket, buffer: bytearray, mime_type: str) -> None:
+async def _finalize_turn(
+    websocket: WebSocket, buffer: bytearray, chunk_sizes: list[int], mime_type: str
+) -> None:
     """Transcribes whatever's buffered and sends the result -- the one
-    real "a turn just ended" action, shared by both the explicit
-    `end_turn` message and the silence-timeout path (223) so neither
-    duplicates the other's error handling or buffer-clearing."""
+    real "a turn just ended" action, shared by the explicit `end_turn`
+    message, the silence-timeout path (223), and the voice-activity
+    path (224) so none of the three duplicates the others' error
+    handling or per-turn state reset. `chunk_sizes` resets alongside
+    `buffer` -- both describe the SAME now-finished turn."""
     try:
         result = await _stt_provider.transcribe(bytes(buffer), mime_type=mime_type)
         await websocket.send_json(
@@ -238,6 +292,7 @@ async def _finalize_turn(websocket: WebSocket, buffer: bytearray, mime_type: str
         )
     finally:
         buffer.clear()
+        chunk_sizes.clear()
 
 
 @router.websocket("/{voice_session_id}/audio")
@@ -253,6 +308,7 @@ async def stream_voice_session_audio(
     await websocket.send_json({"type": "ready"})
 
     buffer = bytearray()
+    chunk_sizes: list[int] = []
     try:
         while True:
             if buffer:
@@ -265,7 +321,7 @@ async def stream_voice_session_audio(
                         websocket.receive(), timeout=SILENCE_TIMEOUT_SECONDS
                     )
                 except TimeoutError:
-                    await _finalize_turn(websocket, buffer, mime_type)
+                    await _finalize_turn(websocket, buffer, chunk_sizes, mime_type)
                     continue
             else:
                 message = await websocket.receive()
@@ -274,13 +330,17 @@ async def stream_voice_session_audio(
                 return
 
             if "bytes" in message and message["bytes"] is not None:
-                buffer.extend(message["bytes"])
+                chunk = message["bytes"]
+                buffer.extend(chunk)
                 if len(buffer) > MAX_AUDIO_BUFFER_BYTES:
                     await websocket.send_json(
                         {"type": "error", "message": "Too much audio buffered without end_turn."}
                     )
                     await websocket.close(code=1009, reason="Audio buffer limit exceeded.")
                     return
+                chunk_sizes.append(len(chunk))
+                if _voice_activity_has_stopped(chunk_sizes):
+                    await _finalize_turn(websocket, buffer, chunk_sizes, mime_type)
                 continue
 
             if "text" not in message or message["text"] is None:
@@ -300,7 +360,7 @@ async def stream_voice_session_audio(
                         {"type": "error", "message": "No audio received before end_turn."}
                     )
                     continue
-                await _finalize_turn(websocket, buffer, mime_type)
+                await _finalize_turn(websocket, buffer, chunk_sizes, mime_type)
                 continue
 
             if control_type == "synthesize":
