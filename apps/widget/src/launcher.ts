@@ -54,6 +54,16 @@
 // a real isolated probe stylesheet, comparing it side-by-side against
 // the working `:host(:not(...))` form). The dark-mode rule below uses
 // the functional form specifically because of this.
+//
+// As of step 212, the panel switches to a real full-screen layout
+// under a mobile-width viewport (`max-width: 480px`, a common phone
+// breakpoint -- the fixed 360px-wide corner panel would either
+// overflow a real phone viewport or leave awkward margins on one).
+// Full-screen-on-mobile is also the standard real pattern this class
+// of product already uses (Intercom, Drift, etc.), not just an
+// overflow fix. The launcher button stays visible and in its normal
+// corner position even while the panel is full-screen -- it's still
+// the real close affordance, same toggle behavior as desktop.
 
 import { renderChatWindow } from "./chat-window";
 import type { WidgetConfig } from "./config";
@@ -139,6 +149,18 @@ const STYLES = `
   }
   .position-right { right: 20px; left: auto; }
   .position-left { left: 20px; right: auto; }
+
+  @media (max-width: 480px) {
+    .panel {
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      height: 100%;
+      border-radius: 0;
+    }
+  }
 `;
 
 export function mountLauncher(config: WidgetConfig): void {
