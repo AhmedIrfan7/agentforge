@@ -1,0 +1,100 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 560px;
+}
+
+.heading {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.sectionHeading {
+  font-size: 1.0625rem;
+  font-weight: 600;
+}
+
+.subtext {
+  color: rgba(128, 128, 128, 0.9);
+  font-size: 0.9375rem;
+}
+
+.status {
+  color: rgba(128, 128, 128, 0.8);
+}
+
+.error {
+  font-size: 0.8125rem;
+  color: #dc2626;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 12px;
+}
+
+.warningsCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 20px;
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  background: rgba(220, 38, 38, 0.06);
+  border-radius: 12px;
+}
+
+.warningsCard .sectionHeading {
+  color: #dc2626;
+}
+
+.warningsList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 20px;
+  font-size: 0.875rem;
+  color: #dc2626;
+}
+
+.definitionList {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 0.875rem;
+}
+
+.definitionList dt {
+  color: rgba(128, 128, 128, 0.85);
+}
+
+.definitionList dd {
+  margin: 0;
+}
+
+.stageList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+}
+
+.stageItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border: 1px solid rgba(128, 128, 128, 0.2);
+  border-radius: 8px;
+  font-size: 0.875rem;
+}
+
+.stageStatus {
+  font-size: 0.8125rem;
+  color: rgba(128, 128, 128, 0.85);
+  font-family: var(--font-geist-mono, monospace);
+}

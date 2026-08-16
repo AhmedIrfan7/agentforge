@@ -75,6 +75,14 @@
   border-radius: 8px;
 }
 
+.itemLink {
+  display: block;
+}
+
+.itemLink:hover .itemName {
+  text-decoration: underline;
+}
+
 .itemName {
   font-size: 0.9375rem;
   font-weight: 500;

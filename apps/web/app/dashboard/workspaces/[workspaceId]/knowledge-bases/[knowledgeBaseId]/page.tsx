@@ -6,6 +6,7 @@
 // version history, which are real apps/api capabilities (steps
 // 103/114/115) with no roadmap step through 250 asking for a UI yet.
 
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { getDocumentStatus, listDocuments, uploadDocument, type Document } from "@/lib/documents";
@@ -173,12 +174,15 @@ function DocumentList({
         <ul className={styles.list}>
           {documents.map((doc) => (
             <li key={doc.id} className={styles.listItem}>
-              <div>
+              <Link
+                href={`/dashboard/workspaces/${workspaceId}/knowledge-bases/${knowledgeBaseId}/${doc.id}`}
+                className={styles.itemLink}
+              >
                 <div className={styles.itemName}>{doc.title}</div>
                 <div className={styles.itemSlug}>
                   {(doc.size_bytes / 1024).toFixed(1)} KB · {doc.content_type}
                 </div>
-              </div>
+              </Link>
               <span className={`${styles.statusBadge} ${statusBadgeClass(doc.status)}`}>
                 {doc.status}
               </span>
