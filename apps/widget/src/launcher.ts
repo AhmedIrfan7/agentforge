@@ -33,6 +33,27 @@
 // default chat-bubble icon in the CLOSED state only -- the close (X)
 // icon always shows once open, regardless of branding, so "click to
 // close" stays unambiguous.
+//
+// As of step 211, "structural" colors (panel/bubble/border surfaces --
+// never the customer's own brand `--af-primary-color`, which stays
+// identical in both modes) are real CSS custom properties with two
+// palettes: a light one on `:host` as the default, and a dark one
+// applied two ways -- inside `@media (prefers-color-scheme: dark)`
+// (real, automatic, follows the visitor's own OS/browser setting,
+// guarded so an explicit `data-af-theme="light"` override still wins),
+// and again on `:host([data-af-theme="dark"])` (an explicit override
+// always applies regardless of system preference). `mountLauncher`
+// only ever sets the `data-af-theme` attribute for an EXPLICIT
+// "light"/"dark" config value -- leaving it unset for "auto" (the
+// default) is what lets the media query alone decide.
+//
+// Real bug found live, not by inspection: the functional
+// `:host(<compound-selector>)` form is required to add a condition ON
+// the host element itself -- a bare `:host:not([data-af-theme="light"])`
+// chain parses without error but never actually matches (confirmed with
+// a real isolated probe stylesheet, comparing it side-by-side against
+// the working `:host(:not(...))` form). The dark-mode rule below uses
+// the functional form specifically because of this.
 
 import { renderChatWindow } from "./chat-window";
 import type { WidgetConfig } from "./config";
@@ -47,6 +68,36 @@ const STYLES = `
     all: initial;
     --af-primary-color: #4f46e5;
     --af-font-family: system-ui, sans-serif;
+    --af-surface: #ffffff;
+    --af-surface-text: #111827;
+    --af-assistant-bubble-bg: #f3f4f6;
+    --af-assistant-bubble-text: #111827;
+    --af-border: #e5e7eb;
+    --af-citation-bg: #e5e7eb;
+    --af-citation-text: #374151;
+    --af-input-border: #d1d5db;
+  }
+  @media (prefers-color-scheme: dark) {
+    :host(:not([data-af-theme="light"])) {
+      --af-surface: #1f2937;
+      --af-surface-text: #f3f4f6;
+      --af-assistant-bubble-bg: #374151;
+      --af-assistant-bubble-text: #f3f4f6;
+      --af-border: #374151;
+      --af-citation-bg: #374151;
+      --af-citation-text: #d1d5db;
+      --af-input-border: #4b5563;
+    }
+  }
+  :host([data-af-theme="dark"]) {
+    --af-surface: #1f2937;
+    --af-surface-text: #f3f4f6;
+    --af-assistant-bubble-bg: #374151;
+    --af-assistant-bubble-text: #f3f4f6;
+    --af-border: #374151;
+    --af-citation-bg: #374151;
+    --af-citation-text: #d1d5db;
+    --af-input-border: #4b5563;
   }
   .launcher {
     position: fixed;
@@ -77,7 +128,8 @@ const STYLES = `
     bottom: 88px;
     width: 360px;
     height: 480px;
-    background: white;
+    background: var(--af-surface);
+    color: var(--af-surface-text);
     border-radius: 12px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
     z-index: 2147483646;
@@ -94,6 +146,9 @@ export function mountLauncher(config: WidgetConfig): void {
   host.id = "agentforge-widget-root";
   host.style.setProperty("--af-primary-color", config.theme.primaryColor);
   host.style.setProperty("--af-font-family", config.theme.fontFamily);
+  if (config.theme.colorScheme !== "auto") {
+    host.dataset.afTheme = config.theme.colorScheme;
+  }
   document.body.appendChild(host);
 
   const shadow = host.attachShadow({ mode: "open" });

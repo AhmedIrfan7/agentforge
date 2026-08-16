@@ -18,14 +18,21 @@
 // through dashboard controls instead of code changes" (the embeddable
 // chatbot section) -- all four are real `data-*` attributes here,
 // config-driven rather than something a customer edits in CSS/JS.
-// Dark/light mode is deliberately NOT part of this -- that's step
-// 211's own later, real step, not this one's literal wording.
+//
+// As of step 211, `colorScheme` adds real dark/light mode. Three
+// values, not two: "auto" (the default -- follows the visitor's own
+// OS/browser `prefers-color-scheme`, the same real, standard mechanism
+// this project's own Artifact-authoring conventions already use
+// elsewhere) alongside explicit "light"/"dark" overrides for a
+// customer who wants the widget to always match their own site's
+// fixed theme regardless of the visitor's system setting.
 
 export interface WidgetTheme {
   primaryColor: string;
   fontFamily: string;
   logoUrl: string | null;
   position: "bottom-right" | "bottom-left";
+  colorScheme: "auto" | "light" | "dark";
 }
 
 export interface WidgetConfig {
@@ -46,6 +53,7 @@ const DEFAULT_THEME: WidgetTheme = {
   fontFamily: "system-ui, sans-serif",
   logoUrl: null,
   position: "bottom-right",
+  colorScheme: "auto",
 };
 
 function findScriptTag(): HTMLScriptElement | null {
@@ -66,6 +74,10 @@ function resolvePosition(value: string | undefined): WidgetTheme["position"] {
   return value === "bottom-left" ? "bottom-left" : DEFAULT_THEME.position;
 }
 
+function resolveColorScheme(value: string | undefined): WidgetTheme["colorScheme"] {
+  return value === "light" || value === "dark" ? value : DEFAULT_THEME.colorScheme;
+}
+
 export function loadWidgetConfig(): WidgetConfig {
   const script = findScriptTag();
   const assistantId = script?.dataset.assistantId;
@@ -82,6 +94,7 @@ export function loadWidgetConfig(): WidgetConfig {
       fontFamily: script.dataset.fontFamily ?? DEFAULT_THEME.fontFamily,
       logoUrl: script.dataset.logoUrl ?? DEFAULT_THEME.logoUrl,
       position: resolvePosition(script.dataset.position),
+      colorScheme: resolveColorScheme(script.dataset.colorScheme),
     },
   };
 }

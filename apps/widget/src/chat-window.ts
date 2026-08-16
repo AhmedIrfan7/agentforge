@@ -59,7 +59,10 @@ const CHAT_WINDOW_STYLES = `
     word-break: break-word;
   }
   .message.user .bubble { background: var(--af-primary-color); color: white; }
-  .message.assistant .bubble { background: #f3f4f6; color: #111827; }
+  .message.assistant .bubble {
+    background: var(--af-assistant-bubble-bg);
+    color: var(--af-assistant-bubble-text);
+  }
   .citations {
     display: flex;
     flex-wrap: wrap;
@@ -69,25 +72,27 @@ const CHAT_WINDOW_STYLES = `
     font-size: 11px;
     padding: 2px 8px;
     border-radius: 999px;
-    background: #e5e7eb;
-    color: #374151;
+    background: var(--af-citation-bg);
+    color: var(--af-citation-text);
   }
   .input-row {
     display: flex;
     gap: 8px;
     padding: 10px;
-    border-top: 1px solid #e5e7eb;
+    border-top: 1px solid var(--af-border);
     flex-shrink: 0;
   }
   .input-row textarea {
     flex: 1;
     resize: none;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--af-input-border);
     border-radius: 8px;
     padding: 6px 8px;
     font: inherit;
     font-size: 14px;
     max-height: 80px;
+    background: var(--af-surface);
+    color: var(--af-surface-text);
   }
   .input-row button {
     border: none;
