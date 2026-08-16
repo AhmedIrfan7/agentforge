@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AgentForge Widget Host Page Fixture</title>
+  </head>
+  <body>
+    <!--
+      Roadmap step 214. A plain host page -- the same shape any real
+      customer site embedding this widget would have (its own content,
+      no framework, no build step). A static fixture file can't hardcode
+      a fresh per-test-run assistant id itself, so the bootstrap script
+      below reads assistantId/apiUrl from THIS page's own URL query
+      string and creates the real embed <script> tag with them as real
+      data-* attributes -- standing in for a customer's own server-side
+      template injecting their real assistant id. Everything the script
+      does past that point is the exact real embed snippet shape from
+      lib/embedCode.ts (207) / docs/embedding.md (215).
+    -->
+    <h1>Acme Corp -- Customer Support</h1>
+    <p>This page stands in for a real customer's own site content.</p>
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const widgetScript = document.createElement("script");
+      widgetScript.src = "/widget.js";
+      widgetScript.dataset.assistantId = params.get("assistantId") ?? "";
+      widgetScript.dataset.apiUrl = params.get("apiUrl") ?? "";
+      document.body.appendChild(widgetScript);
+    </script>
+  </body>
+</html>

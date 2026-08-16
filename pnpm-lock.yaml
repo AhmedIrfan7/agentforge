@@ -57,6 +57,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
+      '@playwright/test':
+        specifier: ^1.62.1
+        version: 1.62.1
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2

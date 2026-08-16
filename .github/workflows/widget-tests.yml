@@ -24,9 +24,92 @@ jobs:
       - name: Check bundle size budget
         run: pnpm --filter @agentforge/widget run check-bundle-size
 
-# No smoke test yet -- step 214 ("widget smoke test: loads on fixture
-# HTML page, sends message") is what needs a real fixture page and a
-# real assistant to send a message to, matching web-tests.yml's own
-# "the build job gains a real test step once there's something real to
-# run" precedent (that job itself started build-only too, until step
-# 198's e2e test landed).
+  e2e:
+    name: Widget smoke test (e2e)
+    runs-on: ubuntu-latest
+    # Same Postgres+Redis-only shape as web-tests.yml's own build job
+    # (198) -- no document upload happens in this test's path either, so
+    # no MinIO/ClamAV needed; Redis is still required for the same
+    # reason (message-send's synchronous Celery `.delay()` call needs a
+    # reachable broker even with no worker consuming it).
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: agentforge
+          POSTGRES_PASSWORD: agentforge
+          POSTGRES_DB: agentforge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentforge -d agentforge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ENVIRONMENT: test
+      DATABASE_URL: postgresql+asyncpg://agentforge_app:agentforge_app@localhost:5432/agentforge
+      DATABASE_MIGRATIONS_URL: postgresql+asyncpg://agentforge:agentforge@localhost:5432/agentforge
+      REDIS_URL: redis://localhost:6379/0
+      AGENTFORGE_API_URL: http://localhost:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+      - name: Create least-privilege app role
+        run: PGPASSWORD=agentforge psql -h localhost -U agentforge -d agentforge -f infra/postgres/init/01-app-role.sql
+      - name: Install API dependencies
+        working-directory: apps/api
+        run: uv sync --all-groups
+      - name: Run migrations
+        working-directory: apps/api
+        run: uv run alembic upgrade head
+      - name: Start API server
+        working-directory: apps/api
+        run: |
+          nohup uv run uvicorn main:app --host 0.0.0.0 --port 8000 > uvicorn.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8000/health && break
+            sleep 1
+          done
+      - name: Install Playwright browsers
+        working-directory: apps/widget
+        run: npx playwright install --with-deps chromium
+      - name: Run e2e tests
+        run: pnpm --filter @agentforge/widget run test:e2e
+      - name: Print API server log on failure
+        if: failure()
+        run: cat apps/api/uvicorn.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: widget-playwright-report
+          path: apps/widget/playwright-report/
+          retention-days: 7
+
+# Roadmap step 214: the e2e job above is the first real smoke test for
+# this app -- a real browser loads the real built widget.js on a real
+# fixture host page (apps/widget/e2e/fixtures/host-page.html) and sends
+# a real message through a real apps/api instance this job starts
+# itself, same "the build job gains a real test step once there's
+# something real to run" precedent web-tests.yml/198 already
+# established (kept as its own job here, not folded into `build` above,
+# since `build` needs no Postgres/Redis/API at all and shouldn't pay
+# that cost).
