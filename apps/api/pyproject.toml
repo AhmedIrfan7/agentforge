@@ -41,6 +41,7 @@ dependencies = [
 dev = [
     "mypy>=2.3.0",
     "pytest>=9.1.1",
+    "pytest-xdist>=3.8.0",
     "reportlab>=5.0.0",
     "ruff>=0.16.1",
     "types-markdown>=3.10.2.20260712",
