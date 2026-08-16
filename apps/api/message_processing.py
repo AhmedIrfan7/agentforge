@@ -20,6 +20,15 @@ a `MessageRead` response -- callers differ there for real reasons (an
 anonymous caller has no `actor_user_id` to log), so those stay each
 caller's own job.
 
+As of step 228, `voice_session_id` is a real, optional, keyword-only
+parameter -- `None` for every existing text-chat caller (unchanged
+behavior), a real value when `routers/public_voice.py`'s own
+`_finalize_turn` calls this SAME function for a voice turn (226). Both
+the user and assistant `Message` rows get tagged, so a voice call's
+own real transcript is later queryable by an exact relational link
+(`repositories/message.py:list_for_voice_session`), not a `created_at`
+time-window guess.
+
 `build_message_stream` (step 194) is the SSE-formatting half of what
 was originally `routers/conversation.py:send_message_streaming`'s own
 inlined body (step 180) -- persistence now goes through `generate_
@@ -103,6 +112,8 @@ async def generate_assistant_reply(
     assistant: Assistant,
     conversation: Conversation,
     content: str,
+    *,
+    voice_session_id: uuid.UUID | None = None,
 ) -> Message:
     if conversation.status == "new":
         transition(conversation, "active")
@@ -112,6 +123,7 @@ async def generate_assistant_reply(
         conversation_id=conversation.id,
         role="user",
         content=content,
+        voice_session_id=voice_session_id,
     )
     dispatch_message_embedding.delay(str(user_message.id), str(tenant_id))
 
@@ -125,6 +137,7 @@ async def generate_assistant_reply(
         role="assistant",
         content=result.response,
         citations=[citation_json(c) for c in citations],
+        voice_session_id=voice_session_id,
     )
     dispatch_message_embedding.delay(str(assistant_message.id), str(tenant_id))
     return assistant_message

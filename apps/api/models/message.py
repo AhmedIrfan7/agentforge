@@ -96,6 +96,24 @@ mutates a `Message` column OTHER than `content` needs an explicit
 `await session.refresh(message)` after `flush()`, same fix
 `set_message_feedback` applies -- `Conversation` (no `Computed`
 column) doesn't have this risk, confirmed live the same way.
+
+As of step 228, `voice_session_id` lands: nullable, `ondelete="SET
+NULL"` -- most messages have no voice session behind them (real,
+honest `NULL`, not a fake foreign key to nothing), and a
+`VoiceSession` row disappearing should never take a real, content-
+bearing conversation transcript down with it, same "a child row
+shouldn't vanish just because a lifecycle-tracking parent does"
+reasoning `Conversation.user_id`'s own `SET NULL` (176) already
+established, not this table's own usual `conversation_id`-style
+CASCADE (a Message genuinely has no meaning without its Conversation;
+it has plenty of meaning without the specific VoiceSession that
+happened to produce it). Set by `message_processing.py:
+generate_assistant_reply`'s own new optional parameter, `None` for
+every existing (text-chat) caller -- a REAL, precise relational link
+for "what did THIS voice call's own transcript say," not a derived
+`created_at`-time-window approximation, which could genuinely get the
+wrong answer if, e.g., a text message ever landed in the same window
+from a different channel on the same conversation.
 """
 
 import uuid
@@ -137,3 +155,6 @@ class Message(TenantScopedEntity, TimestampMixin, Base):
     )
     citations: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False, default=list)
     feedback_type: Mapped[str | None] = mapped_column(nullable=True)
+    voice_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("voice_sessions.id", ondelete="SET NULL"), nullable=True
+    )

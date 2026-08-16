@@ -99,6 +99,26 @@ real, only public-facing consumer so far) is anonymous-only anyway;
 building an authenticated one now, with no dashboard UI to call it and
 no roadmap step asking for it, would be speculative.
 
+As of step 228, `POST .../voice-sessions/{voice_session_id}/end`
+closes the lifecycle symmetrically -- same nesting, same
+`AnonymousConversation` dependency, same file as `start_voice_session`
+right above it, deliberately NOT `routers/public_voice.py` (the
+websocket route lives there specifically because `Depends()` doesn't
+work correctly for websockets; this is an ordinary REST endpoint, so
+it gets FastAPI's real dependency injection and error handling for
+free, the same reasoning that put `start_voice_session` here in the
+first place). Idempotent-409 on an already-ended session, same "409 if
+already in that terminal state" precedent `routers/invitation.py`'s
+own revoke (075) and `routers/conversation.py`'s own archive (184)
+already established, not a silent no-op. The response includes the
+session's own real, EXACT transcript
+(`repositories/message.py:list_for_voice_session`, scoped by the real
+`Message.voice_session_id` FK step 228 also adds, not a `created_at`
+time-window guess) -- reuses `MessageRead` wholesale, the same "don't
+invent a parallel shape for the same data" reasoning `schemas/
+conversation.py:ConversationExportRead` already established for text
+chat's own export endpoint (191).
+
 `get_public_assistant` (step 208) also enforces the org's own
 `SecuritySettings.allowed_domains` (AGENTS.md's own "SECURITY
 SETTINGS" section names "Allowed domains" verbatim) -- the single
@@ -125,6 +145,7 @@ feature has this identical, well-understood limitation.
 """
 
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -136,18 +157,19 @@ from audit import write_audit_log
 from auth.jwt import TokenError, create_anonymous_session_token, decode_anonymous_session_token
 from db import set_tenant_context
 from dependencies.db import get_db
-from errors import ForbiddenError, NotFoundError, UnauthorizedError
+from errors import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from message_processing import build_message_stream, generate_assistant_reply
 from models.assistant import Assistant
 from models.conversation import Conversation
 from rate_limit import MESSAGE_SEND_RATE_LIMIT, check_rate_limit
 from repositories.assistant import get_public_assistant_by_id
 from repositories.conversation import ConversationRepository
+from repositories.message import MessageRepository
 from repositories.security_settings import SecuritySettingsRepository, origin_is_allowed
 from repositories.voice_session import VoiceSessionRepository
 from schemas.conversation import AnonymousConversationRead
 from schemas.message import MessageCreate, MessageRead
-from schemas.voice_session import VoiceSessionRead
+from schemas.voice_session import VoiceSessionEndRead, VoiceSessionRead
 
 router = APIRouter(prefix="/public/assistants/{assistant_id}/conversations", tags=["public-chat"])
 
@@ -303,3 +325,42 @@ async def start_voice_session(
         resource_id=voice_session.id,
     )
     return VoiceSessionRead.model_validate(voice_session)
+
+
+@router.post(
+    "/{conversation_id}/voice-sessions/{voice_session_id}/end",
+    response_model=VoiceSessionEndRead,
+)
+async def end_voice_session(
+    voice_session_id: uuid.UUID,
+    session: PublicDb,
+    assistant: PublicAssistant,
+    conversation: AnonymousConversation,
+) -> VoiceSessionEndRead:
+    voice_session = await VoiceSessionRepository(session, assistant.tenant_id).get(voice_session_id)
+    if voice_session is None or voice_session.conversation_id != conversation.id:
+        raise NotFoundError(f"Voice session {voice_session_id} not found.")
+    if voice_session.ended_at is not None:
+        raise ConflictError("This voice session has already ended.")
+
+    voice_session.ended_at = datetime.now(UTC)
+    await session.flush()
+
+    transcript = await MessageRepository(session, assistant.tenant_id).list_for_voice_session(
+        voice_session.id
+    )
+
+    await write_audit_log(
+        session,
+        tenant_id=assistant.tenant_id,
+        action="voice_session.end",
+        resource_type="voice_session",
+        resource_id=voice_session.id,
+    )
+    return VoiceSessionEndRead(
+        id=voice_session.id,
+        conversation_id=voice_session.conversation_id,
+        ended_at=voice_session.ended_at,
+        created_at=voice_session.created_at,
+        transcript=[MessageRead.model_validate(m) for m in transcript],
+    )

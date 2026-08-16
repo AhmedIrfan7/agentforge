@@ -79,6 +79,26 @@ class MessageRepository(TenantScopedRepository[Message]):
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
+    async def list_for_voice_session(self, voice_session_id: uuid.UUID) -> Sequence[Message]:
+        """Roadmap step 228 -- a real, ordered voice-call transcript,
+        scoped by the real `Message.voice_session_id` FK (set by
+        `message_processing.py:generate_assistant_reply`'s own optional
+        parameter) rather than a `created_at`-time-window
+        approximation -- exact by construction, same "a real relational
+        link, not a derived guess" reasoning `list_for_conversation`'s
+        own precedent doesn't need, since a whole conversation has no
+        narrower real scope to approximate in the first place."""
+        stmt = (
+            select(Message)
+            .where(
+                Message.tenant_id == self.tenant_id,
+                Message.voice_session_id == voice_session_id,
+            )
+            .order_by(Message.created_at)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
     async def search_keyword(
         self,
         assistant_id: uuid.UUID,

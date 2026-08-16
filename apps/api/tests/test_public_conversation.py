@@ -506,3 +506,203 @@ async def test_a_conversation_can_have_more_than_one_voice_session_started() -> 
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)
+
+
+def _end_url(assistant_id: uuid.UUID, conversation_id: str, voice_session_id: str) -> str:
+    return _public_url(assistant_id, f"/{conversation_id}/voice-sessions/{voice_session_id}/end")
+
+
+@pytest.mark.anyio
+async def test_end_voice_session_sets_ended_at_and_returns_an_empty_transcript() -> None:
+    email = "endpoint-test-public-owner-16@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email, is_public=True)
+    try:
+        create_response = client.post(_public_url(assistant_id))
+        conversation_id = create_response.json()["conversation_id"]
+        token = create_response.json()["access_token"]
+
+        vs_response = client.post(
+            _public_url(assistant_id, f"/{conversation_id}/voice-sessions"),
+            headers=auth_headers(token),
+        )
+        voice_session_id = vs_response.json()["id"]
+        assert vs_response.json()["ended_at"] is None
+
+        end_response = client.post(
+            _end_url(assistant_id, conversation_id, voice_session_id),
+            headers=auth_headers(token),
+        )
+        assert end_response.status_code == 200
+        body = end_response.json()
+        assert body["id"] == voice_session_id
+        assert body["conversation_id"] == conversation_id
+        assert body["ended_at"] is not None
+        assert body["transcript"] == []
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_ending_an_already_ended_voice_session_409s() -> None:
+    email = "endpoint-test-public-owner-17@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email, is_public=True)
+    try:
+        create_response = client.post(_public_url(assistant_id))
+        conversation_id = create_response.json()["conversation_id"]
+        token = create_response.json()["access_token"]
+
+        vs_response = client.post(
+            _public_url(assistant_id, f"/{conversation_id}/voice-sessions"),
+            headers=auth_headers(token),
+        )
+        voice_session_id = vs_response.json()["id"]
+
+        first_end = client.post(
+            _end_url(assistant_id, conversation_id, voice_session_id),
+            headers=auth_headers(token),
+        )
+        second_end = client.post(
+            _end_url(assistant_id, conversation_id, voice_session_id),
+            headers=auth_headers(token),
+        )
+        assert first_end.status_code == 200
+        assert second_end.status_code == 409
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_ending_a_nonexistent_voice_session_404s() -> None:
+    email = "endpoint-test-public-owner-18@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email, is_public=True)
+    try:
+        create_response = client.post(_public_url(assistant_id))
+        conversation_id = create_response.json()["conversation_id"]
+        token = create_response.json()["access_token"]
+
+        response = client.post(
+            _end_url(assistant_id, conversation_id, str(uuid.uuid4())),
+            headers=auth_headers(token),
+        )
+        assert response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_ending_a_voice_session_belonging_to_a_different_conversation_404s() -> None:
+    """A real, valid token for conversation #2 trying to end a real
+    voice session that actually belongs to conversation #1 -- the
+    TOKEN itself is genuinely valid (matched against its own real
+    conversation_id, so `AnonymousConversation` resolves fine), it's
+    the voice_session -> conversation ownership check inside the
+    endpoint itself that correctly 404s, not a 401 -- same "don't leak
+    existence" reasoning every other cross-resource mismatch in this
+    codebase already uses, distinct from an actual invalid/missing
+    token."""
+    email = "endpoint-test-public-owner-19@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email, is_public=True)
+    try:
+        first_conv = client.post(_public_url(assistant_id))
+        first_conversation_id = first_conv.json()["conversation_id"]
+        first_token = first_conv.json()["access_token"]
+        vs_response = client.post(
+            _public_url(assistant_id, f"/{first_conversation_id}/voice-sessions"),
+            headers=auth_headers(first_token),
+        )
+        voice_session_id = vs_response.json()["id"]
+
+        second_conv = client.post(_public_url(assistant_id))
+        second_conversation_id = second_conv.json()["conversation_id"]
+        second_token = second_conv.json()["access_token"]
+
+        response = client.post(
+            _end_url(assistant_id, second_conversation_id, voice_session_id),
+            headers=auth_headers(second_token),
+        )
+        assert response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_ending_a_voice_session_with_no_token_401s() -> None:
+    email = "endpoint-test-public-owner-25@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email, is_public=True)
+    try:
+        create_response = client.post(_public_url(assistant_id))
+        conversation_id = create_response.json()["conversation_id"]
+        token = create_response.json()["access_token"]
+        vs_response = client.post(
+            _public_url(assistant_id, f"/{conversation_id}/voice-sessions"),
+            headers=auth_headers(token),
+        )
+        voice_session_id = vs_response.json()["id"]
+
+        response = client.post(_end_url(assistant_id, conversation_id, voice_session_id))
+        assert response.status_code == 401
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_end_voice_session_returns_the_real_ordered_transcript() -> None:
+    email = "endpoint-test-public-owner-20@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email, is_public=True)
+    try:
+        create_response = client.post(_public_url(assistant_id))
+        conversation_id = create_response.json()["conversation_id"]
+        token = create_response.json()["access_token"]
+
+        vs_response = client.post(
+            _public_url(assistant_id, f"/{conversation_id}/voice-sessions"),
+            headers=auth_headers(token),
+        )
+        voice_session_id = vs_response.json()["id"]
+
+        # Real Message rows tagged with this session's own real
+        # voice_session_id -- the same real FK message_processing.py:
+        # generate_assistant_reply's own new parameter sets, without
+        # needing a full websocket+mocked-provider round trip just to
+        # prove THIS endpoint's own query/serialization logic.
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            session.add(
+                Message(
+                    tenant_id=org_id,
+                    conversation_id=uuid.UUID(conversation_id),
+                    voice_session_id=uuid.UUID(voice_session_id),
+                    role="user",
+                    content="what is your refund policy",
+                )
+            )
+            session.add(
+                Message(
+                    tenant_id=org_id,
+                    conversation_id=uuid.UUID(conversation_id),
+                    voice_session_id=uuid.UUID(voice_session_id),
+                    role="assistant",
+                    content="No results found.",
+                )
+            )
+            await session.commit()
+
+        end_response = client.post(
+            _end_url(assistant_id, conversation_id, voice_session_id),
+            headers=auth_headers(token),
+        )
+        assert end_response.status_code == 200
+        transcript = end_response.json()["transcript"]
+        assert len(transcript) == 2
+        assert transcript[0]["role"] == "user"
+        assert transcript[0]["content"] == "what is your refund policy"
+        assert transcript[1]["role"] == "assistant"
+        assert transcript[1]["content"] == "No results found."
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)

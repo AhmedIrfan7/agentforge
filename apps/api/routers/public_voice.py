@@ -213,6 +213,19 @@ latency, the synchronous time a caller waits in silence) from
 including a genuine `status="interrupted"` outcome for a real
 barge-in cancellation) from `_stream_synthesis`. See that module's own
 docstring for why these are two separate events rather than one.
+
+As of step 228, `_finalize_turn` passes `auth.voice_session_id` into
+`generate_assistant_reply`'s own new optional parameter, tagging both
+real `Message` rows a voice turn produces -- see that function's own
+docstring, and `models/message.py:Message.voice_session_id`'s. The
+real session-END endpoint (real `POST .../voice-sessions/{id}/end`,
+setting `ended_at` and returning the session's own exact transcript
+via `repositories/message.py:list_for_voice_session`) lives in
+`routers/public_conversation.py`, right next to `start_voice_session`
+(220) -- the SAME REST-nesting/dependency pattern, reusing
+`AnonymousConversation` directly rather than inventing a second,
+websocket-shaped auth mechanism this REST endpoint doesn't need (
+`Depends()` works normally here, unlike the websocket route above).
 """
 
 import asyncio
@@ -516,7 +529,12 @@ async def _finalize_turn(
             return None
         try:
             assistant_message = await generate_assistant_reply(
-                session, auth.tenant_id, assistant, conversation, result.text
+                session,
+                auth.tenant_id,
+                assistant,
+                conversation,
+                result.text,
+                voice_session_id=auth.voice_session_id,
             )
         except Exception:
             await session.rollback()

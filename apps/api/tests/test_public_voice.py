@@ -39,6 +39,14 @@ proves `log_turn_processing`/`log_synthesis` themselves emit the right
 event shape in isolation; this file's own job is proving they actually
 get CALLED, with the right real `voice_session_id`, from within a real
 turn, not just that the functions work if you call them directly.
+
+Step 228's own cross-endpoint test drives a real turn through THIS
+file's own websocket, then calls the real REST
+`POST .../voice-sessions/{id}/end` endpoint (`test_public_conversation
+.py`'s own primary focus) and confirms the turn's real Messages show
+up in its transcript -- proving the two endpoints' real, shared
+`Message.voice_session_id` link actually works end to end, not just
+that each endpoint works in isolation.
 """
 
 import asyncio
@@ -884,6 +892,48 @@ async def test_a_real_stt_failure_logs_a_real_failure_trace() -> None:
         assert processing_events[0]["voice_session_id"] == str(voice_session_id)
         assert processing_events[0]["status"] == "failure"
         assert processing_events[0]["reply_latency_ms"] is None
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_a_real_websocket_turns_messages_appear_in_the_rest_end_session_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_transcribe(
+        self: object, audio: bytes, *, mime_type: str
+    ) -> TranscriptionResult:
+        return TranscriptionResult(text="what is your refund policy", language="english")
+
+    monkeypatch.setattr(type(public_voice_module._stt_provider), "transcribe", _fake_transcribe)
+    monkeypatch.setattr(type(public_voice_module._tts_provider), "synthesize", _instant_synthesize)
+
+    email = "endpoint-test-voice-owner-25@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, conversation_id = _start_voice_session(assistant_id)
+        with client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws:
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            ws.send_bytes(b"real-audio-for-the-transcript-check")
+            ws.send_text(json.dumps({"type": "end_turn"}))
+            ws.receive_json()  # transcript
+            ws.receive_json()  # reply
+
+        end_url = (
+            f"/public/assistants/{assistant_id}/conversations/{conversation_id}"
+            f"/voice-sessions/{voice_session_id}/end"
+        )
+        end_response = client.post(end_url, headers={"Authorization": f"Bearer {token}"})
+        assert end_response.status_code == 200
+
+        transcript = end_response.json()["transcript"]
+        assert len(transcript) == 2
+        assert transcript[0]["role"] == "user"
+        assert transcript[0]["content"] == "what is your refund policy"
+        assert transcript[1]["role"] == "assistant"
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)
