@@ -126,7 +126,6 @@ feature has this identical, well-understood limitation.
 
 import uuid
 from typing import Annotated
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -144,7 +143,7 @@ from models.conversation import Conversation
 from rate_limit import MESSAGE_SEND_RATE_LIMIT, check_rate_limit
 from repositories.assistant import get_public_assistant_by_id
 from repositories.conversation import ConversationRepository
-from repositories.security_settings import SecuritySettingsRepository
+from repositories.security_settings import SecuritySettingsRepository, origin_is_allowed
 from repositories.voice_session import VoiceSessionRepository
 from schemas.conversation import AnonymousConversationRead
 from schemas.message import MessageCreate, MessageRead
@@ -155,17 +154,6 @@ router = APIRouter(prefix="/public/assistants/{assistant_id}/conversations", tag
 PublicDb = Annotated[AsyncSession, Depends(get_db)]
 
 _bearer_scheme = HTTPBearer(auto_error=False)
-
-
-def _origin_is_allowed(origin: str, allowed_domains: list[str]) -> bool:
-    hostname = urlparse(origin).hostname
-    if not hostname:
-        return False
-    hostname = hostname.lower()
-    return any(
-        hostname == domain or hostname.endswith(f".{domain}")
-        for domain in (raw.lower().strip() for raw in allowed_domains)
-    )
 
 
 async def get_public_assistant(
@@ -181,7 +169,7 @@ async def get_public_assistant(
     ).get_singleton()
     origin = request.headers.get("origin")
     allowed_domains = security_settings.allowed_domains if security_settings else []
-    if allowed_domains and origin and not _origin_is_allowed(origin, allowed_domains):
+    if allowed_domains and origin and not origin_is_allowed(origin, allowed_domains):
         raise ForbiddenError("This assistant is not permitted to be embedded on this domain.")
 
     return assistant
