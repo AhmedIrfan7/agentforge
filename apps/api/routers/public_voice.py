@@ -126,6 +126,29 @@ buffered -- no new timer, no new task, since it only needs to react to
 chunks that have already arrived; 223's own timeout-based check still
 independently covers the case where chunks stop arriving at all.
 
+As of step 225, an in-flight `synthesize` no longer blocks the main
+receive loop: it runs as a real, separate `asyncio.Task`
+(`_stream_synthesis`), started and left running rather than awaited
+directly, so the loop immediately goes back to `websocket.receive()`
+while audio is still streaming out. This is what makes real barge-in
+possible at all -- a single sequential `await` loop structurally
+cannot notice a NEW incoming message while it's still in the middle of
+sending a PREVIOUS one; two concurrent tasks sharing the same
+WebSocket (one sending, one receiving) can. ANY new message the main
+loop receives while a synthesis task is still running is treated as a
+real interruption -- exactly how barge-in works in a real conversation
+(a person starting to talk again IS the interruption signal; no
+separate "stop" gesture is required first): the task is cancelled,
+awaited so its cleanup actually completes before anything else
+happens, and a real `{"type": "interrupted"}` message tells the client
+to stop local playback of whatever it had already buffered. An
+explicit `{"type": "interrupt"}` control message is also supported for
+a client that wants to silence playback without necessarily having new
+audio ready yet (e.g. a stop button) -- it rides the exact same
+cancellation path (every message triggers the same check before
+dispatch), and is a real no-op, not an error, if nothing was actually
+playing.
+
 As of step 222, the same connection also carries real synthesized
 speech back to the client: `{"type": "synthesize", "text": "..."}`
 calls the real `OpenAITTSProvider` (218) and streams its audio back as
@@ -151,6 +174,7 @@ Conversation Engine section already draws for SSE text streaming.
 """
 
 import asyncio
+import contextlib
 import json
 import uuid
 
@@ -272,6 +296,24 @@ async def _authenticate(
     return mime_type
 
 
+async def _stream_synthesis(websocket: WebSocket, text: str) -> None:
+    """Synthesizes `text` and streams it back as chunked binary frames
+    (222) -- run as a standalone `asyncio.Task` (225) rather than
+    awaited inline, so a real barge-in can cancel it mid-flight,
+    including while the provider call itself is still in progress, not
+    just between already-queued chunks."""
+    try:
+        synthesis = await _tts_provider.synthesize(text)
+    except SpeechProviderError:
+        await websocket.send_json(
+            {"type": "error", "message": "Speech synthesis failed. Please try again."}
+        )
+        return
+    for offset in range(0, len(synthesis.audio), AUDIO_STREAM_CHUNK_BYTES):
+        await websocket.send_bytes(synthesis.audio[offset : offset + AUDIO_STREAM_CHUNK_BYTES])
+    await websocket.send_json({"type": "synthesis_done", "content_type": synthesis.content_type})
+
+
 async def _finalize_turn(
     websocket: WebSocket, buffer: bytearray, chunk_sizes: list[int], mime_type: str
 ) -> None:
@@ -309,6 +351,7 @@ async def stream_voice_session_audio(
 
     buffer = bytearray()
     chunk_sizes: list[int] = []
+    synthesis_task: asyncio.Task[None] | None = None
     try:
         while True:
             if buffer:
@@ -327,7 +370,21 @@ async def stream_voice_session_audio(
                 message = await websocket.receive()
 
             if message["type"] == "websocket.disconnect":
+                if synthesis_task is not None and not synthesis_task.done():
+                    synthesis_task.cancel()
                 return
+
+            # Real barge-in (225): ANY new message while a synthesis is
+            # still streaming out is treated as the user interrupting
+            # it -- the same way a person starting to talk again IS the
+            # interruption in a real conversation, no separate "stop"
+            # gesture required first.
+            if synthesis_task is not None and not synthesis_task.done():
+                synthesis_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await synthesis_task
+                synthesis_task = None
+                await websocket.send_json({"type": "interrupted"})
 
             if "bytes" in message and message["bytes"] is not None:
                 chunk = message["bytes"]
@@ -370,22 +427,23 @@ async def stream_voice_session_audio(
                         {"type": "error", "message": "synthesize requires non-empty text."}
                     )
                     continue
-                try:
-                    synthesis = await _tts_provider.synthesize(text)
-                except SpeechProviderError:
-                    await websocket.send_json(
-                        {"type": "error", "message": "Speech synthesis failed. Please try again."}
-                    )
-                    continue
-                for offset in range(0, len(synthesis.audio), AUDIO_STREAM_CHUNK_BYTES):
-                    await websocket.send_bytes(
-                        synthesis.audio[offset : offset + AUDIO_STREAM_CHUNK_BYTES]
-                    )
-                await websocket.send_json(
-                    {"type": "synthesis_done", "content_type": synthesis.content_type}
-                )
+                synthesis_task = asyncio.create_task(_stream_synthesis(websocket, text))
+                continue
+
+            if control_type == "interrupt":
+                # A real no-op, not an error, if nothing was actually
+                # playing -- the interruption-check above already
+                # cancelled and acknowledged any in-flight synthesis
+                # before this dispatch ever runs.
                 continue
 
             await websocket.send_json({"type": "error", "message": "Unknown message type."})
     except WebSocketDisconnect:
         return
+    finally:
+        # A synthesis task's own send calls can outlive an already-
+        # closed connection (e.g. the client disconnects mid-stream) --
+        # cancel it rather than leaving an orphaned task with an
+        # unretrieved exception.
+        if synthesis_task is not None and not synthesis_task.done():
+            synthesis_task.cancel()

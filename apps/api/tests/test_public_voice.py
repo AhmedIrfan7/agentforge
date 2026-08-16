@@ -25,8 +25,16 @@ test precedent in `test_whisper_stt_provider.py`), plus one real
 integration test proving the whole mechanism actually finalizes a turn
 early through the real websocket, real content-size-driven, not just
 the isolated function returning the right boolean.
+
+Step 225's own barge-in tests mock `OpenAITTSProvider.synthesize` with
+a real `asyncio.sleep` delay, not an instant return -- without a real
+window where the synthesis task is genuinely still in flight, a test
+sending an "interrupting" message right after `synthesize` couldn't
+actually prove the interruption happened DURING synthesis rather than
+just really fast after it finished on its own.
 """
 
+import asyncio
 import json
 import time
 import uuid
@@ -642,6 +650,124 @@ async def test_voice_activity_detection_finalizes_a_turn_without_end_turn_or_sil
             response = ws.receive_json()
             assert response == {"type": "transcript", "text": "ok", "language": "english"}
         assert received_audio == [b"x" * 1000 + b"x" * 950 + b"x" * 40 + b"x" * 30 + b"x" * 20]
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_new_audio_during_synthesis_interrupts_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _slow_synthesize(self: object, text: str) -> SynthesisResult:
+        await asyncio.sleep(1.0)
+        return SynthesisResult(audio=b"x" * 100_000, content_type="audio/mpeg")
+
+    monkeypatch.setattr(type(public_voice_module._tts_provider), "synthesize", _slow_synthesize)
+
+    email = "endpoint-test-voice-owner-19@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws:
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            ws.send_text(json.dumps({"type": "synthesize", "text": "a long reply"}))
+            # Real, short wait -- long enough for the server's own task
+            # to have started and be genuinely inside the 1.0s sleep,
+            # well before the fake provider call could ever complete.
+            time.sleep(0.1)
+            ws.send_bytes(b"user starts talking again")
+
+            response = ws.receive_json()
+            assert response == {"type": "interrupted"}
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_explicit_interrupt_message_stops_active_synthesis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _slow_synthesize(self: object, text: str) -> SynthesisResult:
+        await asyncio.sleep(1.0)
+        return SynthesisResult(audio=b"x" * 100_000, content_type="audio/mpeg")
+
+    monkeypatch.setattr(type(public_voice_module._tts_provider), "synthesize", _slow_synthesize)
+
+    email = "endpoint-test-voice-owner-20@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws:
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            ws.send_text(json.dumps({"type": "synthesize", "text": "a long reply"}))
+            time.sleep(0.1)
+            ws.send_text(json.dumps({"type": "interrupt"}))
+
+            response = ws.receive_json()
+            assert response == {"type": "interrupted"}
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_interrupt_with_nothing_playing_is_a_real_noop() -> None:
+    email = "endpoint-test-voice-owner-21@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws:
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            ws.send_text(json.dumps({"type": "interrupt"}))
+
+            # Nothing was playing -- confirm normal behavior still
+            # works right after, not that some stray error snuck in.
+            ws.send_text(json.dumps({"type": "synthesize"}))
+            response = ws.receive_json()
+            assert response == {"type": "error", "message": "synthesize requires non-empty text."}
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_a_completed_synthesis_still_streams_all_its_audio_when_uninterrupted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_audio = b"y" * 9000
+
+    async def _fake_synthesize(self: object, text: str) -> SynthesisResult:
+        return SynthesisResult(audio=fake_audio, content_type="audio/mpeg")
+
+    monkeypatch.setattr(type(public_voice_module._tts_provider), "synthesize", _fake_synthesize)
+
+    email = "endpoint-test-voice-owner-22@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws:
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            ws.send_text(json.dumps({"type": "synthesize", "text": "uninterrupted reply"}))
+
+            received = bytearray()
+            while True:
+                message = ws.receive()
+                if "bytes" in message and message["bytes"] is not None:
+                    received.extend(message["bytes"])
+                    continue
+                payload = json.loads(message["text"])
+                assert payload == {"type": "synthesis_done", "content_type": "audio/mpeg"}
+                break
+
+            assert bytes(received) == fake_audio
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)
