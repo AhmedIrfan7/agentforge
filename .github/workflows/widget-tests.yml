@@ -21,6 +21,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm --filter @agentforge/widget run build
+      - name: Check bundle size budget
+        run: pnpm --filter @agentforge/widget run check-bundle-size
 
 # No smoke test yet -- step 214 ("widget smoke test: loads on fixture
 # HTML page, sends message") is what needs a real fixture page and a
