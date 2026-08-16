@@ -2,7 +2,7 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
-  max-width: 480px;
+  max-width: 560px;
 }
 
 .heading {
@@ -31,22 +31,6 @@
   padding: 20px;
   border: 1px solid rgba(128, 128, 128, 0.25);
   border-radius: 12px;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 0.875rem;
-}
-
-.field input {
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(128, 128, 128, 0.4);
-  background: var(--background);
-  color: var(--foreground);
-  font-size: 0.9375rem;
 }
 
 .error {
@@ -91,46 +75,35 @@
   border-radius: 8px;
 }
 
-.workspaceName {
+.itemName {
   font-size: 0.9375rem;
   font-weight: 500;
 }
 
-.workspaceSlug {
+.itemSlug {
   font-size: 0.8125rem;
   color: rgba(128, 128, 128, 0.85);
 }
 
-.listItemActions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.statusBadge {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
-.manageLink {
-  font-size: 0.8125rem;
-  color: #4f46e5;
+.statusInProgress {
+  background: rgba(217, 119, 6, 0.15);
+  color: #d97706;
 }
 
-.manageLink:hover {
-  text-decoration: underline;
+.statusSuccess {
+  background: rgba(22, 163, 74, 0.15);
+  color: #16a34a;
 }
 
-.deleteButton {
-  padding: 6px 12px;
-  border-radius: 6px;
-  border: 1px solid rgba(220, 38, 38, 0.4);
-  background: transparent;
+.statusFailure {
+  background: rgba(220, 38, 38, 0.15);
   color: #dc2626;
-  font-size: 0.8125rem;
-  cursor: pointer;
-}
-
-.deleteButton:disabled {
-  opacity: 0.6;
-  cursor: wait;
-}
-
-.deleteButton:hover:not(:disabled) {
-  background: rgba(220, 38, 38, 0.1);
 }

@@ -15,7 +15,7 @@
 // lives) rather than duplicating that form here too.
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { slugify } from "@/lib/slugify";
 import { useCurrentOrganization } from "@/lib/useCurrentOrganization";
 import { createWorkspace, deleteWorkspace, listWorkspaces, type Workspace } from "@/lib/workspaces";
@@ -57,15 +57,32 @@ function WorkspaceList({ organizationId }: { organizationId: string }) {
   const [createError, setCreateError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const reload = useCallback(() => {
-    listWorkspaces(organizationId)
-      .then(setWorkspaces)
-      .catch((err: Error) => setListError(err.message));
-  }, [organizationId]);
-
+  // A real bug lived here, caught live via Playwright, not by
+  // inspection: with no cancellation guard, React's Strict Mode
+  // (development only -- the same mode `pnpm run dev`/e2e/CI all run
+  // against) double-invokes this effect, firing two overlapping GETs.
+  // If the second, stale one resolves AFTER a user's own create/delete
+  // has already optimistically updated `workspaces`, it silently
+  // overwrites that correct state with the earlier, now-outdated
+  // snapshot -- intermittent, exactly the "sometimes passes, sometimes
+  // times out waiting for a just-created row" symptom that surfaced.
   useEffect(() => {
-    reload();
-  }, [reload]);
+    let cancelled = false;
+    listWorkspaces(organizationId)
+      .then((items) => {
+        if (!cancelled) {
+          setWorkspaces(items);
+        }
+      })
+      .catch((err: Error) => {
+        if (!cancelled) {
+          setListError(err.message);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [organizationId]);
 
   async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -167,14 +184,22 @@ function WorkspaceList({ organizationId }: { organizationId: string }) {
                 <div className={styles.workspaceName}>{workspace.name}</div>
                 <div className={styles.workspaceSlug}>{workspace.slug}</div>
               </div>
-              <button
-                type="button"
-                className={styles.deleteButton}
-                onClick={() => handleDelete(workspace)}
-                disabled={deletingId === workspace.id}
-              >
-                {deletingId === workspace.id ? "Deleting…" : "Delete"}
-              </button>
+              <div className={styles.listItemActions}>
+                <Link
+                  href={`/dashboard/workspaces/${workspace.id}/knowledge-bases`}
+                  className={styles.manageLink}
+                >
+                  Knowledge bases
+                </Link>
+                <button
+                  type="button"
+                  className={styles.deleteButton}
+                  onClick={() => handleDelete(workspace)}
+                  disabled={deletingId === workspace.id}
+                >
+                  {deletingId === workspace.id ? "Deleting…" : "Delete"}
+                </button>
+              </div>
             </li>
           ))}
         </ul>
