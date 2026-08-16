@@ -21,6 +21,7 @@ from models.security_settings import SecuritySettings
 from models.session import Session
 from models.user import User
 from models.verification_token import VerificationToken
+from models.voice_session import VoiceSession
 from models.workspace import Workspace
 
 __all__ = [
@@ -45,5 +46,6 @@ __all__ = [
     "Session",
     "User",
     "VerificationToken",
+    "VoiceSession",
     "Workspace",
 ]
