@@ -1,13 +1,14 @@
 """Integration tests for the streaming audio ingestion WebSocket
-(roadmap step 221). Same real org/workspace/kb/public-assistant setup
-`test_public_conversation.py` already established, plus a real
+(roadmap steps 221-222). Same real org/workspace/kb/public-assistant
+setup `test_public_conversation.py` already established, plus a real
 anonymous conversation + voice session started through the actual REST
 endpoints (192, 220) -- nothing here is mocked except
-`WhisperSTTProvider.transcribe` itself for the success-path tests,
-since re-proving Whisper's own request/response handling is already
-`test_whisper_stt_provider.py`'s job; this file is about proving the
-WebSocket endpoint's own auth/protocol/buffering logic, not the STT
-provider's.
+`WhisperSTTProvider.transcribe`/`OpenAITTSProvider.synthesize`
+themselves for the success-path tests, since re-proving those
+providers' own request/response handling is already
+`test_whisper_stt_provider.py`/`test_openai_tts_provider.py`'s job;
+this file is about proving the WebSocket endpoint's own auth/protocol/
+buffering logic, not the providers'.
 """
 
 import json
@@ -34,7 +35,7 @@ from models.user import User
 from models.voice_session import VoiceSession
 from models.workspace import Workspace
 from tests.helpers import auth_headers, signup_and_login
-from voice.base import TranscriptionResult
+from voice.base import SynthesisResult, TranscriptionResult
 
 client = TestClient(app)
 
@@ -356,6 +357,108 @@ async def test_exceeding_the_max_buffer_size_closes_the_connection(
             assert response["type"] == "error"
             with pytest.raises(WebSocketDisconnect):
                 ws.receive_json()
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_synthesize_streams_real_audio_chunks_then_a_done_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_audio = b"x" * 10_000  # spans multiple 4096-byte chunks
+
+    async def _fake_synthesize(self: object, text: str) -> SynthesisResult:
+        assert text == "here is your answer"
+        return SynthesisResult(audio=fake_audio, content_type="audio/mpeg")
+
+    monkeypatch.setattr(type(public_voice_module._tts_provider), "synthesize", _fake_synthesize)
+
+    email = "endpoint-test-voice-owner-11@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws:
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            ws.send_text(json.dumps({"type": "synthesize", "text": "here is your answer"}))
+
+            received = bytearray()
+            while True:
+                message = ws.receive()
+                if "bytes" in message and message["bytes"] is not None:
+                    received.extend(message["bytes"])
+                    continue
+                payload = json.loads(message["text"])
+                assert payload == {"type": "synthesis_done", "content_type": "audio/mpeg"}
+                break
+
+            assert bytes(received) == fake_audio
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_synthesize_with_no_text_returns_an_error() -> None:
+    email = "endpoint-test-voice-owner-12@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws:
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            ws.send_text(json.dumps({"type": "synthesize"}))
+            response = ws.receive_json()
+            assert response["type"] == "error"
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_a_real_synthesis_failure_is_reported_as_an_error() -> None:
+    """Exercises the REAL OpenAITTSProvider against the real
+    api.openai.com endpoint with no API key configured in this
+    environment -- the same honest, fail-closed behavior
+    test_openai_tts_provider.py's own live probe already documented."""
+    email = "endpoint-test-voice-owner-13@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws:
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            ws.send_text(json.dumps({"type": "synthesize", "text": "hello there"}))
+            response = ws.receive_json()
+            assert response["type"] == "error"
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_an_unknown_message_type_returns_an_error_without_closing() -> None:
+    email = "endpoint-test-voice-owner-14@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws:
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            ws.send_text(json.dumps({"type": "not_a_real_type"}))
+            response = ws.receive_json()
+            assert response["type"] == "error"
+
+            # Connection stays open -- a real end_turn right after still works.
+            ws.send_bytes(b"still works")
+            ws.send_text(json.dumps({"type": "end_turn"}))
+            second_response = ws.receive_json()
+            assert second_response["type"] == "error"  # real STT failure, no API key
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)

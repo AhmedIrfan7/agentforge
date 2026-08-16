@@ -73,6 +73,29 @@ PREVENTION" section names exactly this class of risk
 the connection with WebSocket close code 1009 ("message too big"), the
 closest standard code for this real (if here, cumulative-across-frames
 rather than single-frame) condition.
+
+As of step 222, the same connection also carries real synthesized
+speech back to the client: `{"type": "synthesize", "text": "..."}`
+calls the real `OpenAITTSProvider` (218) and streams its audio back as
+a sequence of real BINARY frames (`AUDIO_STREAM_CHUNK_BYTES` each,
+4 KB -- small enough that real client-side playback can start well
+before the whole clip has arrived, the actual point of "streaming"
+here, not an arbitrary number), terminated by a real
+`{"type": "synthesis_done", "content_type": ...}` marker so the client
+knows where one synthesis's audio ends (frames from a later synthesis,
+or unrelated STT traffic on the same connection, could otherwise be
+ambiguous). Deliberately NOT wired to "speak the assistant's real
+generated reply" yet -- that reply doesn't exist until step 226 wires
+the orchestrator in; `text` is caller-supplied here, the same
+"real, complete mechanism, deliberately decoupled from where its input
+comes from" scoping `voice/whisper.py` (217) and `voice/openai_tts.py`
+(218) themselves already used before ANYTHING wired them into a real
+session flow. "Streaming" is real transport chunking of one already-
+fully-synthesized buffer, not real token-level incremental TTS
+generation -- OpenAI's own TTS API returns one complete audio response,
+not a token stream, the same honest "real transport, not real
+generation-level streaming" distinction `docs/ARCHITECTURE.md`'s own
+Conversation Engine section already draws for SSE text streaming.
 """
 
 import json
@@ -86,13 +109,16 @@ from repositories.assistant import get_public_assistant_by_id
 from repositories.security_settings import SecuritySettingsRepository, origin_is_allowed
 from repositories.voice_session import VoiceSessionRepository
 from voice.base import SpeechProviderError
+from voice.openai_tts import OpenAITTSProvider
 from voice.whisper import WhisperSTTProvider
 
 router = APIRouter(prefix="/public/assistants/{assistant_id}/voice-sessions", tags=["public-voice"])
 
 MAX_AUDIO_BUFFER_BYTES = 20 * 1024 * 1024
+AUDIO_STREAM_CHUNK_BYTES = 4096
 
 _stt_provider = WhisperSTTProvider()
+_tts_provider = OpenAITTSProvider()
 
 
 async def _authenticate(
@@ -213,26 +239,50 @@ async def stream_voice_session_audio(
                 await websocket.send_json({"type": "error", "message": "Invalid JSON message."})
                 continue
 
-            if control.get("type") != "end_turn":
-                await websocket.send_json({"type": "error", "message": "Unknown message type."})
+            control_type = control.get("type")
+
+            if control_type == "end_turn":
+                if not buffer:
+                    await websocket.send_json(
+                        {"type": "error", "message": "No audio received before end_turn."}
+                    )
+                    continue
+                try:
+                    result = await _stt_provider.transcribe(bytes(buffer), mime_type=mime_type)
+                    await websocket.send_json(
+                        {"type": "transcript", "text": result.text, "language": result.language}
+                    )
+                except SpeechProviderError:
+                    await websocket.send_json(
+                        {"type": "error", "message": "Transcription failed. Please try again."}
+                    )
+                finally:
+                    buffer.clear()
                 continue
 
-            if not buffer:
+            if control_type == "synthesize":
+                text = control.get("text")
+                if not isinstance(text, str) or not text:
+                    await websocket.send_json(
+                        {"type": "error", "message": "synthesize requires non-empty text."}
+                    )
+                    continue
+                try:
+                    synthesis = await _tts_provider.synthesize(text)
+                except SpeechProviderError:
+                    await websocket.send_json(
+                        {"type": "error", "message": "Speech synthesis failed. Please try again."}
+                    )
+                    continue
+                for offset in range(0, len(synthesis.audio), AUDIO_STREAM_CHUNK_BYTES):
+                    await websocket.send_bytes(
+                        synthesis.audio[offset : offset + AUDIO_STREAM_CHUNK_BYTES]
+                    )
                 await websocket.send_json(
-                    {"type": "error", "message": "No audio received before end_turn."}
+                    {"type": "synthesis_done", "content_type": synthesis.content_type}
                 )
                 continue
 
-            try:
-                result = await _stt_provider.transcribe(bytes(buffer), mime_type=mime_type)
-                await websocket.send_json(
-                    {"type": "transcript", "text": result.text, "language": result.language}
-                )
-            except SpeechProviderError:
-                await websocket.send_json(
-                    {"type": "error", "message": "Transcription failed. Please try again."}
-                )
-            finally:
-                buffer.clear()
+            await websocket.send_json({"type": "error", "message": "Unknown message type."})
     except WebSocketDisconnect:
         return
