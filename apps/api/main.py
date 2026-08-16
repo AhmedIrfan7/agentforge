@@ -11,6 +11,7 @@ from routers import (
     document,
     invitation,
     knowledge_base,
+    membership,
     memory,
     mfa,
     oauth,
@@ -60,6 +61,7 @@ app.include_router(organization.router)
 app.include_router(workspace.router)
 app.include_router(invitation.router)
 app.include_router(invitation.accept_router)
+app.include_router(membership.router)
 app.include_router(security_settings.router)
 app.include_router(knowledge_base.router)
 app.include_router(document.router)

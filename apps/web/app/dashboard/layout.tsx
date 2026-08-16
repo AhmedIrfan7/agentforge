@@ -8,10 +8,10 @@
 // docstring already gives for why this can't be a Server Component.
 //
 // Real nav links only ever appear here once their own real page lands
-// -- Settings (234) and Workspaces (235) so far; knowledge-bases/etc.
-// each add their own entry as their own step lands, matching how this
-// codebase everywhere else avoids wiring a UI affordance to a route
-// that doesn't exist yet.
+// -- Settings (234), Workspaces (235), Members (239) so far;
+// knowledge-bases/etc. each add their own entry as their own step
+// lands, matching how this codebase everywhere else avoids wiring a
+// UI affordance to a route that doesn't exist yet.
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -39,6 +39,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <span className={styles.brand}>AgentForge</span>
         <Link href="/dashboard/workspaces" className={styles.navLink}>
           Workspaces
+        </Link>
+        <Link href="/dashboard/members" className={styles.navLink}>
+          Members
         </Link>
         <Link href="/dashboard/settings" className={styles.navLink}>
           Settings
