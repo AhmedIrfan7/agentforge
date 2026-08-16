@@ -20,18 +20,13 @@
   font-size: 0.9375rem;
 }
 
-.manageLink {
-  align-self: flex-start;
-  font-size: 0.8125rem;
-  color: #4f46e5;
-}
-
-.manageLink:hover {
-  text-decoration: underline;
-}
-
 .status {
   color: rgba(128, 128, 128, 0.8);
+}
+
+.error {
+  font-size: 0.8125rem;
+  color: #dc2626;
 }
 
 .card {
@@ -43,9 +38,20 @@
   border-radius: 12px;
 }
 
-.error {
-  font-size: 0.8125rem;
-  color: #dc2626;
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.875rem;
+}
+
+.field input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 0.9375rem;
 }
 
 .submit {
@@ -103,25 +109,21 @@
   color: rgba(128, 128, 128, 0.85);
 }
 
-.statusBadge {
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.statusInProgress {
-  background: rgba(217, 119, 6, 0.15);
-  color: #d97706;
-}
-
-.statusSuccess {
-  background: rgba(22, 163, 74, 0.15);
-  color: #16a34a;
-}
-
-.statusFailure {
-  background: rgba(220, 38, 38, 0.15);
+.deleteButton {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(220, 38, 38, 0.4);
+  background: transparent;
   color: #dc2626;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.deleteButton:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.deleteButton:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.1);
 }

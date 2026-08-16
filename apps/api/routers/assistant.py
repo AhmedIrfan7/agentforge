@@ -3,13 +3,16 @@ organization
 (/organizations/{id}/workspaces/{id}/knowledge-bases/{id}/assistants)
 matching the product hierarchy (AGENTS.md's "ORGANIZATION STRUCTURE":
 org -> workspace -> knowledge base -> AI assistant -> ...), one level
-deeper than routers/knowledge_base.py's own nesting. Same scope as
-routers/knowledge_base.py/routers/workspace.py: create, list, get,
-delete -- no update endpoint, mirroring both (neither has one either);
-"CRUD" in this codebase's own usage has consistently meant this same
-four-operation set, not literally requiring update, and a real update
-endpoint would need its own design decision about partial vs. full
-replacement of agent_configuration that nothing has asked for yet.
+deeper than routers/knowledge_base.py's own nesting.
+
+As of step 238 (the assistant-builder UI), a real PATCH endpoint
+exists too (assistant:update, migration 331109d18ff0) -- the design
+decision this docstring used to defer (partial vs. full replacement of
+agent_configuration) landed as a whole-object REPLACE on that one
+field when included, same model_fields_set-driven PATCH shape every
+other update endpoint in this codebase already uses; see
+schemas/assistant.py:AssistantUpdate's own docstring for why a deep
+merge would be wrong here.
 
 Reuses dependencies/knowledge_base.py:TargetKnowledgeBase directly --
 the exact "resolve + cross-check the URL's knowledge_base_id against a
@@ -39,7 +42,7 @@ from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from errors import ConflictError, NotFoundError
 from repositories.assistant import AssistantRepository
-from schemas.assistant import AssistantCreate, AssistantRead
+from schemas.assistant import AssistantCreate, AssistantRead, AssistantUpdate
 from schemas.common import Page, PaginationParams
 
 router = APIRouter(
@@ -130,6 +133,54 @@ async def get_assistant(
     assistant = await repo.get(assistant_id)
     if assistant is None or assistant.knowledge_base_id != knowledge_base.id:
         raise NotFoundError(f"Assistant {assistant_id} not found.")
+    return AssistantRead.model_validate(assistant)
+
+
+@router.patch(
+    "/{assistant_id}",
+    response_model=AssistantRead,
+    dependencies=[Depends(require_permission("assistant:update"))],
+)
+async def update_assistant(
+    assistant_id: uuid.UUID,
+    body: AssistantUpdate,
+    session: TenantDb,
+    tenant_id: TenantId,
+    knowledge_base: TargetKnowledgeBase,
+) -> AssistantRead:
+    repo = AssistantRepository(session, tenant_id)
+    assistant = await repo.get(assistant_id)
+    if assistant is None or assistant.knowledge_base_id != knowledge_base.id:
+        raise NotFoundError(f"Assistant {assistant_id} not found.")
+
+    # Only fields the caller actually included get applied --
+    # model_fields_set-driven PATCH semantics, same pattern every other
+    # update endpoint in this codebase already uses. agent_configuration
+    # needs .model_dump() before it can go into the JSONB column, same
+    # reasoning create_assistant's own body.agent_configuration.
+    # model_dump() call above already established -- setattr() alone
+    # would store a live Pydantic object where the column expects a
+    # plain dict.
+    for field_name in body.model_fields_set:
+        value = getattr(body, field_name)
+        if field_name == "agent_configuration" and value is not None:
+            value = value.model_dump()
+        setattr(assistant, field_name, value)
+
+    await write_audit_log(
+        session,
+        tenant_id=tenant_id,
+        action="assistant.update",
+        resource_type="assistant",
+        resource_id=assistant.id,
+    )
+    # write_audit_log's own internal flush() expires updated_at
+    # (onupdate=func.now(), server-computed) -- a real, awaited refresh
+    # gets the actual persisted value back instead of Pydantic's
+    # synchronous model_validate raising MissingGreenlet trying to
+    # lazy-load it, same fix routers/organization.py's own PATCH
+    # endpoint needed at step 234.
+    await session.refresh(assistant)
     return AssistantRead.model_validate(assistant)
 
 

@@ -152,6 +152,12 @@ function DocumentList({
   return (
     <div className={styles.wrapper}>
       <h1 className={styles.heading}>Documents</h1>
+      <Link
+        href={`/dashboard/workspaces/${workspaceId}/knowledge-bases/${knowledgeBaseId}/assistants`}
+        className={styles.manageLink}
+      >
+        Manage assistants
+      </Link>
 
       <form className={styles.card} onSubmit={handleUpload}>
         <h2 className={styles.sectionHeading}>Upload a document</h2>

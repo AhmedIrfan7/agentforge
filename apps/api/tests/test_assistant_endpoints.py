@@ -337,3 +337,172 @@ async def test_duplicate_slug_within_knowledge_base_conflicts_but_other_kb_ok() 
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_update_assistant_is_a_real_partial_update() -> None:
+    email = "endpoint-test-asst-update-1@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_workspace_kb(email)
+    try:
+        create_response = client.post(
+            _asst_url(org_id, workspace_id, kb_id),
+            json={
+                "name": "Original Name",
+                "slug": "endpoint-test-asst-update",
+                "description": "Original description.",
+            },
+            headers=headers,
+        )
+        assistant_id = create_response.json()["id"]
+        assert create_response.json()["instructions"] is None
+
+        # Only instructions -- name/description must stay untouched.
+        first_response = client.patch(
+            _asst_url(org_id, workspace_id, kb_id, f"/{assistant_id}"),
+            json={"instructions": "Always cite your sources."},
+            headers=headers,
+        )
+        assert first_response.status_code == 200
+        body = first_response.json()
+        assert body["instructions"] == "Always cite your sources."
+        assert body["name"] == "Original Name"
+        assert body["description"] == "Original description."
+
+        # Only name -- instructions set moments ago must survive.
+        second_response = client.patch(
+            _asst_url(org_id, workspace_id, kb_id, f"/{assistant_id}"),
+            json={"name": "Renamed"},
+            headers=headers,
+        )
+        assert second_response.status_code == 200
+        body = second_response.json()
+        assert body["name"] == "Renamed"
+        assert body["instructions"] == "Always cite your sources."
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_update_assistant_agent_configuration_and_is_public() -> None:
+    email = "endpoint-test-asst-update-2@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_workspace_kb(email)
+    try:
+        create_response = client.post(
+            _asst_url(org_id, workspace_id, kb_id),
+            json={"name": "Config Bot", "slug": "endpoint-test-asst-update-config"},
+            headers=headers,
+        )
+        assistant_id = create_response.json()["id"]
+        assert create_response.json()["is_public"] is False
+
+        response = client.patch(
+            _asst_url(org_id, workspace_id, kb_id, f"/{assistant_id}"),
+            json={
+                "agent_configuration": {
+                    "llm_provider": "anthropic",
+                    "enabled_agents": ["retriever", "citation"],
+                    "retrieval_top_k": 25,
+                },
+                "is_public": True,
+            },
+            headers=headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["agent_configuration"] == {
+            "llm_provider": "anthropic",
+            "enabled_agents": ["retriever", "citation"],
+            "retrieval_top_k": 25,
+        }
+        assert body["is_public"] is True
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_explicitly_nulling_assistant_name_returns_422() -> None:
+    email = "endpoint-test-asst-update-3@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_workspace_kb(email)
+    try:
+        create_response = client.post(
+            _asst_url(org_id, workspace_id, kb_id),
+            json={"name": "Null Name Test", "slug": "endpoint-test-asst-update-null"},
+            headers=headers,
+        )
+        assistant_id = create_response.json()["id"]
+
+        response = client.patch(
+            _asst_url(org_id, workspace_id, kb_id, f"/{assistant_id}"),
+            json={"name": None},
+            headers=headers,
+        )
+        assert response.status_code == 422
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_update_nonexistent_assistant_returns_404() -> None:
+    email = "endpoint-test-asst-update-4@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_workspace_kb(email)
+    try:
+        response = client.patch(
+            _asst_url(org_id, workspace_id, kb_id, f"/{uuid.uuid4()}"),
+            json={"name": "Doesn't Matter"},
+            headers=headers,
+        )
+        assert response.status_code == 404
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_end_user_role_cannot_update_assistant() -> None:
+    owner_email = "endpoint-test-asst-update-owner@example.com"
+    org_id, workspace_id, kb_id, headers = _new_org_workspace_kb(owner_email)
+    try:
+        create_response = client.post(
+            _asst_url(org_id, workspace_id, kb_id),
+            json={"name": "Protected Bot", "slug": "endpoint-test-asst-update-protected"},
+            headers=headers,
+        )
+        assistant_id = create_response.json()["id"]
+
+        member_token = signup_and_login(
+            client,
+            email="endpoint-test-asst-update-member@example.com",
+            password="correct horse battery staple",
+            full_name="End User Member",
+        )
+        async with get_session() as session:
+            result = await session.execute(
+                select(User).where(User.email == "endpoint-test-asst-update-member@example.com")
+            )
+            member_user = result.scalar_one()
+            role_result = await session.execute(select(Role).where(Role.name == "end_user"))
+            end_user_role = role_result.scalar_one()
+            await set_tenant_context(session, org_id)
+            session.add(
+                Membership(
+                    tenant_id=org_id,
+                    user_id=member_user.id,
+                    workspace_id=None,
+                    role_id=end_user_role.id,
+                )
+            )
+            await session.commit()
+
+        response = client.patch(
+            _asst_url(org_id, workspace_id, kb_id, f"/{assistant_id}"),
+            json={"name": "Hijacked Name"},
+            headers=auth_headers(member_token),
+        )
+        assert response.status_code == 403
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user("endpoint-test-asst-update-member@example.com")

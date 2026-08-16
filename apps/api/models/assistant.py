@@ -38,11 +38,15 @@ thing standing between the public internet and an org's assistant --
 same "non-guessable ID is defense in depth, not the whole control"
 reasoning invitation tokens already established (hashed + a real
 expiry/accepted/revoked lifecycle, not just an unguessable value).
-Settable only at creation time (`schemas/assistant.py:AssistantCreate`)
--- Assistant has no update endpoint yet (step 160's own docstring:
-"CRUD... unlike KnowledgeBase" still means create/list/get/delete
-only), and inventing one now, for this one field, would be scope this
-step doesn't ask for.
+
+As of step 238 (the assistant-builder UI), `instructions` (nullable
+system-prompt text) lands and a real `PATCH .../assistants/{id}`
+endpoint finally exists (`assistant:update`, migration `331109d18ff0`)
+-- the "no update endpoint yet" limitation this docstring used to note
+for `is_public` no longer applies to any field on this model; that
+endpoint updates name/description/instructions/agent_configuration/
+is_public uniformly, the same `model_fields_set`-driven PATCH pattern
+every other update endpoint in this codebase already uses.
 """
 
 import uuid
@@ -71,6 +75,12 @@ class Assistant(TenantScopedEntity, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(nullable=False)
     slug: Mapped[str] = mapped_column(nullable=False)
     description: Mapped[str | None] = mapped_column(nullable=True)
+    # System-prompt instructions (roadmap step 238, AGENTS.md's own "AI
+    # ASSISTANTS" list) -- nullable, unlike agent_configuration (a real
+    # default already existed from step 158): an assistant with no
+    # instructions yet is a normal, honest state, not one needing a
+    # default value.
+    instructions: Mapped[str | None] = mapped_column(nullable=True)
     agent_configuration: Mapped[dict[str, object]] = mapped_column(
         JSONB, nullable=False, default=dict
     )
