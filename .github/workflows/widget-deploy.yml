@@ -12,9 +12,14 @@ name: Widget Deploy
 #
 # Manually triggered (workflow_dispatch), not on every push to main --
 # a real deployment pipeline for a versioned, embeddable script belongs
-# on a deliberate release action, not every commit; step 210 ("widget
-# versioning strategy") is what a future git-tag-triggered version of
-# this would build on, once that scheme actually exists.
+# on a deliberate release action, not every commit.
+#
+# As of step 210, this deploys real, permanently PINNED per-version
+# URLs alongside a "latest" one -- see
+# apps/widget/scripts/assemble-pages-artifact.mjs's own docstring for
+# why that needs real logic (GitHub Pages fully replaces its content
+# on every deploy, so naively re-deploying just the new build would
+# silently delete every previously-published version's URL).
 on:
   workflow_dispatch:
 
@@ -44,9 +49,12 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build widget bundle
         run: pnpm --filter @agentforge/widget run build
+      - name: Assemble versioned Pages artifact
+        working-directory: apps/widget
+        run: node scripts/assemble-pages-artifact.mjs
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: apps/widget/dist
+          path: apps/widget/pages-root
 
   deploy:
     needs: build

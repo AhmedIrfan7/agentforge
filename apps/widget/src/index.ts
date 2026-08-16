@@ -14,11 +14,21 @@
 // (`launcher.ts`) -- gated behind a successful config load, so a
 // misconfigured embed shows nothing rather than a broken, non-
 // functional button. Chat window content is step 205's own job.
+//
+// As of step 210, WIDGET_VERSION comes from a real build-time constant
+// (`scripts/build.mjs` injects it from package.json's own "version"
+// field via esbuild's `define`) rather than a second, hand-duplicated
+// literal here that could silently drift from the real published
+// version -- directly relevant now that CDN deploys (209) publish
+// real, permanently pinned per-version URLs a customer's embed can
+// target.
 
 import { loadWidgetConfig, type WidgetConfig } from "./config";
 import { mountLauncher } from "./launcher";
 
-export const WIDGET_VERSION = "0.1.0";
+declare const __WIDGET_VERSION__: string;
+
+export const WIDGET_VERSION = __WIDGET_VERSION__;
 
 let config: WidgetConfig | null = null;
 try {

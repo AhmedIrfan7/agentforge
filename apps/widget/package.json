@@ -1,10 +1,10 @@
 {
   "name": "@agentforge/widget",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --minify --format=iife --global-name=AgentForgeWidget --outfile=dist/widget.js",
+    "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",

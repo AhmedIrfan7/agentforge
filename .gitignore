@@ -20,6 +20,7 @@ build/
 playwright-report/
 test-results/
 blob-report/
+pages-root/
 
 # --- Env & secrets ---
 .env
