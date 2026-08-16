@@ -1,0 +1,59 @@
+name: Widget Deploy
+
+# Roadmap step 209 -- a real CDN deployment target for the embeddable
+# widget bundle (build pipeline itself, step 202). GitHub Pages is the
+# real, live choice here: it's genuinely CDN-backed (GitHub's own
+# Fastly-fronted infrastructure, matching AGENTS.md's own "CDN EMBED
+# ARCHITECTURE" section -- "widget loads securely through the CDN"),
+# free, and needs zero new cloud account or secret this project
+# doesn't already have -- unlike AWS S3+CloudFront or a similar
+# provider, which would need real credentials that don't exist in this
+# repo yet (Milestone 11's own infrastructure work, much later).
+#
+# Manually triggered (workflow_dispatch), not on every push to main --
+# a real deployment pipeline for a versioned, embeddable script belongs
+# on a deliberate release action, not every commit; step 210 ("widget
+# versioning strategy") is what a future git-tag-triggered version of
+# this would build on, once that scheme actually exists.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment can run at a time; never cancel one that's
+# already in flight (a half-deployed CDN target is worse than a queued
+# one waiting its turn).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build widget bundle
+        run: pnpm --filter @agentforge/widget run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/widget/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
