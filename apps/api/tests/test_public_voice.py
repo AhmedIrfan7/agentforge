@@ -65,6 +65,21 @@ from voice.base import SynthesisResult, TranscriptionResult
 client = TestClient(app)
 
 
+async def _instant_synthesize(self: object, text: str) -> SynthesisResult:
+    """Fast, real success -- used by tests whose own focus is
+    transcription/turn-management, not synthesis (step 226's real
+    orchestrator wiring means a non-empty transcript now always
+    triggers a real background synthesis attempt too). Without this,
+    those tests would each leave a REAL, unmocked OpenAITTSProvider
+    call in flight that gets abruptly cancelled the instant the test's
+    own `with client.websocket_connect(...)` block closes the
+    connection -- a real, if harmless, `Future exception was never
+    retrieved` warning from httpx's own connection-attempt cleanup, not
+    a functional bug, but real unnecessary noise/network activity this
+    fixes at the source rather than tolerating."""
+    return SynthesisResult(audio=b"", content_type="audio/mpeg")
+
+
 async def _cleanup_org(org_id: uuid.UUID) -> None:
     async with get_session() as session:
         await set_tenant_context(session, org_id)
@@ -275,6 +290,7 @@ async def test_streaming_audio_then_end_turn_returns_a_real_transcript(
         return TranscriptionResult(text="what is your refund policy", language="english")
 
     monkeypatch.setattr(type(public_voice_module._stt_provider), "transcribe", _fake_transcribe)
+    monkeypatch.setattr(type(public_voice_module._tts_provider), "synthesize", _instant_synthesize)
 
     email = "endpoint-test-voice-owner-7@example.com"
     org_id, assistant_id = _new_org_workspace_kb_assistant(email)
@@ -312,6 +328,20 @@ async def test_a_second_turn_on_the_same_connection_works_after_the_buffer_reset
         return TranscriptionResult(text=f"turn {len(calls)}", language="english")
 
     monkeypatch.setattr(type(public_voice_module._stt_provider), "transcribe", _fake_transcribe)
+    monkeypatch.setattr(type(public_voice_module._tts_provider), "synthesize", _instant_synthesize)
+
+    def _receive_transcript() -> dict[str, object]:
+        # Step 226 also generates and streams back a real reply/
+        # synthesis per turn -- this test's own real interest is
+        # multi-turn buffer-reset behavior, not that flow (covered by
+        # its own dedicated tests), so filter for the one message type
+        # this test actually cares about rather than assuming a fixed
+        # position in a per-turn sequence that now has more than one
+        # message in it.
+        while True:
+            message = json.loads(ws.receive_text())
+            if message["type"] == "transcript":
+                return message  # type: ignore[no-any-return]
 
     email = "endpoint-test-voice-owner-8@example.com"
     org_id, assistant_id = _new_org_workspace_kb_assistant(email)
@@ -323,11 +353,11 @@ async def test_a_second_turn_on_the_same_connection_works_after_the_buffer_reset
 
             ws.send_bytes(b"turn-one-audio")
             ws.send_text(json.dumps({"type": "end_turn"}))
-            first = ws.receive_json()
+            first = _receive_transcript()
 
             ws.send_bytes(b"turn-two-audio")
             ws.send_text(json.dumps({"type": "end_turn"}))
-            second = ws.receive_json()
+            second = _receive_transcript()
 
             assert first["text"] == "turn 1"
             assert second["text"] == "turn 2"
@@ -556,6 +586,7 @@ async def test_a_message_before_the_timeout_prevents_auto_finalize(
         return TranscriptionResult(text="ok", language="english")
 
     monkeypatch.setattr(type(public_voice_module._stt_provider), "transcribe", _fake_transcribe)
+    monkeypatch.setattr(type(public_voice_module._tts_provider), "synthesize", _instant_synthesize)
 
     email = "endpoint-test-voice-owner-17@example.com"
     org_id, assistant_id = _new_org_workspace_kb_assistant(email)
@@ -629,6 +660,7 @@ async def test_voice_activity_detection_finalizes_a_turn_without_end_turn_or_sil
         return TranscriptionResult(text="ok", language="english")
 
     monkeypatch.setattr(type(public_voice_module._stt_provider), "transcribe", _fake_transcribe)
+    monkeypatch.setattr(type(public_voice_module._tts_provider), "synthesize", _instant_synthesize)
 
     email = "endpoint-test-voice-owner-18@example.com"
     org_id, assistant_id = _new_org_workspace_kb_assistant(email)

@@ -159,30 +159,68 @@ here, not an arbitrary number), terminated by a real
 `{"type": "synthesis_done", "content_type": ...}` marker so the client
 knows where one synthesis's audio ends (frames from a later synthesis,
 or unrelated STT traffic on the same connection, could otherwise be
-ambiguous). Deliberately NOT wired to "speak the assistant's real
-generated reply" yet -- that reply doesn't exist until step 226 wires
-the orchestrator in; `text` is caller-supplied here, the same
-"real, complete mechanism, deliberately decoupled from where its input
-comes from" scoping `voice/whisper.py` (217) and `voice/openai_tts.py`
-(218) themselves already used before ANYTHING wired them into a real
-session flow. "Streaming" is real transport chunking of one already-
+ambiguous). "Streaming" is real transport chunking of one already-
 fully-synthesized buffer, not real token-level incremental TTS
 generation -- OpenAI's own TTS API returns one complete audio response,
 not a token stream, the same honest "real transport, not real
 generation-level streaming" distinction `docs/ARCHITECTURE.md`'s own
 Conversation Engine section already draws for SSE text streaming.
+
+As of step 226, a finished turn is finally a REAL conversation turn,
+not just a transcript echoed back: `_finalize_turn` now calls the
+exact same `message_processing.py:generate_assistant_reply` pipeline
+text chat already uses -- the real orchestrator call, real citation
+building, and persisting BOTH the user's and the assistant's `Message`
+rows under this voice session's own `conversation_id` (step 219's own
+"a voice session is a real conversations.id FK, not a parallel
+transcript system" design finally has a real writer). The reply text
+comes back as `{"type": "reply", "text": ..., "citations": [...]}`
+(the same citation shape `CitationRead`/`citation_json` already
+produce for text chat, sent as real, immediate on-screen/caption text
+a client can render right away), then the SAME `_stream_synthesis`
+mechanism (222/225) speaks it -- so a real voice turn now goes
+audio-in -> real transcript -> real orchestrator reply -> real speech
+back out, entirely through infrastructure this milestone already
+built and tested piece by piece, not new machinery invented here.
+
+A real empty/near-silent transcript (Whisper can legitimately return
+whitespace-only text for audio that still passed VAD's own crude
+size-based check) skips generation entirely -- the transcript is still
+sent honestly, but there's nothing meaningful to route through the
+orchestrator, and doing so anyway would be a wasted real LLM-adjacent
+call for a message with no content. The SAME per-tenant rate limit
+`routers/public_conversation.py`'s own anonymous message-send already
+enforces (`check_rate_limit`, keyed by `tenant_id`, shared budget
+across every real door into `orchestrator.handle()`) applies here too,
+now that this endpoint finally triggers that real cost -- checked right
+before calling `generate_assistant_reply`, not on every audio chunk,
+since a chunk isn't a turn.
+
+`_authenticate` now returns a small `_AuthenticatedSession` bundle
+(`mime_type`/`tenant_id`/`assistant_id`/`conversation_id`) instead of
+just `mime_type` -- plain values, not the `Assistant`/`Conversation`
+ORM objects themselves, since those would be bound to the auth-time
+session and unsafe to touch once it closes (the exact `Message`/
+`Conversation` attribute-expiry class of bug steps 189/193 already
+found live in this codebase); `_finalize_turn` opens its own fresh
+session and re-fetches both by id when it actually needs them.
 """
 
 import asyncio
 import contextlib
 import json
 import uuid
+from dataclasses import dataclass
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from auth.jwt import TokenError, decode_anonymous_session_token
 from db import get_session, set_tenant_context
-from repositories.assistant import get_public_assistant_by_id
+from errors import TooManyRequestsError
+from message_processing import generate_assistant_reply
+from rate_limit import MESSAGE_SEND_RATE_LIMIT, check_rate_limit
+from repositories.assistant import AssistantRepository, get_public_assistant_by_id
+from repositories.conversation import ConversationRepository
 from repositories.security_settings import SecuritySettingsRepository, origin_is_allowed
 from repositories.voice_session import VoiceSessionRepository
 from voice.base import SpeechProviderError
@@ -216,13 +254,21 @@ def _voice_activity_has_stopped(chunk_sizes: list[int]) -> bool:
     return all(size < peak * VAD_QUIET_THRESHOLD_RATIO for size in recent)
 
 
+@dataclass(frozen=True)
+class _AuthenticatedSession:
+    mime_type: str
+    tenant_id: uuid.UUID
+    assistant_id: uuid.UUID
+    conversation_id: uuid.UUID
+
+
 async def _authenticate(
     websocket: WebSocket, assistant_id: uuid.UUID, voice_session_id: uuid.UUID
-) -> str | None:
+) -> _AuthenticatedSession | None:
     """Validates the first message, the assistant, and the voice
-    session. Returns the real, real caller-supplied `mime_type` on
-    success; sends a real `{"type": "error", ...}` message and closes
-    the socket (returning None) on any failure -- every failure path
+    session. Returns a real `_AuthenticatedSession` bundle on success;
+    sends a real `{"type": "error", ...}` message and closes the
+    socket (returning None) on any failure -- every failure path
     closes with 1008 (Policy Violation), the standard WebSocket code
     for "you violated this endpoint's own protocol/authorization
     rules," matching how `errors.UnauthorizedError`/`NotFoundError`
@@ -293,7 +339,12 @@ async def _authenticate(
             await websocket.close(code=1008, reason="Voice session not found.")
             return None
 
-    return mime_type
+    return _AuthenticatedSession(
+        mime_type=mime_type,
+        tenant_id=assistant.tenant_id,
+        assistant_id=assistant.id,
+        conversation_id=token_conversation_id,
+    )
 
 
 async def _stream_synthesis(websocket: WebSocket, text: str) -> None:
@@ -314,27 +365,89 @@ async def _stream_synthesis(websocket: WebSocket, text: str) -> None:
     await websocket.send_json({"type": "synthesis_done", "content_type": synthesis.content_type})
 
 
-async def _finalize_turn(
-    websocket: WebSocket, buffer: bytearray, chunk_sizes: list[int], mime_type: str
+async def _interrupt_active_synthesis(
+    websocket: WebSocket, synthesis_task: asyncio.Task[None] | None
 ) -> None:
-    """Transcribes whatever's buffered and sends the result -- the one
-    real "a turn just ended" action, shared by the explicit `end_turn`
-    message, the silence-timeout path (223), and the voice-activity
-    path (224) so none of the three duplicates the others' error
-    handling or per-turn state reset. `chunk_sizes` resets alongside
-    `buffer` -- both describe the SAME now-finished turn."""
+    """Cancels a still-running synthesis task and acknowledges the
+    interruption -- the one real "stop speaking, something new just
+    happened" action (225), shared by every real trigger: a new client
+    message, or a turn finalizing automatically via the silence-timeout
+    path, which receives no new message at all and so can't rely on the
+    main loop's own per-message interruption check. A no-op, correctly
+    silent, if nothing was actually playing."""
+    if synthesis_task is None or synthesis_task.done():
+        return
+    synthesis_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await synthesis_task
+    await websocket.send_json({"type": "interrupted"})
+
+
+async def _finalize_turn(
+    websocket: WebSocket, buffer: bytearray, chunk_sizes: list[int], auth: _AuthenticatedSession
+) -> asyncio.Task[None] | None:
+    """Transcribes whatever's buffered, generates a real assistant
+    reply through the exact same `generate_assistant_reply` pipeline
+    text chat uses, and starts speaking it back -- the one real "a turn
+    just ended" action, shared by the explicit `end_turn` message, the
+    silence-timeout path (223), and the voice-activity path (224) so
+    none of the three duplicates the others' error handling or per-turn
+    state reset. `chunk_sizes` resets alongside `buffer` -- both
+    describe the SAME now-finished turn. Returns the new synthesis
+    task (or None on any failure/empty turn) so the caller tracks it
+    the same way an explicit `synthesize` request already does."""
     try:
-        result = await _stt_provider.transcribe(bytes(buffer), mime_type=mime_type)
-        await websocket.send_json(
-            {"type": "transcript", "text": result.text, "language": result.language}
-        )
+        result = await _stt_provider.transcribe(bytes(buffer), mime_type=auth.mime_type)
     except SpeechProviderError:
         await websocket.send_json(
             {"type": "error", "message": "Transcription failed. Please try again."}
         )
+        return None
     finally:
         buffer.clear()
         chunk_sizes.clear()
+
+    await websocket.send_json(
+        {"type": "transcript", "text": result.text, "language": result.language}
+    )
+
+    if not result.text.strip():
+        return None
+
+    try:
+        await check_rate_limit(
+            f"message_send:{auth.tenant_id}", limit=MESSAGE_SEND_RATE_LIMIT, window_seconds=60
+        )
+    except TooManyRequestsError:
+        await websocket.send_json(
+            {"type": "error", "message": "Too many messages. Please try again shortly."}
+        )
+        return None
+
+    async with get_session() as session:
+        await set_tenant_context(session, auth.tenant_id)
+        assistant = await AssistantRepository(session, auth.tenant_id).get(auth.assistant_id)
+        conversation = await ConversationRepository(session, auth.tenant_id).get(
+            auth.conversation_id
+        )
+        if assistant is None or conversation is None:
+            await websocket.send_json(
+                {"type": "error", "message": "This voice session is no longer available."}
+            )
+            return None
+        try:
+            assistant_message = await generate_assistant_reply(
+                session, auth.tenant_id, assistant, conversation, result.text
+            )
+        except Exception:
+            await session.rollback()
+            raise
+        await session.commit()
+        reply_text = assistant_message.content
+        citations = assistant_message.citations
+
+    await websocket.send_json({"type": "reply", "text": reply_text, "citations": citations})
+    return asyncio.create_task(_stream_synthesis(websocket, reply_text))
 
 
 @router.websocket("/{voice_session_id}/audio")
@@ -343,8 +456,8 @@ async def stream_voice_session_audio(
 ) -> None:
     await websocket.accept()
 
-    mime_type = await _authenticate(websocket, assistant_id, voice_session_id)
-    if mime_type is None:
+    auth = await _authenticate(websocket, assistant_id, voice_session_id)
+    if auth is None:
         return
 
     await websocket.send_json({"type": "ready"})
@@ -364,7 +477,14 @@ async def stream_voice_session_audio(
                         websocket.receive(), timeout=SILENCE_TIMEOUT_SECONDS
                     )
                 except TimeoutError:
-                    await _finalize_turn(websocket, buffer, chunk_sizes, mime_type)
+                    # The timeout fired instead of a real message, so
+                    # the main interruption-check below never runs for
+                    # this iteration -- a still-active synthesis (e.g.
+                    # started just before this turn's own silence
+                    # window closed) needs the same real interruption
+                    # here, not just when a new message actually arrives.
+                    await _interrupt_active_synthesis(websocket, synthesis_task)
+                    synthesis_task = await _finalize_turn(websocket, buffer, chunk_sizes, auth)
                     continue
             else:
                 message = await websocket.receive()
@@ -379,12 +499,8 @@ async def stream_voice_session_audio(
             # it -- the same way a person starting to talk again IS the
             # interruption in a real conversation, no separate "stop"
             # gesture required first.
-            if synthesis_task is not None and not synthesis_task.done():
-                synthesis_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await synthesis_task
-                synthesis_task = None
-                await websocket.send_json({"type": "interrupted"})
+            await _interrupt_active_synthesis(websocket, synthesis_task)
+            synthesis_task = None
 
             if "bytes" in message and message["bytes"] is not None:
                 chunk = message["bytes"]
@@ -397,7 +513,7 @@ async def stream_voice_session_audio(
                     return
                 chunk_sizes.append(len(chunk))
                 if _voice_activity_has_stopped(chunk_sizes):
-                    await _finalize_turn(websocket, buffer, chunk_sizes, mime_type)
+                    synthesis_task = await _finalize_turn(websocket, buffer, chunk_sizes, auth)
                 continue
 
             if "text" not in message or message["text"] is None:
@@ -417,7 +533,7 @@ async def stream_voice_session_audio(
                         {"type": "error", "message": "No audio received before end_turn."}
                     )
                     continue
-                await _finalize_turn(websocket, buffer, chunk_sizes, mime_type)
+                synthesis_task = await _finalize_turn(websocket, buffer, chunk_sizes, auth)
                 continue
 
             if control_type == "synthesize":
