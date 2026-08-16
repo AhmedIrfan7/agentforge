@@ -16,86 +16,64 @@ import { useEffect, useState } from "react";
 import {
   createOrganization,
   getSecuritySettings,
-  listOrganizations,
   updateOrganization,
   updateSecuritySettings,
   type Organization,
   type SecuritySettings,
 } from "@/lib/organizations";
+import { slugify } from "@/lib/slugify";
+import { useCurrentOrganization } from "@/lib/useCurrentOrganization";
 import styles from "./page.module.css";
 
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 export default function SettingsPage() {
-  const [loading, setLoading] = useState(true);
-  const [organization, setOrganization] = useState<Organization | null>(null);
+  const { status, organization, error, setOrganization } = useCurrentOrganization();
   const [securitySettings, setSecuritySettings] = useState<SecuritySettings | null>(null);
   const [securitySettingsError, setSecuritySettingsError] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
 
-  // Deliberately two independent requests, not one awaited chain --
+  // Deliberately independent of useCurrentOrganization's own request --
   // security settings failing to load (a real, observed transient 403
   // immediately after creating a brand-new organization, most likely
   // the same class of pooled-connection read-your-own-write timing
   // this codebase has hit before elsewhere) must never be mistaken for
   // organization loading itself having failed; the branding form is
   // still fully usable either way.
-  function loadSecuritySettings(organizationId: string): void {
-    setSecuritySettingsError(null);
-    getSecuritySettings(organizationId)
-      .then(setSecuritySettings)
-      .catch((err: Error) => setSecuritySettingsError(err.message));
-  }
-
+  const organizationId = organization?.id;
   useEffect(() => {
+    if (!organizationId) {
+      return;
+    }
     let cancelled = false;
-    listOrganizations()
-      .then((orgs) => {
-        if (cancelled) {
-          return;
-        }
-        const first = orgs[0];
-        setLoading(false);
-        if (first) {
-          setOrganization(first);
-          loadSecuritySettings(first.id);
+    getSecuritySettings(organizationId)
+      .then((settings) => {
+        if (!cancelled) {
+          setSecuritySettings(settings);
+          setSecuritySettingsError(null);
         }
       })
       .catch((err: Error) => {
-        if (cancelled) {
-          return;
+        if (!cancelled) {
+          setSecuritySettingsError(err.message);
         }
-        setError(err.message);
-        setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+    // organizationId (not the whole `organization` object) on purpose --
+    // saving branding produces a new Organization object with the same
+    // id, which would otherwise needlessly refetch security settings.
+  }, [organizationId, retryToken]);
 
-  if (loading) {
+  if (status === "loading") {
     return <p className={styles.status}>Loading…</p>;
   }
 
-  if (error) {
+  if (status === "error") {
     return <p className={styles.error}>{error}</p>;
   }
 
   if (!organization) {
-    return (
-      <CreateOrganizationForm
-        onCreated={(org) => {
-          setOrganization(org);
-          loadSecuritySettings(org.id);
-        }}
-      />
-    );
+    return <CreateOrganizationForm onCreated={setOrganization} />;
   }
 
   return (
@@ -117,7 +95,7 @@ export default function SettingsPage() {
           <button
             type="button"
             className={styles.submit}
-            onClick={() => loadSecuritySettings(organization.id)}
+            onClick={() => setRetryToken((token) => token + 1)}
           >
             Retry
           </button>

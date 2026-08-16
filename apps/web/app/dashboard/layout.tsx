@@ -8,8 +8,8 @@
 // docstring already gives for why this can't be a Server Component.
 //
 // Real nav links only ever appear here once their own real page lands
-// -- Settings (234) is the first; workspaces/knowledge-bases/etc. each
-// add their own entry as their own step lands, matching how this
+// -- Settings (234) and Workspaces (235) so far; knowledge-bases/etc.
+// each add their own entry as their own step lands, matching how this
 // codebase everywhere else avoids wiring a UI affordance to a route
 // that doesn't exist yet.
 
@@ -37,6 +37,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className={styles.shell}>
       <nav className={styles.nav}>
         <span className={styles.brand}>AgentForge</span>
+        <Link href="/dashboard/workspaces" className={styles.navLink}>
+          Workspaces
+        </Link>
         <Link href="/dashboard/settings" className={styles.navLink}>
           Settings
         </Link>
