@@ -32,6 +32,13 @@ window where the synthesis task is genuinely still in flight, a test
 sending an "interrupting" message right after `synthesize` couldn't
 actually prove the interruption happened DURING synthesis rather than
 just really fast after it finished on its own.
+
+Step 227's own tracing test wraps a real full-turn websocket flow in
+`structlog.testing.capture_logs()` -- `test_voice_tracing.py` already
+proves `log_turn_processing`/`log_synthesis` themselves emit the right
+event shape in isolation; this file's own job is proving they actually
+get CALLED, with the right real `voice_session_id`, from within a real
+turn, not just that the functions work if you call them directly.
 """
 
 import asyncio
@@ -41,6 +48,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
+import structlog.testing
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect
@@ -800,6 +808,82 @@ async def test_a_completed_synthesis_still_streams_all_its_audio_when_uninterrup
                 break
 
             assert bytes(received) == fake_audio
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_a_full_turn_logs_real_processing_and_synthesis_traces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_transcribe(
+        self: object, audio: bytes, *, mime_type: str
+    ) -> TranscriptionResult:
+        return TranscriptionResult(text="trace this turn", language="english")
+
+    monkeypatch.setattr(type(public_voice_module._stt_provider), "transcribe", _fake_transcribe)
+    monkeypatch.setattr(type(public_voice_module._tts_provider), "synthesize", _instant_synthesize)
+
+    email = "endpoint-test-voice-owner-23@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with (
+            structlog.testing.capture_logs() as logs,
+            client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws,
+        ):
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            ws.send_bytes(b"real-audio-for-tracing")
+            ws.send_text(json.dumps({"type": "end_turn"}))
+            ws.receive_json()  # transcript
+            ws.receive_json()  # reply
+
+        processing_events = [e for e in logs if e["event"] == "voice_turn_processing"]
+        synthesis_events = [e for e in logs if e["event"] == "voice_synthesis"]
+
+        assert len(processing_events) == 1
+        assert processing_events[0]["voice_session_id"] == str(voice_session_id)
+        assert processing_events[0]["status"] == "success"
+        assert processing_events[0]["stt_latency_ms"] >= 0
+        assert processing_events[0]["reply_latency_ms"] >= 0
+        assert processing_events[0]["total_latency_ms"] >= (
+            processing_events[0]["stt_latency_ms"] + processing_events[0]["reply_latency_ms"]
+        )
+
+        assert len(synthesis_events) == 1
+        assert synthesis_events[0]["voice_session_id"] == str(voice_session_id)
+        assert synthesis_events[0]["status"] == "success"
+        assert synthesis_events[0]["tts_latency_ms"] >= 0
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_a_real_stt_failure_logs_a_real_failure_trace() -> None:
+    email = "endpoint-test-voice-owner-24@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with (
+            structlog.testing.capture_logs() as logs,
+            client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws,
+        ):
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            ws.send_bytes(b"real-audio-bytes")
+            ws.send_text(json.dumps({"type": "end_turn"}))
+            ws.receive_json()  # error
+
+        processing_events = [e for e in logs if e["event"] == "voice_turn_processing"]
+        assert len(processing_events) == 1
+        assert processing_events[0]["voice_session_id"] == str(voice_session_id)
+        assert processing_events[0]["status"] == "failure"
+        assert processing_events[0]["reply_latency_ms"] is None
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)

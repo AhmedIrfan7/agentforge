@@ -197,18 +197,28 @@ before calling `generate_assistant_reply`, not on every audio chunk,
 since a chunk isn't a turn.
 
 `_authenticate` now returns a small `_AuthenticatedSession` bundle
-(`mime_type`/`tenant_id`/`assistant_id`/`conversation_id`) instead of
-just `mime_type` -- plain values, not the `Assistant`/`Conversation`
-ORM objects themselves, since those would be bound to the auth-time
-session and unsafe to touch once it closes (the exact `Message`/
-`Conversation` attribute-expiry class of bug steps 189/193 already
-found live in this codebase); `_finalize_turn` opens its own fresh
-session and re-fetches both by id when it actually needs them.
+(`mime_type`/`tenant_id`/`assistant_id`/`conversation_id`/
+`voice_session_id`) instead of just `mime_type` -- plain values, not
+the `Assistant`/`Conversation` ORM objects themselves, since those
+would be bound to the auth-time session and unsafe to touch once it
+closes (the exact `Message`/`Conversation` attribute-expiry class of
+bug steps 189/193 already found live in this codebase); `_finalize_
+turn` opens its own fresh session and re-fetches both by id when it
+actually needs them.
+
+As of step 227, `voice/tracing.py` gives every real turn a real
+latency trace -- `log_turn_processing` (STT + reply-generation
+latency, the synchronous time a caller waits in silence) from
+`_finalize_turn`, and `log_synthesis` (real TTS provider latency,
+including a genuine `status="interrupted"` outcome for a real
+barge-in cancellation) from `_stream_synthesis`. See that module's own
+docstring for why these are two separate events rather than one.
 """
 
 import asyncio
 import contextlib
 import json
+import time
 import uuid
 from dataclasses import dataclass
 
@@ -225,6 +235,12 @@ from repositories.security_settings import SecuritySettingsRepository, origin_is
 from repositories.voice_session import VoiceSessionRepository
 from voice.base import SpeechProviderError
 from voice.openai_tts import OpenAITTSProvider
+from voice.tracing import (
+    VoiceSynthesisTrace,
+    VoiceTurnProcessingTrace,
+    log_synthesis,
+    log_turn_processing,
+)
 from voice.whisper import WhisperSTTProvider
 
 router = APIRouter(prefix="/public/assistants/{assistant_id}/voice-sessions", tags=["public-voice"])
@@ -260,6 +276,7 @@ class _AuthenticatedSession:
     tenant_id: uuid.UUID
     assistant_id: uuid.UUID
     conversation_id: uuid.UUID
+    voice_session_id: uuid.UUID
 
 
 async def _authenticate(
@@ -344,25 +361,57 @@ async def _authenticate(
         tenant_id=assistant.tenant_id,
         assistant_id=assistant.id,
         conversation_id=token_conversation_id,
+        voice_session_id=voice_session_id,
     )
 
 
-async def _stream_synthesis(websocket: WebSocket, text: str) -> None:
+async def _stream_synthesis(websocket: WebSocket, text: str, voice_session_id: uuid.UUID) -> None:
     """Synthesizes `text` and streams it back as chunked binary frames
     (222) -- run as a standalone `asyncio.Task` (225) rather than
     awaited inline, so a real barge-in can cancel it mid-flight,
     including while the provider call itself is still in progress, not
-    just between already-queued chunks."""
+    just between already-queued chunks. The outer `CancelledError`
+    handler (227) is what lets a real interruption still produce a real
+    latency trace -- logged as `status="interrupted"`, not silently
+    lost, then re-raised unchanged so real cancellation semantics for
+    the caller (`_interrupt_active_synthesis`) are untouched."""
+    start = time.perf_counter()
     try:
-        synthesis = await _tts_provider.synthesize(text)
-    except SpeechProviderError:
-        await websocket.send_json(
-            {"type": "error", "message": "Speech synthesis failed. Please try again."}
+        try:
+            synthesis = await _tts_provider.synthesize(text)
+        except SpeechProviderError:
+            log_synthesis(
+                VoiceSynthesisTrace(
+                    voice_session_id=voice_session_id,
+                    status="failure",
+                    tts_latency_ms=(time.perf_counter() - start) * 1000,
+                )
+            )
+            await websocket.send_json(
+                {"type": "error", "message": "Speech synthesis failed. Please try again."}
+            )
+            return
+        log_synthesis(
+            VoiceSynthesisTrace(
+                voice_session_id=voice_session_id,
+                status="success",
+                tts_latency_ms=(time.perf_counter() - start) * 1000,
+            )
         )
-        return
-    for offset in range(0, len(synthesis.audio), AUDIO_STREAM_CHUNK_BYTES):
-        await websocket.send_bytes(synthesis.audio[offset : offset + AUDIO_STREAM_CHUNK_BYTES])
-    await websocket.send_json({"type": "synthesis_done", "content_type": synthesis.content_type})
+        for offset in range(0, len(synthesis.audio), AUDIO_STREAM_CHUNK_BYTES):
+            await websocket.send_bytes(synthesis.audio[offset : offset + AUDIO_STREAM_CHUNK_BYTES])
+        await websocket.send_json(
+            {"type": "synthesis_done", "content_type": synthesis.content_type}
+        )
+    except asyncio.CancelledError:
+        log_synthesis(
+            VoiceSynthesisTrace(
+                voice_session_id=voice_session_id,
+                status="interrupted",
+                tts_latency_ms=(time.perf_counter() - start) * 1000,
+            )
+        )
+        raise
 
 
 async def _interrupt_active_synthesis(
@@ -395,10 +444,30 @@ async def _finalize_turn(
     state reset. `chunk_sizes` resets alongside `buffer` -- both
     describe the SAME now-finished turn. Returns the new synthesis
     task (or None on any failure/empty turn) so the caller tracks it
-    the same way an explicit `synthesize` request already does."""
+    the same way an explicit `synthesize` request already does.
+
+    Also where step 227's own `voice_turn_processing` trace is logged
+    -- `stt_latency_ms`/`reply_latency_ms` cover exactly the two real,
+    synchronous stages a caller waits through before hearing anything
+    back; `total_latency_ms` is their real sum plus whatever else ran
+    between them (the transcript send, the rate-limit check), the
+    single number that answers "how long did the user actually wait in
+    silence" (AGENTS.md's own "Fast response time")."""
+    turn_start = time.perf_counter()
     try:
+        stt_start = time.perf_counter()
         result = await _stt_provider.transcribe(bytes(buffer), mime_type=auth.mime_type)
+        stt_latency_ms = (time.perf_counter() - stt_start) * 1000
     except SpeechProviderError:
+        log_turn_processing(
+            VoiceTurnProcessingTrace(
+                voice_session_id=auth.voice_session_id,
+                status="failure",
+                stt_latency_ms=(time.perf_counter() - turn_start) * 1000,
+                reply_latency_ms=None,
+                total_latency_ms=(time.perf_counter() - turn_start) * 1000,
+            )
+        )
         await websocket.send_json(
             {"type": "error", "message": "Transcription failed. Please try again."}
         )
@@ -412,6 +481,15 @@ async def _finalize_turn(
     )
 
     if not result.text.strip():
+        log_turn_processing(
+            VoiceTurnProcessingTrace(
+                voice_session_id=auth.voice_session_id,
+                status="success",
+                stt_latency_ms=stt_latency_ms,
+                reply_latency_ms=None,
+                total_latency_ms=(time.perf_counter() - turn_start) * 1000,
+            )
+        )
         return None
 
     try:
@@ -424,6 +502,7 @@ async def _finalize_turn(
         )
         return None
 
+    reply_start = time.perf_counter()
     async with get_session() as session:
         await set_tenant_context(session, auth.tenant_id)
         assistant = await AssistantRepository(session, auth.tenant_id).get(auth.assistant_id)
@@ -445,9 +524,20 @@ async def _finalize_turn(
         await session.commit()
         reply_text = assistant_message.content
         citations = assistant_message.citations
+    reply_latency_ms = (time.perf_counter() - reply_start) * 1000
+
+    log_turn_processing(
+        VoiceTurnProcessingTrace(
+            voice_session_id=auth.voice_session_id,
+            status="success",
+            stt_latency_ms=stt_latency_ms,
+            reply_latency_ms=reply_latency_ms,
+            total_latency_ms=(time.perf_counter() - turn_start) * 1000,
+        )
+    )
 
     await websocket.send_json({"type": "reply", "text": reply_text, "citations": citations})
-    return asyncio.create_task(_stream_synthesis(websocket, reply_text))
+    return asyncio.create_task(_stream_synthesis(websocket, reply_text, auth.voice_session_id))
 
 
 @router.websocket("/{voice_session_id}/audio")
@@ -543,7 +633,9 @@ async def stream_voice_session_audio(
                         {"type": "error", "message": "synthesize requires non-empty text."}
                     )
                     continue
-                synthesis_task = asyncio.create_task(_stream_synthesis(websocket, text))
+                synthesis_task = asyncio.create_task(
+                    _stream_synthesis(websocket, text, auth.voice_session_id)
+                )
                 continue
 
             if control_type == "interrupt":
