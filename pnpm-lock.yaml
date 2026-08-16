@@ -60,6 +60,9 @@ importers:
       '@playwright/test':
         specifier: ^1.62.1
         version: 1.62.1
+      '@types/node':
+        specifier: ^20
+        version: 20.19.43
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
