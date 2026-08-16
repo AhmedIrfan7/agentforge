@@ -1,5 +1,5 @@
 """Integration tests for the streaming audio ingestion WebSocket
-(roadmap steps 221-222). Same real org/workspace/kb/public-assistant
+(roadmap steps 221-223). Same real org/workspace/kb/public-assistant
 setup `test_public_conversation.py` already established, plus a real
 anonymous conversation + voice session started through the actual REST
 endpoints (192, 220) -- nothing here is mocked except
@@ -9,9 +9,18 @@ providers' own request/response handling is already
 `test_whisper_stt_provider.py`/`test_openai_tts_provider.py`'s job;
 this file is about proving the WebSocket endpoint's own auth/protocol/
 buffering logic, not the providers'.
+
+Step 223's own silence-timeout tests monkeypatch
+`SILENCE_TIMEOUT_SECONDS` down to a small real value rather than
+waiting out the real 1.5s default -- `TestClient`'s websocket support
+runs the ASGI app in a real background thread with its own real event
+loop, so `asyncio.wait_for`'s timer genuinely elapses in real wall-
+clock time; a short, real wait keeps these tests fast without faking
+the timing mechanism itself.
 """
 
 import json
+import time
 import uuid
 from datetime import UTC, datetime
 
@@ -459,6 +468,102 @@ async def test_an_unknown_message_type_returns_an_error_without_closing() -> Non
             ws.send_text(json.dumps({"type": "end_turn"}))
             second_response = ws.receive_json()
             assert second_response["type"] == "error"  # real STT failure, no API key
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_silence_after_audio_auto_finalizes_the_turn_without_end_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(public_voice_module, "SILENCE_TIMEOUT_SECONDS", 0.2)
+
+    email = "endpoint-test-voice-owner-15@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws:
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            ws.send_bytes(b"some real audio bytes")
+            # No end_turn sent -- real silence past the (shortened) timeout
+            # should auto-finalize the turn on its own.
+            response = ws.receive_json()
+            assert response["type"] == "error"  # real STT failure, no API key
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_silence_before_any_audio_never_auto_finalizes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(public_voice_module, "SILENCE_TIMEOUT_SECONDS", 0.2)
+
+    email = "endpoint-test-voice-owner-16@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws:
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            # Real wait, well past the (shortened) silence timeout, with no
+            # audio sent at all -- the connection must not spuriously fire
+            # a transcription of nothing.
+            time.sleep(0.6)
+
+            ws.send_text(json.dumps({"type": "synthesize"}))
+            response = ws.receive_json()
+            assert response["type"] == "error"
+            assert response["message"] == "synthesize requires non-empty text."
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_a_message_before_the_timeout_prevents_auto_finalize(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(public_voice_module, "SILENCE_TIMEOUT_SECONDS", 0.3)
+
+    received_audio: list[bytes] = []
+
+    async def _fake_transcribe(
+        self: object, audio: bytes, *, mime_type: str
+    ) -> TranscriptionResult:
+        received_audio.append(audio)
+        return TranscriptionResult(text="ok", language="english")
+
+    monkeypatch.setattr(type(public_voice_module._stt_provider), "transcribe", _fake_transcribe)
+
+    email = "endpoint-test-voice-owner-17@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email)
+    try:
+        token, voice_session_id, _ = _start_voice_session(assistant_id)
+        with client.websocket_connect(_ws_url(assistant_id, voice_session_id)) as ws:
+            ws.send_json({"token": token, "mime_type": "audio/webm"})
+            ws.receive_json()  # ready
+
+            ws.send_bytes(b"chunk-one-")
+            # A second real chunk arrives before the (shortened) silence
+            # window elapses -- the turn must NOT auto-finalize on the
+            # gap between these two sends.
+            time.sleep(0.1)
+            ws.send_bytes(b"chunk-two")
+
+            ws.send_text(json.dumps({"type": "end_turn"}))
+            response = ws.receive_json()
+            assert response == {"type": "transcript", "text": "ok", "language": "english"}
+
+        # Exactly one real finalize call, with BOTH chunks combined --
+        # proves the mid-turn gap never triggered a premature silence
+        # finalize, which would have cleared the buffer early.
+        assert received_audio == [b"chunk-one-chunk-two"]
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)

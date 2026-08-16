@@ -74,6 +74,25 @@ the connection with WebSocket close code 1009 ("message too big"), the
 closest standard code for this real (if here, cumulative-across-frames
 rather than single-frame) condition.
 
+As of step 223, a turn no longer strictly needs an explicit
+`end_turn` message: `SILENCE_TIMEOUT_SECONDS` (1.5s) is a real,
+honest, TIMING-based heuristic -- once real audio bytes have started
+arriving for a turn, if no further audio frame arrives within that
+window, the server treats it exactly like a real `end_turn` (same
+`_finalize_turn` helper both paths now share). This is a deliberately
+simple first layer, not real acoustic silence detection: nothing here
+decodes the audio's actual content to check for real quiet vs. real
+speech -- doing that would need a real audio codec/PCM-level analysis
+this codebase doesn't have, which is exactly what "voice-activity
+detection" (224, the very next step) is for. The explicit `end_turn`
+message still works too (both paths call the same real finalize logic)
+-- a real client can rely on either, or both together, matching 221's
+own "auto detection alongside push-to-talk, not instead of it"
+reasoning. The timeout only ever applies once the buffer is non-empty
+-- an idle connection where the user simply hasn't started talking yet
+uses a plain, un-timed `receive()`, so silence BEFORE a turn starts
+never spuriously fires a transcription of nothing.
+
 As of step 222, the same connection also carries real synthesized
 speech back to the client: `{"type": "synthesize", "text": "..."}`
 calls the real `OpenAITTSProvider` (218) and streams its audio back as
@@ -98,6 +117,7 @@ generation-level streaming" distinction `docs/ARCHITECTURE.md`'s own
 Conversation Engine section already draws for SSE text streaming.
 """
 
+import asyncio
 import json
 import uuid
 
@@ -116,6 +136,7 @@ router = APIRouter(prefix="/public/assistants/{assistant_id}/voice-sessions", ta
 
 MAX_AUDIO_BUFFER_BYTES = 20 * 1024 * 1024
 AUDIO_STREAM_CHUNK_BYTES = 4096
+SILENCE_TIMEOUT_SECONDS = 1.5
 
 _stt_provider = WhisperSTTProvider()
 _tts_provider = OpenAITTSProvider()
@@ -201,6 +222,24 @@ async def _authenticate(
     return mime_type
 
 
+async def _finalize_turn(websocket: WebSocket, buffer: bytearray, mime_type: str) -> None:
+    """Transcribes whatever's buffered and sends the result -- the one
+    real "a turn just ended" action, shared by both the explicit
+    `end_turn` message and the silence-timeout path (223) so neither
+    duplicates the other's error handling or buffer-clearing."""
+    try:
+        result = await _stt_provider.transcribe(bytes(buffer), mime_type=mime_type)
+        await websocket.send_json(
+            {"type": "transcript", "text": result.text, "language": result.language}
+        )
+    except SpeechProviderError:
+        await websocket.send_json(
+            {"type": "error", "message": "Transcription failed. Please try again."}
+        )
+    finally:
+        buffer.clear()
+
+
 @router.websocket("/{voice_session_id}/audio")
 async def stream_voice_session_audio(
     websocket: WebSocket, assistant_id: uuid.UUID, voice_session_id: uuid.UUID
@@ -216,7 +255,21 @@ async def stream_voice_session_audio(
     buffer = bytearray()
     try:
         while True:
-            message = await websocket.receive()
+            if buffer:
+                # A turn is in progress -- only now does silence carry
+                # real meaning (see this module's own step-223 docstring
+                # for why an idle, not-yet-started connection must never
+                # time out this way).
+                try:
+                    message = await asyncio.wait_for(
+                        websocket.receive(), timeout=SILENCE_TIMEOUT_SECONDS
+                    )
+                except TimeoutError:
+                    await _finalize_turn(websocket, buffer, mime_type)
+                    continue
+            else:
+                message = await websocket.receive()
+
             if message["type"] == "websocket.disconnect":
                 return
 
@@ -247,17 +300,7 @@ async def stream_voice_session_audio(
                         {"type": "error", "message": "No audio received before end_turn."}
                     )
                     continue
-                try:
-                    result = await _stt_provider.transcribe(bytes(buffer), mime_type=mime_type)
-                    await websocket.send_json(
-                        {"type": "transcript", "text": result.text, "language": result.language}
-                    )
-                except SpeechProviderError:
-                    await websocket.send_json(
-                        {"type": "error", "message": "Transcription failed. Please try again."}
-                    )
-                finally:
-                    buffer.clear()
+                await _finalize_turn(websocket, buffer, mime_type)
                 continue
 
             if control_type == "synthesize":
