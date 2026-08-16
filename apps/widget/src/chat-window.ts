@@ -15,14 +15,41 @@
 // a Conversation row per page view for a visitor who never opens the
 // widget would be real, wasted backend work this step doesn't need to
 // cause.
+//
+// As of step 229, a real mic button + waveform indicator wire this
+// panel into the full voice pipeline Milestone 8 already built and
+// tested end to end (216-228) -- `voice.ts` owns the low-level
+// browser I/O (MediaRecorder, the websocket protocol, real-time mic
+// levels); this module owns the UI state machine and reuses the SAME
+// message list/bubble rendering text chat already has, since a real
+// voice turn's transcript/reply ARE real chat messages, not a
+// parallel display. `ensureSession` is the ONE real refactor this
+// step needed: the anonymous-conversation-creation logic `handleSend`
+// already had, extracted once voice became a genuine second real
+// caller needing it -- same "share once a second caller exists" bar
+// this whole project applies everywhere.
+//
+// The mic button is a real "push to talk" control, not an always-on
+// mic: `startRecording`/`stopRecording` bound to explicit clicks, not
+// a persistently-open stream the server's own VAD alone decides when
+// to end -- the server's own silence-timeout/voice-activity detection
+// (223/224) still apply WHILE recording as a real fallback, but a
+// deliberate stop click sends a real `end_turn` immediately rather
+// than waiting on them. Clicking the mic again WHILE the assistant is
+// speaking is real, explicit barge-in: stops local playback
+// immediately (the server cancelling synthesis doesn't silence audio
+// the client already started playing) and sends the real `interrupt`
+// message before starting a new recording.
 
 import {
   createAnonymousConversation,
   streamMessage,
   type ChatMessage,
+  type CitationRead,
   type MessageRead,
 } from "@agentforge/shared";
 import type { WidgetConfig } from "./config";
+import { endVoiceSession, startVoiceSession, VoiceSession } from "./voice";
 
 const CHAT_WINDOW_STYLES = `
   .panel.open { display: flex; flex-direction: column; }
@@ -77,6 +104,7 @@ const CHAT_WINDOW_STYLES = `
   }
   .input-row {
     display: flex;
+    align-items: center;
     gap: 8px;
     padding: 10px;
     border-top: 1px solid var(--af-border);
@@ -105,11 +133,50 @@ const CHAT_WINDOW_STYLES = `
     cursor: pointer;
   }
   .input-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .mic-button {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .mic-button.recording {
+    background: #dc2626;
+    animation: af-mic-pulse 1.4s ease-in-out infinite;
+  }
+  .mic-button.processing { opacity: 0.6; cursor: wait; }
+  @keyframes af-mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.5); }
+    50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+  }
+  .waveform-row {
+    display: none;
+    align-items: center;
+    padding: 0 10px 10px;
+    flex-shrink: 0;
+  }
+  .waveform-row.active { display: flex; }
+  .waveform {
+    width: 100%;
+    height: 32px;
+    display: block;
+  }
 `;
 
 interface AnonymousSession {
   conversationId: string;
   accessToken: string;
+}
+
+const WAVEFORM_BAR_COUNT = 32;
+
+function wsUrlFor(apiUrl: string, assistantId: string, voiceSessionId: string): string {
+  const wsProtocol = apiUrl.startsWith("https://") ? "wss://" : "ws://";
+  const httpStripped = apiUrl.replace(/^https?:\/\//, "");
+  return `${wsProtocol}${httpStripped}/public/assistants/${assistantId}/voice-sessions/${voiceSessionId}/audio`;
 }
 
 export function renderChatWindow(
@@ -130,15 +197,45 @@ export function renderChatWindow(
   messagesEl.className = "messages";
   panel.appendChild(messagesEl);
 
+  const waveformRow = document.createElement("div");
+  waveformRow.className = "waveform-row";
+  const waveformCanvas = document.createElement("canvas");
+  waveformCanvas.className = "waveform";
+  waveformCanvas.width = 300;
+  waveformCanvas.height = 32;
+  waveformRow.appendChild(waveformCanvas);
+  panel.appendChild(waveformRow);
+  const waveformCtx = waveformCanvas.getContext("2d");
+  const waveformLevels: number[] = new Array(WAVEFORM_BAR_COUNT).fill(0);
+  // Canvas 2D fillStyle can't resolve a CSS custom property reference
+  // the way a real DOM element's own style can -- var(--af-primary-
+  // color) as a literal string is not a valid canvas color. Resolve
+  // the REAL, current value once via getComputedStyle instead; by this
+  // point launcher.ts has already called host.style.setProperty(...)
+  // for it, so the real value is already active and inherited into
+  // this shadow tree.
+  const waveformColor =
+    getComputedStyle(panel).getPropertyValue("--af-primary-color").trim() || "#4f46e5";
+
   const inputRow = document.createElement("div");
   inputRow.className = "input-row";
   const textarea = document.createElement("textarea");
   textarea.placeholder = "Send a message…";
   textarea.rows = 1;
+  const micButton = document.createElement("button");
+  micButton.type = "button";
+  micButton.className = "mic-button";
+  micButton.setAttribute("aria-label", "Start voice input");
+  micButton.innerHTML =
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">' +
+    '<path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z"/>' +
+    '<path d="M19 11a1 1 0 1 0-2 0 5 5 0 0 1-10 0 1 1 0 1 0-2 0 7 7 0 0 0 6 6.92V20H9a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2h-2v-2.08A7 7 0 0 0 19 11z"/>' +
+    "</svg>";
   const sendButton = document.createElement("button");
   sendButton.type = "button";
   sendButton.textContent = "Send";
   inputRow.appendChild(textarea);
+  inputRow.appendChild(micButton);
   inputRow.appendChild(sendButton);
   panel.appendChild(inputRow);
 
@@ -146,6 +243,13 @@ export function renderChatWindow(
   let messages: ChatMessage[] = [];
   let nextLocalId = 0;
   let sending = false;
+
+  let voiceSession: VoiceSession | null = null;
+  let voiceSessionId: string | null = null;
+  let voiceState: "idle" | "connecting" | "recording" | "processing" = "idle";
+  let audioChunks: ArrayBuffer[] = [];
+  let playbackAudio: HTMLAudioElement | null = null;
+  let playbackObjectUrl: string | null = null;
 
   function renderMessages(): void {
     messagesEl.innerHTML = "";
@@ -163,7 +267,10 @@ export function renderChatWindow(
         // message_rendering.py (Python-Markdown + nh3 sanitization,
         // steps 185/186) before it ever reaches this client -- the
         // same trust boundary apps/web's own MessageList.tsx already
-        // relies on.
+        // relies on. A real voice reply has no content_html at all
+        // (the websocket's own {"type":"reply",...} carries only
+        // plain text) and falls through to the same textContent path
+        // a pending/streaming text message already uses.
         bubble.innerHTML = message.contentHtml;
       } else {
         bubble.textContent = message.content;
@@ -192,9 +299,175 @@ export function renderChatWindow(
 
   function setSending(value: boolean): void {
     sending = value;
-    sendButton.disabled = sending;
-    textarea.disabled = sending;
+    updateControlsDisabled();
   }
+
+  function updateControlsDisabled(): void {
+    const busy = sending || voiceState === "connecting" || voiceState === "processing";
+    sendButton.disabled = busy;
+    textarea.disabled = busy;
+    micButton.disabled = busy;
+  }
+
+  async function ensureSession(): Promise<AnonymousSession> {
+    if (session) {
+      return session;
+    }
+    const conversation = await createAnonymousConversation(config.apiUrl, config.assistantId);
+    session = {
+      conversationId: conversation.conversation_id,
+      accessToken: conversation.access_token,
+    };
+    return session;
+  }
+
+  function drawWaveform(): void {
+    if (!waveformCtx) {
+      return;
+    }
+    const { width, height } = waveformCanvas;
+    waveformCtx.clearRect(0, 0, width, height);
+    waveformCtx.fillStyle = waveformColor;
+    const barWidth = width / WAVEFORM_BAR_COUNT;
+    waveformLevels.forEach((level, index) => {
+      const barHeight = Math.max(2, level * height);
+      const x = index * barWidth;
+      const y = (height - barHeight) / 2;
+      waveformCtx.fillRect(x + 1, y, Math.max(1, barWidth - 2), barHeight);
+    });
+  }
+
+  function pushWaveformLevel(level: number): void {
+    waveformLevels.shift();
+    waveformLevels.push(level);
+    drawWaveform();
+  }
+
+  function resetWaveform(): void {
+    waveformLevels.fill(0);
+    drawWaveform();
+  }
+
+  function stopPlayback(): void {
+    if (playbackAudio) {
+      playbackAudio.pause();
+      playbackAudio.currentTime = 0;
+    }
+    if (playbackObjectUrl) {
+      URL.revokeObjectURL(playbackObjectUrl);
+      playbackObjectUrl = null;
+    }
+    audioChunks = [];
+  }
+
+  function appendMessage(
+    role: "user" | "assistant",
+    content: string,
+    citations?: CitationRead[],
+  ): void {
+    messages = [...messages, { id: `local-${nextLocalId++}`, role, content, citations }];
+    renderMessages();
+  }
+
+  async function startVoiceTurn(): Promise<void> {
+    stopPlayback();
+    voiceState = "connecting";
+    micButton.classList.add("processing");
+    updateControlsDisabled();
+    try {
+      const activeSession = await ensureSession();
+      if (voiceSession === null) {
+        const info = await startVoiceSession(
+          config.apiUrl,
+          config.assistantId,
+          activeSession.conversationId,
+          activeSession.accessToken,
+        );
+        voiceSessionId = info.id;
+        const wsUrl = wsUrlFor(config.apiUrl, config.assistantId, info.id);
+        voiceSession = new VoiceSession(wsUrl, activeSession.accessToken, {
+          onLevel: pushWaveformLevel,
+          onTranscript: (text) => appendMessage("user", text),
+          onReply: (text, citations) => appendMessage("assistant", text, citations),
+          onAudioChunk: (chunk) => audioChunks.push(chunk),
+          onSynthesisDone: (contentType) => {
+            if (audioChunks.length === 0) {
+              return;
+            }
+            const blob = new Blob(audioChunks, { type: contentType });
+            playbackObjectUrl = URL.createObjectURL(blob);
+            audioChunks = [];
+            playbackAudio ??= new Audio();
+            playbackAudio.src = playbackObjectUrl;
+            void playbackAudio.play().catch(() => {
+              // A real, honest no-op -- autoplay can be blocked by the
+              // host page's own browser policy; the widget still works,
+              // the reply is already visible as a real text bubble.
+            });
+          },
+          onInterrupted: stopPlayback,
+          onError: (message) => appendMessage("assistant", message),
+          onClose: () => {
+            voiceSession = null;
+            voiceSessionId = null;
+            voiceState = "idle";
+            micButton.classList.remove("recording", "processing");
+            waveformRow.classList.remove("active");
+            resetWaveform();
+            updateControlsDisabled();
+          },
+        });
+        await voiceSession.connect();
+      } else {
+        voiceSession.interrupt();
+      }
+      voiceState = "recording";
+      micButton.classList.remove("processing");
+      micButton.classList.add("recording");
+      micButton.setAttribute("aria-label", "Stop recording");
+      waveformRow.classList.add("active");
+      updateControlsDisabled();
+      await voiceSession.startRecording();
+    } catch (error) {
+      console.error(error);
+      voiceState = "idle";
+      micButton.classList.remove("recording", "processing");
+      micButton.setAttribute("aria-label", "Start voice input");
+      waveformRow.classList.remove("active");
+      updateControlsDisabled();
+    }
+  }
+
+  function stopVoiceTurn(): void {
+    voiceSession?.stopRecording();
+    voiceState = "processing";
+    micButton.classList.remove("recording");
+    micButton.classList.add("processing");
+    micButton.setAttribute("aria-label", "Start voice input");
+    waveformRow.classList.remove("active");
+    resetWaveform();
+    updateControlsDisabled();
+  }
+
+  micButton.addEventListener("click", () => {
+    if (voiceState === "recording") {
+      stopVoiceTurn();
+    } else if (voiceState === "idle") {
+      void startVoiceTurn();
+    }
+  });
+
+  window.addEventListener("beforeunload", () => {
+    if (voiceSession && voiceSessionId && session) {
+      endVoiceSession(
+        config.apiUrl,
+        config.assistantId,
+        session.conversationId,
+        voiceSessionId,
+        session.accessToken,
+      );
+    }
+  });
 
   async function handleSend(): Promise<void> {
     const content = textarea.value.trim();
@@ -204,18 +477,13 @@ export function renderChatWindow(
     textarea.value = "";
     setSending(true);
 
-    if (!session) {
-      try {
-        const conversation = await createAnonymousConversation(config.apiUrl, config.assistantId);
-        session = {
-          conversationId: conversation.conversation_id,
-          accessToken: conversation.access_token,
-        };
-      } catch (error) {
-        console.error(error);
-        setSending(false);
-        return;
-      }
+    let activeSession: AnonymousSession;
+    try {
+      activeSession = await ensureSession();
+    } catch (error) {
+      console.error(error);
+      setSending(false);
+      return;
     }
 
     const userMessageId = `local-${nextLocalId++}`;
@@ -230,8 +498,8 @@ export function renderChatWindow(
     await streamMessage(
       config.apiUrl,
       config.assistantId,
-      session.conversationId,
-      session.accessToken,
+      activeSession.conversationId,
+      activeSession.accessToken,
       content,
       {
         onChunk: (text) => {
