@@ -77,6 +77,28 @@ one, and this door is the more abuse-prone of the two -- reachable
 with zero signup friction, the exact "prompt flooding"/"resource
 exhaustion" scenario AGENTS.md's own "ABUSE PREVENTION" section names.
 
+As of step 220, `POST .../{conversation_id}/voice-sessions` starts a
+real `VoiceSession` (219) under an already-existing anonymous
+conversation -- deliberately NOT a second, parallel "create a
+conversation for voice" endpoint. A real caller first gets an
+anonymous conversation + token the exact same way text chat already
+does (`create_anonymous_conversation`, above), then starts a voice
+session under it; this reuses `AnonymousConversation`'s own auth
+dependency wholesale, so a voice call is authorized by the identical
+anonymous-session-token mechanism, not a second one. This also directly
+realizes the reason step 219's own `VoiceSession` model deliberately
+put NO unique constraint on `conversation_id`: the same visitor could
+start a fresh voice session on an existing conversation more than once
+(picking the call back up later), or a conversation that began as text
+chat could add voice mid-thread -- "shares conversation intelligence
+with the Conversation Agent" (AGENTS.md's own "VOICE AGENT" section) is
+what this design is actually for. No authenticated-side equivalent
+exists yet -- this milestone's own roadmap sequence (216-232) names
+only one "voice-session-start" step, and `apps/widget` (Milestone 7's
+real, only public-facing consumer so far) is anonymous-only anyway;
+building an authenticated one now, with no dashboard UI to call it and
+no roadmap step asking for it, would be speculative.
+
 `get_public_assistant` (step 208) also enforces the org's own
 `SecuritySettings.allowed_domains` (AGENTS.md's own "SECURITY
 SETTINGS" section names "Allowed domains" verbatim) -- the single
@@ -123,8 +145,10 @@ from rate_limit import MESSAGE_SEND_RATE_LIMIT, check_rate_limit
 from repositories.assistant import get_public_assistant_by_id
 from repositories.conversation import ConversationRepository
 from repositories.security_settings import SecuritySettingsRepository
+from repositories.voice_session import VoiceSessionRepository
 from schemas.conversation import AnonymousConversationRead
 from schemas.message import MessageCreate, MessageRead
+from schemas.voice_session import VoiceSessionRead
 
 router = APIRouter(prefix="/public/assistants/{assistant_id}/conversations", tags=["public-chat"])
 
@@ -270,3 +294,24 @@ async def send_anonymous_message_streaming(
     message_read = MessageRead.model_validate(assistant_message)
 
     return StreamingResponse(build_message_stream(message_read), media_type="text/event-stream")
+
+
+@router.post(
+    "/{conversation_id}/voice-sessions",
+    response_model=VoiceSessionRead,
+    status_code=201,
+)
+async def start_voice_session(
+    session: PublicDb, assistant: PublicAssistant, conversation: AnonymousConversation
+) -> VoiceSessionRead:
+    repo = VoiceSessionRepository(session, assistant.tenant_id)
+    voice_session = await repo.create(conversation_id=conversation.id)
+
+    await write_audit_log(
+        session,
+        tenant_id=assistant.tenant_id,
+        action="voice_session.create",
+        resource_type="voice_session",
+        resource_id=voice_session.id,
+    )
+    return VoiceSessionRead.model_validate(voice_session)

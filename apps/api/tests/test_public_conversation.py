@@ -424,3 +424,85 @@ async def test_empty_allowed_domains_permits_any_origin() -> None:
     finally:
         await _cleanup_org(org_id)
         await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_start_voice_session_creates_a_real_voice_session() -> None:
+    email = "endpoint-test-public-owner-12@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email, is_public=True)
+    try:
+        create_response = client.post(_public_url(assistant_id))
+        conversation_id = create_response.json()["conversation_id"]
+        token = create_response.json()["access_token"]
+
+        response = client.post(
+            _public_url(assistant_id, f"/{conversation_id}/voice-sessions"),
+            headers=auth_headers(token),
+        )
+        assert response.status_code == 201
+        body = response.json()
+        assert body["conversation_id"] == conversation_id
+        assert body["ended_at"] is None
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_starting_a_voice_session_with_no_token_401s() -> None:
+    email = "endpoint-test-public-owner-13@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email, is_public=True)
+    try:
+        create_response = client.post(_public_url(assistant_id))
+        conversation_id = create_response.json()["conversation_id"]
+
+        response = client.post(_public_url(assistant_id, f"/{conversation_id}/voice-sessions"))
+        assert response.status_code == 401
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_starting_a_voice_session_with_a_token_for_a_different_conversation_401s() -> None:
+    email = "endpoint-test-public-owner-14@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email, is_public=True)
+    try:
+        first = client.post(_public_url(assistant_id))
+        second = client.post(_public_url(assistant_id))
+        second_conversation_id = second.json()["conversation_id"]
+        first_token = first.json()["access_token"]
+
+        response = client.post(
+            _public_url(assistant_id, f"/{second_conversation_id}/voice-sessions"),
+            headers=auth_headers(first_token),
+        )
+        assert response.status_code == 401
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_a_conversation_can_have_more_than_one_voice_session_started() -> None:
+    email = "endpoint-test-public-owner-15@example.com"
+    org_id, assistant_id = _new_org_workspace_kb_assistant(email, is_public=True)
+    try:
+        create_response = client.post(_public_url(assistant_id))
+        conversation_id = create_response.json()["conversation_id"]
+        token = create_response.json()["access_token"]
+
+        first = client.post(
+            _public_url(assistant_id, f"/{conversation_id}/voice-sessions"),
+            headers=auth_headers(token),
+        )
+        second = client.post(
+            _public_url(assistant_id, f"/{conversation_id}/voice-sessions"),
+            headers=auth_headers(token),
+        )
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert first.json()["id"] != second.json()["id"]
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
