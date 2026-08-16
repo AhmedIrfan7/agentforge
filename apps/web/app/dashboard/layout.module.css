@@ -25,6 +25,15 @@
   font-size: 1rem;
 }
 
+.navLink {
+  font-size: 0.875rem;
+  color: rgba(128, 128, 128, 0.9);
+}
+
+.navLink:hover {
+  color: var(--foreground);
+}
+
 .navSpacer {
   flex: 1;
 }

@@ -29,7 +29,7 @@ from models.security_settings import SecuritySettings
 from repositories.organization import OrganizationRepository
 from repositories.role import RoleRepository
 from schemas.common import Page, PaginationParams
-from schemas.organization import OrganizationCreate, OrganizationRead
+from schemas.organization import OrganizationCreate, OrganizationRead, OrganizationUpdate
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
 
@@ -102,6 +102,47 @@ async def get_organization(
     org = await repo.get(organization_id)
     if org is None:
         raise NotFoundError(f"Organization {organization_id} not found.")
+    return OrganizationRead.model_validate(org)
+
+
+@router.patch(
+    "/{organization_id}",
+    response_model=OrganizationRead,
+    dependencies=[Depends(require_permission("organization:update"))],
+)
+async def update_organization(
+    organization_id: uuid.UUID,
+    body: OrganizationUpdate,
+    session: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user_id: Annotated[uuid.UUID, Depends(get_current_user_id)],
+) -> OrganizationRead:
+    repo = OrganizationRepository(session)
+    org = await repo.get(organization_id)
+    if org is None:
+        raise NotFoundError(f"Organization {organization_id} not found.")
+
+    # Only fields the caller actually included get applied --
+    # model_fields_set-driven PATCH semantics, same pattern
+    # routers/security_settings.py's own update endpoint already uses.
+    for field_name in body.model_fields_set:
+        setattr(org, field_name, getattr(body, field_name))
+
+    await write_audit_log(
+        session,
+        tenant_id=org.id,
+        action="organization.update",
+        resource_type="organization",
+        resource_id=org.id,
+        actor_user_id=user_id,
+    )
+    # write_audit_log's own flush() already sent the UPDATE, but
+    # TimestampMixin.updated_at's onupdate=func.now() is server-computed
+    # -- SQLAlchemy marks it expired afterward rather than knowing its
+    # new value client-side. A real, awaited refresh (safe here, unlike
+    # letting Pydantic's synchronous model_validate try to lazy-load it,
+    # which raises MissingGreenlet) gets the actual persisted value back
+    # instead of serializing a stale one.
+    await session.refresh(org)
     return OrganizationRead.model_validate(org)
 
 

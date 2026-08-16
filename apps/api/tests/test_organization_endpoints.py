@@ -25,6 +25,7 @@ from main import app
 from models.audit_log import AuditLog
 from models.membership import Membership
 from models.organization import Organization
+from models.role import Role
 from models.session import Session
 from models.user import User
 from tests.helpers import auth_headers, signup_and_login
@@ -235,3 +236,127 @@ async def test_list_organizations_only_shows_callers_own_orgs() -> None:
     assert len(body["items"]) <= 2
     # 3 own orgs, not 4 — the other user's org must not appear.
     assert body["total"] == 3
+
+
+@pytest.mark.anyio
+async def test_update_organization_name() -> None:
+    headers = await _new_user_headers("endpoint-test-update-name@example.com")
+    create_response = client.post(
+        "/organizations",
+        json={"name": "Original Name", "slug": "endpoint-test-update-name"},
+        headers=headers,
+    )
+    org_id = create_response.json()["id"]
+
+    response = client.patch(f"/organizations/{org_id}", json={"name": "New Name"}, headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "New Name"
+    # Untouched fields stay untouched — a real partial update, not a
+    # full-replace PUT wearing a PATCH method name.
+    assert body["slug"] == "endpoint-test-update-name"
+    assert body["logo_url"] is None
+
+
+@pytest.mark.anyio
+async def test_update_organization_branding_is_a_real_partial_update() -> None:
+    headers = await _new_user_headers("endpoint-test-update-branding@example.com")
+    create_response = client.post(
+        "/organizations",
+        json={"name": "Branding Test", "slug": "endpoint-test-update-branding"},
+        headers=headers,
+    )
+    org_id = create_response.json()["id"]
+
+    first_response = client.patch(
+        f"/organizations/{org_id}",
+        json={"logo_url": "https://example.com/logo.png"},
+        headers=headers,
+    )
+    assert first_response.status_code == 200
+    assert first_response.json()["logo_url"] == "https://example.com/logo.png"
+    assert first_response.json()["primary_color"] is None
+
+    # A second PATCH touching only primary_color must not clobber the
+    # logo_url the first PATCH already set.
+    second_response = client.patch(
+        f"/organizations/{org_id}", json={"primary_color": "#4f46e5"}, headers=headers
+    )
+    assert second_response.status_code == 200
+    body = second_response.json()
+    assert body["primary_color"] == "#4f46e5"
+    assert body["logo_url"] == "https://example.com/logo.png"
+
+    # An explicit null is a real, meaningful "clear it" value for a
+    # nullable branding field — distinct from omitting the field.
+    clear_response = client.patch(
+        f"/organizations/{org_id}", json={"logo_url": None}, headers=headers
+    )
+    assert clear_response.status_code == 200
+    assert clear_response.json()["logo_url"] is None
+    assert clear_response.json()["primary_color"] == "#4f46e5"
+
+
+@pytest.mark.anyio
+async def test_explicitly_nulling_organization_name_returns_422() -> None:
+    headers = await _new_user_headers("endpoint-test-update-null-name@example.com")
+    create_response = client.post(
+        "/organizations",
+        json={"name": "Null Name Test", "slug": "endpoint-test-update-null-name"},
+        headers=headers,
+    )
+    org_id = create_response.json()["id"]
+
+    response = client.patch(f"/organizations/{org_id}", json={"name": None}, headers=headers)
+    assert response.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_update_nonexistent_organization_returns_403_not_404() -> None:
+    headers = await _new_user_headers("endpoint-test-update-missing@example.com")
+    response = client.patch(
+        f"/organizations/{uuid.uuid4()}", json={"name": "Doesn't Matter"}, headers=headers
+    )
+    # No membership row exists for a nonexistent org either, so this is
+    # a real 403 from require_permission, not a 404 — same "don't leak
+    # existence" precedent every other tenant-scoped route already uses.
+    assert response.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_end_user_cannot_update_organization() -> None:
+    owner_email = "endpoint-test-update-owner@example.com"
+    owner_headers = await _new_user_headers(owner_email)
+    create_response = client.post(
+        "/organizations",
+        json={"name": "Permission Test", "slug": "endpoint-test-update-permission"},
+        headers=owner_headers,
+    )
+    org_id = create_response.json()["id"]
+
+    member_email = "endpoint-test-update-member@example.com"
+    member_token = signup_and_login(
+        client, email=member_email, password="correct horse battery staple", full_name="Member"
+    )
+    async with get_session() as session:
+        result = await session.execute(select(User).where(User.email == member_email))
+        member_user = result.scalar_one()
+        role_result = await session.execute(select(Role).where(Role.name == "end_user"))
+        end_user_role = role_result.scalar_one()
+        await set_tenant_context(session, uuid.UUID(org_id))
+        session.add(
+            Membership(
+                tenant_id=uuid.UUID(org_id),
+                user_id=member_user.id,
+                workspace_id=None,
+                role_id=end_user_role.id,
+            )
+        )
+        await session.commit()
+
+    response = client.patch(
+        f"/organizations/{org_id}",
+        json={"name": "Hijacked Name"},
+        headers=auth_headers(member_token),
+    )
+    assert response.status_code == 403

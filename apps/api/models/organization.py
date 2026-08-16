@@ -15,3 +15,10 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(nullable=False)
     slug: Mapped[str] = mapped_column(unique=True, index=True, nullable=False)
+    # Branding (roadmap step 234) -- an org-level default, not yet read
+    # by anything: apps/widget's own per-embed theme (step 206) is set
+    # directly on the embed snippet, same honest "configuration exists,
+    # no consumer wired up yet" shape SecuritySettings' own session/
+    # password fields already established.
+    logo_url: Mapped[str | None] = mapped_column(nullable=True)
+    primary_color: Mapped[str | None] = mapped_column(nullable=True)

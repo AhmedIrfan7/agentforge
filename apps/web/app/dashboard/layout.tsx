@@ -8,11 +8,12 @@
 // docstring already gives for why this can't be a Server Component.
 //
 // Real nav links only ever appear here once their own real page lands
-// (org-settings/234, workspaces/235, etc.) -- this milestone's own
-// steps are what will each add their own entry, matching how this
+// -- Settings (234) is the first; workspaces/knowledge-bases/etc. each
+// add their own entry as their own step lands, matching how this
 // codebase everywhere else avoids wiring a UI affordance to a route
 // that doesn't exist yet.
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useAuth } from "@/lib/AuthContext";
@@ -36,6 +37,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className={styles.shell}>
       <nav className={styles.nav}>
         <span className={styles.brand}>AgentForge</span>
+        <Link href="/dashboard/settings" className={styles.navLink}>
+          Settings
+        </Link>
         <div className={styles.navSpacer} />
         <span className={styles.userEmail}>{user.email}</span>
         <button
