@@ -4,7 +4,7 @@ This document describes the system **as implemented**, not as aspired to — it 
 
 ## Status
 
-Milestone 7 (Embeddable Widget) complete; Milestone 8 (Voice Platform) next. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
+Milestone 8 (Voice Platform) complete; Milestone 9 (Admin Dashboard & Analytics) next. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
 
 ## Repository layout
 
@@ -266,7 +266,44 @@ Full customer-facing setup instructions (the embed snippet, every `data-*` attri
 
 ## Voice platform
 
-_To be filled in as Milestone 8 lands._
+Real audio in, real speech back out, sharing the SAME conversation intelligence the text-chat door already built (Milestone 6) — not a parallel bot. Built on the anonymous-session router (`routers/public_conversation.py`) the widget already uses: a caller first gets an anonymous conversation + token the normal text-chat way, then starts a voice session under it, so a call is authorized by the identical mechanism as a typed message and can pick up an existing text thread mid-conversation (or vice versa).
+
+### Provider abstraction
+
+`voice/base.py` — two structural `Protocol`s, `SpeechToTextProvider`/`TextToSpeechProvider`, the same "interface lands before any concrete implementation" precedent `llm/base.py`/`embeddings/base.py` already established. Deliberately non-streaming at this layer (`bytes` in, one result out) — the streaming behavior lives one level up, in the websocket route, not in the provider contract itself. `voice/whisper.py:WhisperSTTProvider` and `voice/openai_tts.py:OpenAITTSProvider` are the only concrete implementations (`whisper-1` / `tts-1`, OpenAI); no `PROVIDERS` registry exists yet, matching this codebase's own "don't build the registry before there's a real second entry to put in it" rule (`llm/__init__.py`'s own history). Both raise a single `SpeechProviderError` on any real failure (auth, rate limit, network, malformed audio) — one thing every caller catches, regardless of which provider is behind it.
+
+### Data model
+
+`models/voice_session.py:VoiceSession` — tenant-scoped, one level under `Conversation` the same way `Message` already sits under it, `ended_at` (nullable — live vs. closed) the only lifecycle field. No unique constraint on `conversation_id`: one conversation can span multiple real voice calls over time, or mix voice and text turns. A finished voice turn becomes an ordinary `Message` row through the exact same `message_processing.py:generate_assistant_reply` pipeline text chat uses — `Message.voice_session_id` (nullable FK, `SET NULL` on delete) is the precise, queryable link, not a `created_at` time-window approximation.
+
+### Lifecycle endpoints (REST)
+
+`POST .../conversations/{id}/voice-sessions` and `POST .../voice-sessions/{id}/end` (`routers/public_conversation.py`) open and close a session, reusing the router's existing `AnonymousConversation` dependency wholesale rather than a second auth path. Ending a session is idempotent-409 on a repeat call, and its response includes the session's own exact transcript (`repositories/message.py:list_for_voice_session`, reusing `MessageRead`) — the same "don't invent a parallel response shape for the same data" precedent `ConversationExportRead` already set for text chat's export endpoint.
+
+### The audio WebSocket
+
+`routers/public_voice.py`, `WS /public/assistants/{id}/voice-sessions/{id}/audio` — this codebase's first and only websocket route, and a genuinely different code shape from every REST endpoint in this project for one real reason: `errors.py:register_exception_handlers` only intercepts HTTP request exceptions, never websocket connections, so a `Depends()`-raised error inside a websocket route gets no graceful handling. `_authenticate` therefore does its own inline resolution — first-message JSON handshake (`{"token", "mime_type"}`, not a URL query param, so it never lands in browser history or proxy logs), decoding the same anonymous-session JWT the REST doors use, then re-checking the target `VoiceSession` under the URL's own tenant context — closing with a real WS close code (1008 Policy Violation) and reason string on any failure, the websocket-native equivalent of a 401/404. Binary frames are buffered client audio; `{"type": "end_turn"}` (explicit push-to-talk) or one of two automatic detectors finalizes a turn:
+- **Silence timeout** (`SILENCE_TIMEOUT_SECONDS`, 1.5s) — no further audio within the window once a turn has started.
+- **Content-size VAD** (`_voice_activity_has_stopped`) — several consecutive recent chunks all much smaller than the turn's own peak. A real, dependency-free heuristic leveraging Opus/webm's own variable-bitrate encoding (silence compresses smaller even undecoded) — explicitly **not** real acoustic/PCM-level VAD, which would need a new codec/ffmpeg dependency this milestone never needed.
+
+A finalized turn calls `WhisperSTTProvider.transcribe`, sends `{"type": "transcript", ...}`, then — the same real orchestrator call text chat uses — `generate_assistant_reply` (passing `voice_session_id` so both the user's and assistant's `Message` rows land under this call), sends `{"type": "reply", "text", "citations"}`, and speaks it via `_stream_synthesis` — `OpenAITTSProvider.synthesize` run as a background `asyncio.Task` (not awaited inline), streamed back as 4 KB binary frames terminated by `{"type": "synthesis_done"}`. Running synthesis as a decoupled task is what makes real **barge-in** possible: any new client message while synthesis is in flight — including the silence-timeout path finalizing a new turn with nothing else to signal it — cancels the task and sends `{"type": "interrupted"}`, matching how barge-in actually works in a real voice UX (new speech IS the interrupt signal). An explicit `{"type": "interrupt"}` control message rides the same path for a client-initiated stop with no new audio.
+
+`voice/tracing.py` logs two separate real structured latency events per turn: `log_turn_processing` (STT through reply generation — the real time a caller waits in silence) and `log_synthesis` (TTS latency, with a genuine third `status="interrupted"` outcome distinct from success/failure, since conflating a barge-in with a slow call would make the numbers meaningless). `voice/benchmark.py` (`python -m voice.benchmark`) is a standalone, non-CI-gated measurement script — a real TTS→STT round trip over a small fixture set, reporting real latency plus a real quality signal (how closely Whisper's own transcription matches the known input text, via `difflib` similarity) — deliberately not a hard pass/fail gate, since every voice provider here is OpenAI-backed and there's no environment-independent path (unlike keyword search on the retrieval side) to assert a threshold against.
+
+### Tenant isolation
+
+Same defense-in-depth as every other tenant-scoped subsystem: Postgres RLS on `voice_sessions`, plus app-layer checks at all three real entry points. `tests/test_voice_tenant_isolation.py` is the dedicated proof, including the websocket's own strongest case — an attacker's genuinely valid token for their OWN tenant, pointed at another tenant's real `assistant_id` and real `voice_session_id` (not a guessed/random id): `VoiceSessionRepository.get` actually finds a real row under the target tenant's context, so only the `conversation_id`-ownership check inside `_authenticate` is what stops the attempt, not RLS returning nothing outright.
+
+### Widget UI (`apps/widget`)
+
+`src/voice.ts:VoiceSession` is the client half of the same protocol — a real `MediaRecorder` for capture (`audio/webm`, the one codec every real Chromium/Firefox `MediaRecorder` supports without an explicit codec string), a real `AnalyserNode` for a live RMS level signal driving a canvas waveform, one websocket connection for the widget's whole session lifetime (matching `VoiceSession`'s own server-side "one session, many turns" design), and `stopRecording()` sending a real `{"type":"end_turn"}` only after `MediaRecorder.stop()`'s own final `dataavailable` event has already queued the last audio chunk. `chat-window.ts` wires a push-to-talk mic button and the waveform into the existing chat panel, reusing the same message-list rendering for voice transcripts and replies. Teardown on page unload uses `fetch(..., {keepalive: true})`, not `navigator.sendBeacon` — sendBeacon cannot carry the custom `Authorization` header this app's anonymous-session auth model requires.
+
+**Honest, tracked gaps, not silently worked around:**
+- No real `OPENAI_API_KEY` exists in this project's local dev/CI environment — every live-verification of STT/TTS in this milestone confirmed the honest fail-closed path (a clean `SpeechProviderError`, zero partial state persisted), not a real successful transcription/synthesis; `voice/benchmark.py` reports this plainly (0% success) rather than faking a number.
+- Content-size VAD is a real, legitimate proxy, not real acoustic/PCM-level voice-activity detection — a client sending audio at a perfectly steady bitrate regardless of actual speech would defeat it (the silence-timeout fallback still catches that case).
+- Safari's `MediaRecorder` needs an explicit `"audio/mp4"` `mimeType` this widget doesn't send (`audio/webm` is hardcoded) — no roadmap step through 232 asked for cross-browser codec negotiation; this is a known, real gap on Safari/iOS specifically.
+- No dashboard UI exists to configure a per-assistant voice (TTS voice selection, STT language hint, enable/disable voice entirely) — Milestone 9's admin dashboard is the real future home for that, the same gap the embeddable-widget section above already notes for its own embed-snippet UI.
+- `ConversationAgent`/`ReasoningAgent`/`QualityReviewAgent`/`SafetyAgent` still have no implementation — a voice turn's "reply" is exactly as generation-free as a text turn's (retrieved-chunk text or `"No results found."`), inheriting the conversation engine's own honest gap rather than adding a new one.
 
 ## Security architecture
 
