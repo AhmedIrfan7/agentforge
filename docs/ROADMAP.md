@@ -295,7 +295,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 
 ## Milestone 10 — Security & Observability (steps 251–266)
 
-- [ ] 251. Harden Safety Agent: explicit separation of retrieved content from system instructions
+- [x] 251. Harden Safety Agent: explicit separation of retrieved content from system instructions
 - [ ] 252. Add strict schema validation on every API route (no raw dict passthrough)
 - [ ] 253. Document secrets-management approach (env-based now, vault path documented)
 - [ ] 254. Add encryption-at-rest for sensitive columns (API keys, tokens)
