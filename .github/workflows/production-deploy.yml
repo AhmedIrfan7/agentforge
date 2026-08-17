@@ -1,0 +1,52 @@
+name: Production Deploy
+
+# Roadmap step 272. Same real, ready-to-configure shape as step 271's
+# own staging-deploy.yml -- honestly waiting on PRODUCTION_HOST/
+# PRODUCTION_SSH_USER/PRODUCTION_SSH_KEY/PRODUCTION_DEPLOY_PATH secrets
+# this project doesn't have yet (no real production host exists;
+# AGENTS.md's own "CONTINUOUS DELIVERY" section names "Future
+# deployment automation" as future, not built). Scoped to the repo's
+# own "production" GitHub Environment, not "staging" -- separate
+# secrets, separate approval gate, so a staging deploy can never
+# accidentally touch production credentials or vice versa.
+#
+# The manual approval gate this step's own name asks for is GitHub's
+# real, native Environment protection rule (required reviewers), not
+# hand-rolled workflow logic -- configured directly on the repo's
+# "production" environment (Settings -> Environments -> production),
+# not simulated here. A `workflow_dispatch` run against this job
+# genuinely PAUSES and waits for a real reviewer's approval before the
+# deploy steps below ever execute; there's nothing in this YAML file
+# that could accidentally skip that gate.
+#
+# Deploys via SSH + git pull + docker-compose.prod.yml's own real
+# `up -d --build` flow -- identical commands to what a human operator
+# would run by hand on that host, and identical in shape to staging's
+# own deploy step; only the target environment/secrets differ. Once
+# real versioned releases exist (roadmap steps 292-293), this could
+# check out a specific release tag instead of `origin/main` -- not
+# done yet, since no such tag exists in this project today.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-production:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_SSH_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.PRODUCTION_DEPLOY_PATH }}"
+            git fetch origin main
+            git checkout origin/main
+            docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T api alembic upgrade head
+            curl -sf http://localhost:8000/health

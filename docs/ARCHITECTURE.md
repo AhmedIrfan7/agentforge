@@ -355,6 +355,8 @@ _Milestone 11 (steps 267–280) is in progress — this section grows as each st
 
 **Staging deploy workflow (step 271).** [`.github/workflows/staging-deploy.yml`](../.github/workflows/staging-deploy.yml) — real and correct, `workflow_dispatch`-triggered SSH deploy using the exact same `docker-compose.prod.yml` commands a human operator would run by hand, honestly waiting on `STAGING_HOST`/`STAGING_SSH_USER`/`STAGING_SSH_KEY`/`STAGING_DEPLOY_PATH` secrets this project doesn't have yet (no real staging host exists — AGENTS.md's own "CONTINUOUS DELIVERY" section names "Future deployment automation" as future, not built). `docker-compose.prod.yml`'s own `api`/`worker` services now carry both `build:` and an `image:` default pointing at the GHCR tag step 270 publishes — the same file supports both "build from source locally" (self-hosted) and "pull the CI-built image" (staging) without duplicating service definitions across two files.
 
+**Production deploy workflow with manual approval gate (step 272).** [`.github/workflows/production-deploy.yml`](../.github/workflows/production-deploy.yml) — same real shape as staging's own deploy workflow, targeting a separate `production` GitHub Environment with its own separate secrets (`PRODUCTION_HOST`/etc., distinct from staging's). The "manual approval gate" is GitHub's own real, native Environment protection rule (`required_reviewers`), configured directly via the API on the repo's `production` environment — confirmed live via `gh api repos/.../environments/production`, not simulated in the workflow YAML itself. A `workflow_dispatch` run genuinely pauses for a real reviewer's approval before any deploy step executes.
+
 ## Related documents
 
 - [`docs/ROADMAP.md`](ROADMAP.md) — the 300-step implementation plan
