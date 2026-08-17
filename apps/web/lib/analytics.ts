@@ -10,15 +10,28 @@ export interface ConversationMetrics {
   conversations_last_7_days: number;
 }
 
-export async function getConversationMetrics(organizationId: string): Promise<ConversationMetrics> {
-  const response = await authorizedFetch(
-    `/organizations/${organizationId}/analytics/conversations`,
-  );
+export interface KnowledgeMetrics {
+  total_documents: number;
+  duplicate_document_count: number;
+  low_confidence_document_count: number;
+  unused_document_count: number;
+}
+
+async function getJson<T>(path: string): Promise<T> {
+  const response = await authorizedFetch(path);
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       error?: { message?: string };
     } | null;
     throw new Error(body?.error?.message ?? `Request failed with status ${response.status}.`);
   }
-  return (await response.json()) as ConversationMetrics;
+  return (await response.json()) as T;
+}
+
+export async function getConversationMetrics(organizationId: string): Promise<ConversationMetrics> {
+  return getJson<ConversationMetrics>(`/organizations/${organizationId}/analytics/conversations`);
+}
+
+export async function getKnowledgeMetrics(organizationId: string): Promise<KnowledgeMetrics> {
+  return getJson<KnowledgeMetrics>(`/organizations/${organizationId}/analytics/knowledge`);
 }

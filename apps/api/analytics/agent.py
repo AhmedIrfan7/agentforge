@@ -13,17 +13,16 @@ asked for yet" this codebase's own established discipline avoids
 everywhere else (KnowledgeBase/Assistant/Message model docstrings all
 make the identical argument).
 
-conversation_metrics() is the one real, working exception -- proves the
-skeleton is genuinely callable end to end (real DB queries, real tests)
-rather than a class of empty names, the same "one proven-real capability,
-rest honestly stubbed" shape agents/base.py's own module docstring
-already used for run() across the existing 8 conversational agents.
-Every other method raises NotImplementedError with a docstring naming
-its real future roadmap step where one is already scheduled (through
-250), or saying plainly that none exists yet where AGENTS.md names the
-responsibility but no roadmap step has claimed it -- an honest,
-discoverable interface for those later steps to fill in, not a
-guessed one.
+conversation_metrics() (243) and knowledge_metrics() (244) are real,
+working exceptions -- proving the skeleton is genuinely callable end to
+end (real DB queries, real tests) rather than a class of empty names,
+each filled in exactly when its own dedicated roadmap step arrived, not
+speculatively ahead of it. Every other method still raises
+NotImplementedError with a docstring naming its real future roadmap
+step where one is already scheduled (through 250), or saying plainly
+that none exists yet where AGENTS.md names the responsibility but no
+roadmap step has claimed it -- an honest, discoverable interface for
+those later steps to fill in, not a guessed one.
 
 Not a TenantScopedRepository subclass (this computes aggregates across
 several models, not CRUD on one) and not an Agent[InputT, OutputT]
@@ -40,13 +39,21 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import NoReturn
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.conversation import Conversation
+from models.document import Document
 from models.message import Message
 
 _RECENT_WINDOW = timedelta(days=7)
+
+# A document's own chunking_recommendation.scores[chosen_strategy] is a
+# real value in [0, 1] (agents/chunking_recommendation.py) -- not a
+# fabricated confidence metric, but there's no established convention
+# yet for what counts as "low." 0.5 (the scale's own midpoint) is a
+# first, honest, easily-revisited heuristic, not a tuned threshold.
+_LOW_CONFIDENCE_THRESHOLD = 0.5
 
 
 @dataclass
@@ -55,6 +62,14 @@ class ConversationMetrics:
     total_messages: int
     average_messages_per_conversation: float
     conversations_last_7_days: int
+
+
+@dataclass
+class KnowledgeMetrics:
+    total_documents: int
+    duplicate_document_count: int
+    low_confidence_document_count: int
+    unused_document_count: int
 
 
 class AnalyticsAgent:
@@ -94,10 +109,71 @@ class AnalyticsAgent:
             conversations_last_7_days=conversations_last_7_days,
         )
 
-    async def knowledge_metrics(self, session: AsyncSession, tenant_id: uuid.UUID) -> NoReturn:
-        """Duplicates/low-confidence/unused docs -- real, dated future
-        work: roadmap step 244 ("knowledge-health dashboard")."""
-        raise NotImplementedError("Knowledge metrics land with roadmap step 244.")
+    async def knowledge_metrics(
+        self, session: AsyncSession, tenant_id: uuid.UUID
+    ) -> KnowledgeMetrics:
+        """Real, not a stub -- reuses three signals this codebase already
+        computes for real, unrelated reasons, rather than inventing new
+        tracking data:
+        - duplicates: extraction.py already writes doc_metadata
+          ['duplicate_document_ids'] per document (step 117's own real
+          content_hash-based detection) -- a document counts as a
+          duplicate here iff that list is non-empty.
+        - low-confidence: doc_metadata['chunking_recommendation']
+          ['scores'][chunking_strategy] is the real score (step 097)
+          the CHOSEN strategy actually got, not a fabricated number.
+        - unused: a document that has never appeared in any real
+          Message.citations (step 187) across this tenant -- the only
+          honest signal available, since agents/tracing.py's own
+          retrieval events are log-only, never persisted to a queryable
+          table (its own module docstring already explains why nothing
+          here tries to query them).
+        """
+        documents = (
+            (await session.execute(select(Document).where(Document.tenant_id == tenant_id)))
+            .scalars()
+            .all()
+        )
+        total_documents = len(documents)
+
+        duplicate_document_count = sum(
+            1 for d in documents if d.doc_metadata.get("duplicate_document_ids")
+        )
+
+        low_confidence_document_count = 0
+        for d in documents:
+            if d.chunking_strategy is None:
+                continue
+            recommendation = d.doc_metadata.get("chunking_recommendation")
+            scores = recommendation.get("scores") if isinstance(recommendation, dict) else None
+            score = scores.get(d.chunking_strategy) if isinstance(scores, dict) else None
+            if isinstance(score, int | float) and score < _LOW_CONFIDENCE_THRESHOLD:
+                low_confidence_document_count += 1
+
+        cited_document_ids: set[uuid.UUID] = set()
+        if documents:
+            # Same "app-layer filter on top of, not instead of, RLS"
+            # discipline repositories/base.py's own docstring already
+            # states -- the explicit tenant_id predicate isn't strictly
+            # needed under RLS, but stays here for the same reason.
+            result = await session.execute(
+                text(
+                    "SELECT DISTINCT (citation->>'document_id')::uuid AS document_id "
+                    "FROM messages, jsonb_array_elements(citations) AS citation "
+                    "WHERE tenant_id = :tenant_id"
+                ),
+                {"tenant_id": tenant_id},
+            )
+            cited_document_ids = {row.document_id for row in result.all()}
+
+        unused_document_count = sum(1 for d in documents if d.id not in cited_document_ids)
+
+        return KnowledgeMetrics(
+            total_documents=total_documents,
+            duplicate_document_count=duplicate_document_count,
+            low_confidence_document_count=low_confidence_document_count,
+            unused_document_count=unused_document_count,
+        )
 
     async def agent_performance_metrics(
         self, session: AsyncSession, tenant_id: uuid.UUID

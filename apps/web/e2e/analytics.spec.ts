@@ -5,6 +5,16 @@ import { expect, test } from "@playwright/test";
 // chat.spec.ts's own createPublicAssistant), then read back through
 // the real dashboard analytics page -- proves the whole path end to
 // end, not just that the page renders without a real backend behind it.
+//
+// Also covers step 244's real empty state (this flow's own KB never
+// gets a document) -- creating documents with specific doc_metadata
+// needs a direct DB insert (no endpoint accepts arbitrary metadata
+// without the real upload/extraction pipeline this test has no way to
+// drive), so the non-empty knowledge-health cases stay covered by
+// test_analytics_agent.py/test_analytics_endpoints.py plus this
+// step's own live verification instead, the same honest split
+// documents.spec.ts-adjacent steps already established for MinIO/
+// ClamAV-dependent flows.
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 test("analytics: real conversations show up as real conversation/message counts", async ({
@@ -104,4 +114,8 @@ test("analytics: real conversations show up as real conversation/message counts"
   expect(pageText).toContain("2 Conversations");
   expect(pageText).toContain("4 Messages");
   expect(pageText).toContain("2.0 Avg messages / conversation");
+
+  // Real empty state -- this flow's own knowledge base never got a
+  // document.
+  await expect(page.getByText("No documents yet.")).toBeVisible();
 });

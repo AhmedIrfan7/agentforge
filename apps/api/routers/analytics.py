@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from analytics.agent import AnalyticsAgent
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
-from schemas.analytics import ConversationMetricsRead
+from schemas.analytics import ConversationMetricsRead, KnowledgeMetricsRead
 
 router = APIRouter(prefix="/organizations/{organization_id}/analytics", tags=["analytics"])
 
@@ -40,4 +40,19 @@ async def get_conversation_metrics(
         total_messages=metrics.total_messages,
         average_messages_per_conversation=metrics.average_messages_per_conversation,
         conversations_last_7_days=metrics.conversations_last_7_days,
+    )
+
+
+@router.get(
+    "/knowledge",
+    response_model=KnowledgeMetricsRead,
+    dependencies=[Depends(require_permission("analytics:read"))],
+)
+async def get_knowledge_metrics(session: TenantDb, tenant_id: TenantId) -> KnowledgeMetricsRead:
+    metrics = await _analytics_agent.knowledge_metrics(session, tenant_id)
+    return KnowledgeMetricsRead(
+        total_documents=metrics.total_documents,
+        duplicate_document_count=metrics.duplicate_document_count,
+        low_confidence_document_count=metrics.low_confidence_document_count,
+        unused_document_count=metrics.unused_document_count,
     )

@@ -1,17 +1,25 @@
 "use client";
 
-// Conversation-analytics dashboard (roadmap step 243) -- the first
-// real UI consumer of analytics/agent.py:AnalyticsAgent.conversation_
-// metrics (242). No charting library exists in this app yet (apps/
-// widget's own "minimal deps" constraint applies equally here) --
-// the one real chart this step's data supports honestly is a plain
-// CSS bar showing what share of all-time conversations happened in
-// the last 7 days, not a fabricated multi-series graph the backend
-// doesn't actually have data for.
+// Analytics dashboard. Conversation metrics (roadmap step 243) was
+// this page's first section -- the first real UI consumer of
+// analytics/agent.py:AnalyticsAgent.conversation_metrics (242).
+// Knowledge health (step 244, the SAME agent's knowledge_metrics) is
+// a second, independent section on the same page rather than a
+// separate nav entry -- both are "analytics" concerns a user expects
+// to find together, and the nav is already six entries deep. No
+// charting library exists in this app yet (apps/widget's own
+// "minimal deps" constraint applies equally here) -- the one real
+// chart each section's data supports honestly is a plain CSS bar, not
+// a fabricated multi-series graph the backend has no data for.
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getConversationMetrics, type ConversationMetrics } from "@/lib/analytics";
+import {
+  getConversationMetrics,
+  getKnowledgeMetrics,
+  type ConversationMetrics,
+  type KnowledgeMetrics,
+} from "@/lib/analytics";
 import { useCurrentOrganization } from "@/lib/useCurrentOrganization";
 import styles from "./page.module.css";
 
@@ -38,10 +46,16 @@ export default function AnalyticsPage() {
     );
   }
 
-  return <ConversationAnalytics organizationId={organization.id} />;
+  return (
+    <div className={styles.wrapper}>
+      <h1 className={styles.heading}>Analytics</h1>
+      <ConversationSection organizationId={organization.id} />
+      <KnowledgeHealthSection organizationId={organization.id} />
+    </div>
+  );
 }
 
-function ConversationAnalytics({ organizationId }: { organizationId: string }) {
+function ConversationSection({ organizationId }: { organizationId: string }) {
   const [metrics, setMetrics] = useState<ConversationMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,21 +78,11 @@ function ConversationAnalytics({ organizationId }: { organizationId: string }) {
   }, [organizationId]);
 
   if (error) {
-    return (
-      <div className={styles.wrapper}>
-        <h1 className={styles.heading}>Analytics</h1>
-        <p className={styles.error}>{error}</p>
-      </div>
-    );
+    return <p className={styles.error}>{error}</p>;
   }
 
   if (!metrics) {
-    return (
-      <div className={styles.wrapper}>
-        <h1 className={styles.heading}>Analytics</h1>
-        <p className={styles.status}>Loading…</p>
-      </div>
-    );
+    return <p className={styles.status}>Loading…</p>;
   }
 
   const recentShare =
@@ -87,9 +91,7 @@ function ConversationAnalytics({ organizationId }: { organizationId: string }) {
       : 0;
 
   return (
-    <div className={styles.wrapper}>
-      <h1 className={styles.heading}>Analytics</h1>
-
+    <>
       <div className={styles.cards}>
         <div className={styles.card}>
           <div className={styles.cardValue}>{metrics.total_conversations}</div>
@@ -117,6 +119,67 @@ function ConversationAnalytics({ organizationId }: { organizationId: string }) {
           {recentShare}%)
         </p>
       </div>
+    </>
+  );
+}
+
+function KnowledgeHealthSection({ organizationId }: { organizationId: string }) {
+  const [metrics, setMetrics] = useState<KnowledgeMetrics | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getKnowledgeMetrics(organizationId)
+      .then((data) => {
+        if (!cancelled) {
+          setMetrics(data);
+        }
+      })
+      .catch((err: Error) => {
+        if (!cancelled) {
+          setError(err.message);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [organizationId]);
+
+  if (error) {
+    return <p className={styles.error}>{error}</p>;
+  }
+
+  if (!metrics) {
+    return <p className={styles.status}>Loading…</p>;
+  }
+
+  return (
+    <div className={styles.chartCard}>
+      <h2 className={styles.sectionHeading}>Knowledge health</h2>
+      {metrics.total_documents === 0 ? (
+        <p className={styles.subtext}>No documents yet.</p>
+      ) : (
+        <ul className={styles.healthList}>
+          <li className={styles.healthItem}>
+            <span className={styles.healthLabel}>Duplicates</span>
+            <span className={styles.healthValue}>
+              {metrics.duplicate_document_count} / {metrics.total_documents}
+            </span>
+          </li>
+          <li className={styles.healthItem}>
+            <span className={styles.healthLabel}>Low-confidence chunking</span>
+            <span className={styles.healthValue}>
+              {metrics.low_confidence_document_count} / {metrics.total_documents}
+            </span>
+          </li>
+          <li className={styles.healthItem}>
+            <span className={styles.healthLabel}>Never cited</span>
+            <span className={styles.healthValue}>
+              {metrics.unused_document_count} / {metrics.total_documents}
+            </span>
+          </li>
+        </ul>
+      )}
     </div>
   );
 }

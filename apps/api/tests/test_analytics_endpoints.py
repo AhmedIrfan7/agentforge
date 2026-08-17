@@ -14,6 +14,7 @@ from main import app
 from models.assistant import Assistant
 from models.audit_log import AuditLog
 from models.conversation import Conversation
+from models.document import Document
 from models.knowledge_base import KnowledgeBase
 from models.membership import Membership
 from models.message import Message
@@ -27,12 +28,48 @@ from tests.helpers import auth_headers, signup_and_login
 client = TestClient(app)
 
 
+async def _new_knowledge_base(org_id: uuid.UUID, headers: dict[str, str]) -> uuid.UUID:
+    ws_response = client.post(
+        f"/organizations/{org_id}/workspaces",
+        json={"name": "Analytics KB WS", "slug": "endpoint-test-analytics-kb-ws"},
+        headers=headers,
+    )
+    workspace_id = ws_response.json()["id"]
+    kb_response = client.post(
+        f"/organizations/{org_id}/workspaces/{workspace_id}/knowledge-bases",
+        json={"name": "Analytics Standalone KB", "slug": "endpoint-test-analytics-standalone-kb"},
+        headers=headers,
+    )
+    return uuid.UUID(kb_response.json()["id"])
+
+
+async def _new_document(
+    org_id: uuid.UUID, knowledge_base_id: uuid.UUID, *, slug: str, doc_metadata: dict[str, object]
+) -> None:
+    async with get_session() as session:
+        await set_tenant_context(session, org_id)
+        session.add(
+            Document(
+                tenant_id=org_id,
+                knowledge_base_id=knowledge_base_id,
+                title=f"Doc {slug}",
+                status="embedded",
+                storage_key=f"endpoint-test-analytics/{slug}",
+                content_type="text/plain",
+                size_bytes=10,
+                doc_metadata=doc_metadata,
+            )
+        )
+        await session.commit()
+
+
 async def _cleanup_org(org_id: uuid.UUID) -> None:
     async with get_session() as session:
         await set_tenant_context(session, org_id)
         for model in (
             Message,
             Conversation,
+            Document,
             Assistant,
             KnowledgeBase,
             Workspace,
@@ -171,6 +208,50 @@ async def test_analyst_role_can_read_conversation_metrics() -> None:
         await _cleanup_org(org_id)
         await _cleanup_user(owner_email)
         await _cleanup_user(analyst_email)
+
+
+@pytest.mark.anyio
+async def test_owner_can_read_real_knowledge_metrics() -> None:
+    email = "endpoint-test-analytics-owner-4@example.com"
+    org_id, headers = _new_org(email)
+    try:
+        kb_id = await _new_knowledge_base(org_id, headers)
+        await _new_document(
+            org_id, kb_id, slug="dup", doc_metadata={"duplicate_document_ids": ["x"]}
+        )
+        await _new_document(org_id, kb_id, slug="clean", doc_metadata={})
+
+        response = client.get(f"/organizations/{org_id}/analytics/knowledge", headers=headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total_documents"] == 2
+        assert body["duplicate_document_count"] == 1
+        # Neither document has a chunking_strategy set, and neither is
+        # ever cited -- both count as unused, matching the same "no
+        # signal yet" honesty knowledge_metrics() itself documents.
+        assert body["low_confidence_document_count"] == 0
+        assert body["unused_document_count"] == 2
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_end_user_role_cannot_read_knowledge_metrics() -> None:
+    owner_email = "endpoint-test-analytics-owner-5@example.com"
+    org_id, _owner_headers = _new_org(owner_email)
+    end_user_email = "endpoint-test-analytics-enduser-kb@example.com"
+    try:
+        end_user_headers = await _add_member_with_role(org_id, end_user_email, "end_user")
+
+        response = client.get(
+            f"/organizations/{org_id}/analytics/knowledge", headers=end_user_headers
+        )
+        assert response.status_code == 403
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(end_user_email)
 
 
 @pytest.mark.anyio
