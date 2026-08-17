@@ -338,7 +338,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 285. Set up GitHub labels
 - [x] 286. Set up GitHub milestones matching this roadmap
 - [x] 287. Add public-facing roadmap summary to README
-- [ ] 288. Add `FAQ.md`
+- [x] 288. Add `FAQ.md`
 - [ ] 289. Document plugin/extension points
 - [ ] 290. Add OpenAPI-generated API reference docs
 - [ ] 291. Add demo knowledge base + assistant for new contributors
