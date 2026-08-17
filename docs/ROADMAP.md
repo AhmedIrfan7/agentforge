@@ -316,7 +316,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 
 - [x] 267. Add production Dockerfiles (multi-stage, non-root user)
 - [x] 268. Add `docker-compose.prod.yml` reference deployment
-- [ ] 269. Add self-hosted deployment documentation
+- [x] 269. Add self-hosted deployment documentation
 - [ ] 270. Add CI/CD: build+push images on merge to main
 - [ ] 271. Add staging-deployment workflow
 - [ ] 272. Add production-deployment workflow with manual approval gate
