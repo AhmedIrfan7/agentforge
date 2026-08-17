@@ -1,0 +1,48 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, independent of any push -- CodeQL's own query packs get
+    # updated over time, so this can surface a new finding against
+    # already-merged code with no push to trigger it (same reasoning
+    # dependency-audit.yml's own weekly cron already established for
+    # step 260).
+    - cron: "0 7 * * 1"
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # apps/api is Python; apps/web + apps/widget (+ packages/shared)
+        # are all TypeScript/JavaScript -- CodeQL's own "javascript"
+        # analyzer covers both under one language entry.
+        language: ["python", "javascript-typescript"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      # No manual build step for either language -- CodeQL's own
+      # default "autobuild" is enough for Python and JS/TS (neither
+      # needs a real compile step for CodeQL's own static analysis to
+      # work, unlike a compiled language such as Go or Java).
+      - uses: github/codeql-action/autobuild@v3
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
