@@ -9,10 +9,10 @@
 //
 // Real nav links only ever appear here once their own real page lands
 // -- Settings (234), Workspaces (235), Members (239), Invitations
-// (240), API keys (241), Analytics (243) so far; knowledge-bases/etc.
-// each add their own entry as their own step lands, matching how this
-// codebase everywhere else avoids wiring a UI affordance to a route
-// that doesn't exist yet.
+// (240), API keys (241), Analytics (243), Audit log (247) so far;
+// knowledge-bases/etc. each add their own entry as their own step
+// lands, matching how this codebase everywhere else avoids wiring a UI
+// affordance to a route that doesn't exist yet.
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -52,6 +52,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </Link>
         <Link href="/dashboard/analytics" className={styles.navLink}>
           Analytics
+        </Link>
+        <Link href="/dashboard/audit-log" className={styles.navLink}>
+          Audit log
         </Link>
         <Link href="/dashboard/settings" className={styles.navLink}>
           Settings

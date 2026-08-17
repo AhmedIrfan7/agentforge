@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import write_audit_log
+from dependencies.auth import get_current_user_id
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from errors import ConflictError, NotFoundError
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/organizations/{organization_id}/workspaces", tags=["
 
 TenantDb = Annotated[AsyncSession, Depends(get_tenant_db)]
 TenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
+UserId = Annotated[uuid.UUID, Depends(get_current_user_id)]
 
 
 @router.post(
@@ -39,7 +41,7 @@ TenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
     dependencies=[Depends(require_permission("workspace:create"))],
 )
 async def create_workspace(
-    body: WorkspaceCreate, session: TenantDb, tenant_id: TenantId
+    body: WorkspaceCreate, session: TenantDb, tenant_id: TenantId, user_id: UserId
 ) -> WorkspaceRead:
     repo = WorkspaceRepository(session, tenant_id)
     try:
@@ -53,6 +55,7 @@ async def create_workspace(
         action="workspace.create",
         resource_type="workspace",
         resource_id=workspace.id,
+        actor_user_id=user_id,
     )
     return WorkspaceRead.model_validate(workspace)
 
@@ -96,7 +99,9 @@ async def get_workspace(
     status_code=204,
     dependencies=[Depends(require_permission("workspace:delete"))],
 )
-async def delete_workspace(workspace_id: uuid.UUID, session: TenantDb, tenant_id: TenantId) -> None:
+async def delete_workspace(
+    workspace_id: uuid.UUID, session: TenantDb, tenant_id: TenantId, user_id: UserId
+) -> None:
     repo = WorkspaceRepository(session, tenant_id)
     workspace = await repo.get(workspace_id)
     if workspace is None:
@@ -108,5 +113,6 @@ async def delete_workspace(workspace_id: uuid.UUID, session: TenantDb, tenant_id
         action="workspace.delete",
         resource_type="workspace",
         resource_id=workspace.id,
+        actor_user_id=user_id,
     )
     await repo.delete(workspace)

@@ -45,6 +45,7 @@ from agents.chunking_recommendation import STRATEGY_NAMES
 from antivirus import scan_for_viruses
 from audit import write_audit_log
 from config import settings
+from dependencies.auth import get_current_user_id
 from dependencies.knowledge_base import TargetKnowledgeBase
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
@@ -78,6 +79,7 @@ router = APIRouter(
 
 TenantDb = Annotated[AsyncSession, Depends(get_tenant_db)]
 TenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
+UserId = Annotated[uuid.UUID, Depends(get_current_user_id)]
 
 
 @router.post(
@@ -89,6 +91,7 @@ TenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
 async def upload_document(
     session: TenantDb,
     tenant_id: TenantId,
+    user_id: UserId,
     knowledge_base: TargetKnowledgeBase,
     file: Annotated[UploadFile, File()],
 ) -> DocumentRead:
@@ -122,6 +125,7 @@ async def upload_document(
         action="document.create",
         resource_type="document",
         resource_id=document.id,
+        actor_user_id=user_id,
     )
 
     dispatch_extraction.delay(str(document.id), str(tenant_id))
@@ -240,6 +244,7 @@ async def override_chunking_strategy(
     body: ChunkingStrategyOverrideRequest,
     session: TenantDb,
     tenant_id: TenantId,
+    user_id: UserId,
     knowledge_base: TargetKnowledgeBase,
 ) -> ChunkingDecisionRead:
     """Roadmap step 103 (endpoint), step 104 (real columns instead of
@@ -293,6 +298,7 @@ async def override_chunking_strategy(
         action="document.chunking_strategy_override",
         resource_type="document",
         resource_id=document.id,
+        actor_user_id=user_id,
     )
 
     return ChunkingDecisionRead(strategy=body.strategy, source=source, reasoning=reasoning)
@@ -308,6 +314,7 @@ async def reindex_document(
     document_id: uuid.UUID,
     session: TenantDb,
     tenant_id: TenantId,
+    user_id: UserId,
     knowledge_base: TargetKnowledgeBase,
 ) -> DocumentStatusRead:
     """Roadmap step 114 -- re-runs chunk generation + embedding
@@ -350,6 +357,7 @@ async def reindex_document(
         action="document.reindex",
         resource_type="document",
         resource_id=document.id,
+        actor_user_id=user_id,
     )
 
     dispatch_embedding_generation.delay(str(document.id), str(tenant_id))
@@ -366,6 +374,7 @@ async def replace_document_content(
     document_id: uuid.UUID,
     session: TenantDb,
     tenant_id: TenantId,
+    user_id: UserId,
     knowledge_base: TargetKnowledgeBase,
     file: Annotated[UploadFile, File()],
 ) -> DocumentRead:
@@ -454,6 +463,7 @@ async def replace_document_content(
         action="document.replace",
         resource_type="document",
         resource_id=document.id,
+        actor_user_id=user_id,
     )
 
     dispatch_extraction.delay(str(document.id), str(tenant_id))
@@ -500,6 +510,7 @@ async def delete_document(
     document_id: uuid.UUID,
     session: TenantDb,
     tenant_id: TenantId,
+    user_id: UserId,
     knowledge_base: TargetKnowledgeBase,
 ) -> None:
     """Roadmap step 116 -- deletes a document and everything that
@@ -543,6 +554,7 @@ async def delete_document(
         action="document.delete",
         resource_type="document",
         resource_id=document.id,
+        actor_user_id=user_id,
     )
 
     await repo.delete(document)

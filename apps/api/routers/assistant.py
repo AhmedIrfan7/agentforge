@@ -37,6 +37,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import write_audit_log
+from dependencies.auth import get_current_user_id
 from dependencies.knowledge_base import TargetKnowledgeBase
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
@@ -55,6 +56,7 @@ router = APIRouter(
 
 TenantDb = Annotated[AsyncSession, Depends(get_tenant_db)]
 TenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
+UserId = Annotated[uuid.UUID, Depends(get_current_user_id)]
 
 
 @router.post(
@@ -67,6 +69,7 @@ async def create_assistant(
     body: AssistantCreate,
     session: TenantDb,
     tenant_id: TenantId,
+    user_id: UserId,
     knowledge_base: TargetKnowledgeBase,
 ) -> AssistantRead:
     repo = AssistantRepository(session, tenant_id)
@@ -90,6 +93,7 @@ async def create_assistant(
         action="assistant.create",
         resource_type="assistant",
         resource_id=assistant.id,
+        actor_user_id=user_id,
     )
     return AssistantRead.model_validate(assistant)
 
@@ -146,6 +150,7 @@ async def update_assistant(
     body: AssistantUpdate,
     session: TenantDb,
     tenant_id: TenantId,
+    user_id: UserId,
     knowledge_base: TargetKnowledgeBase,
 ) -> AssistantRead:
     repo = AssistantRepository(session, tenant_id)
@@ -173,6 +178,7 @@ async def update_assistant(
         action="assistant.update",
         resource_type="assistant",
         resource_id=assistant.id,
+        actor_user_id=user_id,
     )
     # write_audit_log's own internal flush() expires updated_at
     # (onupdate=func.now(), server-computed) -- a real, awaited refresh
@@ -193,6 +199,7 @@ async def delete_assistant(
     assistant_id: uuid.UUID,
     session: TenantDb,
     tenant_id: TenantId,
+    user_id: UserId,
     knowledge_base: TargetKnowledgeBase,
 ) -> None:
     repo = AssistantRepository(session, tenant_id)
@@ -206,5 +213,6 @@ async def delete_assistant(
         action="assistant.delete",
         resource_type="assistant",
         resource_id=assistant.id,
+        actor_user_id=user_id,
     )
     await repo.delete(assistant)

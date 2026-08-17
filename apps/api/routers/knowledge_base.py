@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import write_audit_log
+from dependencies.auth import get_current_user_id
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from errors import ConflictError, NotFoundError
@@ -37,6 +38,7 @@ router = APIRouter(
 
 TenantDb = Annotated[AsyncSession, Depends(get_tenant_db)]
 TenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
+UserId = Annotated[uuid.UUID, Depends(get_current_user_id)]
 
 
 async def get_target_workspace(
@@ -58,7 +60,11 @@ TargetWorkspace = Annotated[Workspace, Depends(get_target_workspace)]
     dependencies=[Depends(require_permission("knowledge_base:create"))],
 )
 async def create_knowledge_base(
-    body: KnowledgeBaseCreate, session: TenantDb, tenant_id: TenantId, workspace: TargetWorkspace
+    body: KnowledgeBaseCreate,
+    session: TenantDb,
+    tenant_id: TenantId,
+    user_id: UserId,
+    workspace: TargetWorkspace,
 ) -> KnowledgeBaseRead:
     repo = KnowledgeBaseRepository(session, tenant_id)
     try:
@@ -76,6 +82,7 @@ async def create_knowledge_base(
         action="knowledge_base.create",
         resource_type="knowledge_base",
         resource_id=knowledge_base.id,
+        actor_user_id=user_id,
     )
     return KnowledgeBaseRead.model_validate(knowledge_base)
 
@@ -125,7 +132,11 @@ async def get_knowledge_base(
     dependencies=[Depends(require_permission("knowledge_base:delete"))],
 )
 async def delete_knowledge_base(
-    knowledge_base_id: uuid.UUID, session: TenantDb, tenant_id: TenantId, workspace: TargetWorkspace
+    knowledge_base_id: uuid.UUID,
+    session: TenantDb,
+    tenant_id: TenantId,
+    user_id: UserId,
+    workspace: TargetWorkspace,
 ) -> None:
     repo = KnowledgeBaseRepository(session, tenant_id)
     knowledge_base = await repo.get(knowledge_base_id)
@@ -138,5 +149,6 @@ async def delete_knowledge_base(
         action="knowledge_base.delete",
         resource_type="knowledge_base",
         resource_id=knowledge_base.id,
+        actor_user_id=user_id,
     )
     await repo.delete(knowledge_base)

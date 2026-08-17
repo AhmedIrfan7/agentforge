@@ -419,6 +419,7 @@ async def create_conversation(
         action="conversation.create",
         resource_type="conversation",
         resource_id=conversation.id,
+        actor_user_id=user_id,
     )
     return ConversationRead.model_validate(conversation)
 
@@ -495,6 +496,7 @@ async def claim_conversation(
         action="conversation.claim",
         resource_type="conversation",
         resource_id=conversation.id,
+        actor_user_id=user_id,
     )
 
     memories = await retrieve_memory_for_conversation_start(session, tenant_id, user_id)
@@ -629,6 +631,7 @@ async def send_message(
     body: MessageCreate,
     session: TenantDb,
     tenant_id: TenantId,
+    user_id: UserId,
     assistant: TargetAssistant,
     conversation: TargetConversation,
 ) -> MessageRead:
@@ -642,6 +645,7 @@ async def send_message(
         action="message.create",
         resource_type="message",
         resource_id=assistant_message.id,
+        actor_user_id=user_id,
     )
     return MessageRead.model_validate(assistant_message)
 
@@ -657,6 +661,7 @@ async def send_message_streaming(
     body: MessageCreate,
     session: TenantDb,
     tenant_id: TenantId,
+    user_id: UserId,
     assistant: TargetAssistant,
     conversation: TargetConversation,
 ) -> StreamingResponse:
@@ -670,6 +675,7 @@ async def send_message_streaming(
         action="message.create",
         resource_type="message",
         resource_id=assistant_message.id,
+        actor_user_id=user_id,
     )
     # Captured by build_message_stream via closure -- see this module's
     # own docstring for why the ORM object itself must not be touched
@@ -705,6 +711,7 @@ TargetMessage = Annotated[Message, Depends(get_target_message)]
 async def regenerate_response(
     session: TenantDb,
     tenant_id: TenantId,
+    user_id: UserId,
     assistant: TargetAssistant,
     conversation: TargetConversation,
     message: TargetMessage,
@@ -729,6 +736,7 @@ async def regenerate_response(
         action="message.regenerate",
         resource_type="message",
         resource_id=message.id,
+        actor_user_id=user_id,
     )
     return MessageRead.model_validate(message)
 
@@ -742,6 +750,7 @@ async def set_message_feedback(
     body: MessageFeedbackCreate,
     session: TenantDb,
     tenant_id: TenantId,
+    user_id: UserId,
     message: TargetMessage,
 ) -> MessageRead:
     # The explicit flush()+refresh() pair is load-bearing, confirmed
@@ -765,6 +774,7 @@ async def set_message_feedback(
         action="message.feedback",
         resource_type="message",
         resource_id=message.id,
+        actor_user_id=user_id,
     )
     return MessageRead.model_validate(message)
 
@@ -777,6 +787,7 @@ async def set_message_feedback(
 async def clear_message_feedback(
     session: TenantDb,
     tenant_id: TenantId,
+    user_id: UserId,
     message: TargetMessage,
 ) -> None:
     message.feedback_type = None
@@ -787,6 +798,7 @@ async def clear_message_feedback(
         action="message.feedback_clear",
         resource_type="message",
         resource_id=message.id,
+        actor_user_id=user_id,
     )
 
 

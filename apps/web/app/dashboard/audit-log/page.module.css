@@ -1,0 +1,140 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 900px;
+}
+
+.heading {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.subtext {
+  color: rgba(128, 128, 128, 0.9);
+  font-size: 0.9375rem;
+}
+
+.status {
+  color: rgba(128, 128, 128, 0.8);
+}
+
+.error {
+  font-size: 0.8125rem;
+  color: #dc2626;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: rgba(128, 128, 128, 0.95);
+}
+
+.field input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 0.875rem;
+}
+
+.submit {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: none;
+  background: #4f46e5;
+  color: white;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.submit:hover {
+  filter: brightness(90%);
+}
+
+.clearButton {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.table th {
+  text-align: left;
+  font-weight: 600;
+  color: rgba(128, 128, 128, 0.95);
+  padding: 6px 8px 8px 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.table td {
+  padding: 8px 8px 8px 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.actionCell {
+  font-family: monospace;
+}
+
+.resourceId {
+  color: rgba(128, 128, 128, 0.75);
+  font-family: monospace;
+  font-size: 0.75rem;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.paginationButtons {
+  display: flex;
+  gap: 8px;
+}
+
+.pageButton {
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.pageButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pageButton:hover:not(:disabled) {
+  filter: brightness(90%);
+}
