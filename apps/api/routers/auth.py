@@ -4,6 +4,21 @@ No RBAC/tenant concern here — signup creates a User (global identity),
 not scoped to any organization yet. Joining an organization happens
 through the invitation flow (roadmap steps 073-075) or by creating one
 (routers/organization.py), both later.
+
+As of step 255, a failed login attempt logs a real structured
+"login_failed" event (AGENTS.md's own "AUDIT LOGGING" section names
+"Authentication" failures by name) -- via structlog, not AuditLog: a
+failed login has no real organization/tenant context yet (the caller
+hasn't proven who they are, let alone which org they're acting within),
+the identical mismatch every other tenant-scoped table in this codebase
+would have with a genuinely global event. AuditLog's own real per-org
+viewer (routers/audit_log.py, step 247) is reached through an
+organization_id in the URL, which a pre-auth failure can never supply.
+Both real failure branches below (no such user, wrong password) log
+the identical event shape -- the same "don't let a defender-facing
+signal leak what the client-facing error message already deliberately
+doesn't" reasoning `invalid_credentials` below already applies to the
+HTTP response.
 """
 
 import uuid
@@ -26,6 +41,7 @@ from config import settings
 from dependencies.auth import get_current_user_id
 from dependencies.db import get_db
 from errors import ConflictError, UnauthorizedError
+from logging_config import get_logger
 from models.user import User
 from notifications.email import send_email
 from rate_limit import rate_limit
@@ -48,6 +64,7 @@ from schemas.auth import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = get_logger(__name__)
 
 
 async def issue_tokens(
@@ -171,13 +188,16 @@ async def login(
 ) -> TokenResponse | MfaRequiredResponse:
     user_repo = UserRepository(session)
     user = await user_repo.get_by_email(body.email)
+    client_ip = request.client.host if request.client else None
 
     # Same error for "no such user" and "wrong password" — distinguishing
     # them lets an attacker enumerate valid emails (AGENTS.md SECTION 9).
     invalid_credentials = UnauthorizedError("Invalid email or password.")
     if user is None or user.hashed_password is None:
+        logger.warning("login_failed", email=body.email, ip=client_ip)
         raise invalid_credentials
     if not verify_password(body.password, user.hashed_password):
+        logger.warning("login_failed", email=body.email, ip=client_ip)
         raise invalid_credentials
 
     if needs_rehash(user.hashed_password):

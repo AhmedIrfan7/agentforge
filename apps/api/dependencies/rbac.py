@@ -4,6 +4,18 @@ granted by every role the current user holds within the current tenant
 (repositories/rbac.py:get_user_permissions) — a user with both an
 org-level and a workspace-level membership gets whichever permissions
 either role grants, not just one.
+
+As of step 255, a denial writes a real AuditLog row (AGENTS.md's own
+"AUDIT LOGGING" section names "Authorization failures" by name) --
+written inside the SAME session/transaction the permission check
+itself already ran in, before it closes, since AuditLog's own RLS
+policy needs the tenant context set on the connection that performs
+the INSERT, not just read access. A denial has a real tenant_id (the
+org the caller was already resolved into) but no natural resource of
+its own the way a create/update/delete action does -- resource_type=
+"user"/resource_id=user_id (the caller who was denied) is the one real
+anchor available, with the actual permission key carried in `extra`
+rather than invented as a fake resource.
 """
 
 import uuid
@@ -14,6 +26,7 @@ from fastapi import Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audit import write_audit_log
 from db import get_session, set_tenant_context
 from dependencies.auth import get_current_user_id
 from dependencies.tenant import get_current_tenant_id
@@ -34,8 +47,18 @@ def require_permission(permission_key: str) -> Callable[..., Awaitable[None]]:
             # reads are blocked without a tenant context set on this session.
             await set_tenant_context(session, tenant_id)
             permissions = await get_user_permissions(session, user_id=user_id, tenant_id=tenant_id)
-        if permission_key not in permissions:
-            raise ForbiddenError(f"You do not have the '{permission_key}' permission.")
+            if permission_key not in permissions:
+                await write_audit_log(
+                    session,
+                    tenant_id=tenant_id,
+                    action="security.permission_denied",
+                    resource_type="user",
+                    resource_id=user_id,
+                    actor_user_id=user_id,
+                    extra={"permission_key": permission_key},
+                )
+                await session.commit()
+                raise ForbiddenError(f"You do not have the '{permission_key}' permission.")
 
     return dependency
 

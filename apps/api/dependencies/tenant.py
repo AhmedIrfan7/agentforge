@@ -10,6 +10,13 @@ asking from their JWT — but the organization_id is only ever TRUSTED
 once it's cross-checked against that user's actual Membership rows, not
 because the client claimed it. A user with no membership in that org
 gets 403, same as if the org query returned nothing.
+
+As of step 255, a no-membership denial writes a real AuditLog row
+(AGENTS.md's own "AUDIT LOGGING" section names "Cross-tenant access
+attempts" by name) -- tenant_id is the ORG THAT WAS TARGETED, not the
+caller's own org, so its real admins see the attempt in their own
+audit-log viewer (step 247), the exact "which org should see this"
+question a cross-tenant probe naturally answers.
 """
 
 import uuid
@@ -19,6 +26,7 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audit import write_audit_log
 from db import get_session, set_tenant_context
 from dependencies.auth import get_current_user_id
 from errors import ForbiddenError
@@ -40,6 +48,15 @@ async def get_current_tenant_id(
             session, user_id=user_id, tenant_id=organization_id
         )
         if not memberships:
+            await write_audit_log(
+                session,
+                tenant_id=organization_id,
+                action="security.cross_tenant_attempt",
+                resource_type="organization",
+                resource_id=organization_id,
+                actor_user_id=user_id,
+            )
+            await session.commit()
             raise ForbiddenError("You do not have access to this organization.")
 
         # security_settings.mfa_required (step 079) — the one field on
