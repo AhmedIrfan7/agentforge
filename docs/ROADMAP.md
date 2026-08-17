@@ -309,7 +309,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 262. Add security test suite (auth bypass, cross-tenant, injection attempts)
 - [x] 263. Add incident-response runbook doc
 - [x] 264. Add `SECURITY.md` (responsible disclosure policy)
-- [ ] 265. Add backup automation + restore-drill script
+- [x] 265. Add backup automation + restore-drill script
 - [ ] 266. Document security architecture in `docs/ARCHITECTURE.md`
 
 ## Milestone 11 — Infrastructure & Deployment (steps 267–280)
