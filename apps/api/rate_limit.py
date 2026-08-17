@@ -21,6 +21,34 @@ Assistant lookup) — two genuinely different resolution paths that
 shouldn't be forced into one `Request`-only dependency shape. Each
 router builds its own small wrapper around this shared primitive
 instead.
+
+As of roadmap step 259 ("Refine rate-limit + abuse-detection
+middleware"), also covers two real, previously-uncovered categories
+AGENTS.md's own "RATE LIMITING" section names by name: "Document
+uploads" (`DOCUMENT_UPLOAD_RATE_LIMIT`, wired into
+`routers/document.py:upload_document`) and "Search"
+(`SEARCH_RATE_LIMIT`, wired into all four real search endpoints in
+`routers/retrieval.py` — dense/keyword/hybrid/context all share ONE
+per-tenant budget, the same "one door, one real underlying cost"
+reasoning `MESSAGE_SEND_RATE_LIMIT` already established for
+message-send, since all four ultimately cost one real embedding call
+plus one real DB round trip). Both tenant-keyed, not per-IP — the
+resource being protected (storage, embeddings, DB) is shared per
+tenant regardless of which member's IP the request came from.
+
+`record_failed_login_attempt` is genuinely distinct from `rate_limit()`
+covering "Authentication" above: that caps volume per CLIENT IP
+(stops one machine from hammering the endpoint); this tracks failures
+per EMAIL (AGENTS.md's own "ABUSE PREVENTION" section names "Repeated
+failed logins" as its own bullet, separate from "Credential attacks"),
+so it still catches a slow, distributed credential-stuffing attempt
+against one specific account from many different IPs, each individually
+well under the per-IP cap. It only ever LOGS a distinguishable
+structured event once a threshold is crossed (real detection/
+visibility, AGENTS.md's own "OBSERVABILITY STACK": "Administrators
+should detect problems before users do") — it never itself blocks the
+login attempt; `rate_limit(key_prefix="login", ...)` already owns
+blocking.
 """
 
 from collections.abc import Awaitable, Callable
@@ -29,7 +57,10 @@ from fastapi import Request
 
 from config import settings
 from errors import TooManyRequestsError
+from logging_config import get_logger
 from redis_client import redis_client
+
+logger = get_logger(__name__)
 
 # Shared by both routers/conversation.py's own authenticated send/
 # regenerate endpoints and routers/public_conversation.py's anonymous
@@ -43,6 +74,28 @@ from redis_client import redis_client
 # especially against the anonymous flow, reachable with zero signup
 # friction.
 MESSAGE_SEND_RATE_LIMIT = 60
+
+# Generous for real bulk-upload workflows (a legitimate onboarding batch
+# is dozens of files, not hundreds within a few minutes) while still
+# capping a scripted flood against storage/antivirus/extraction, all
+# real per-upload costs (steps 084-087).
+DOCUMENT_UPLOAD_RATE_LIMIT = 30
+DOCUMENT_UPLOAD_RATE_LIMIT_WINDOW_SECONDS = 600
+
+# Search is a normal, high-frequency interactive action (a user refining
+# a query, an agent re-querying mid-conversation) — a much higher
+# ceiling than message-send's own 60/minute, but still a real ceiling
+# against a scripted scrape of a knowledge base's full contents.
+SEARCH_RATE_LIMIT = 120
+SEARCH_RATE_LIMIT_WINDOW_SECONDS = 60
+
+# How many failed attempts against the SAME email, within the window
+# below, before this is treated as a real abuse signal worth a
+# distinguishable log line (not just routine per-attempt noise). 15
+# minutes is long enough to catch a slow, deliberately-throttled
+# credential-stuffing attempt trying to stay under a per-IP rate limit.
+FAILED_LOGIN_ABUSE_THRESHOLD = 5
+FAILED_LOGIN_ABUSE_WINDOW_SECONDS = 900
 
 
 async def check_rate_limit(key: str, *, limit: int, window_seconds: int) -> None:
@@ -77,3 +130,24 @@ def rate_limit(
         )
 
     return dependency
+
+
+async def record_failed_login_attempt(email: str) -> None:
+    # Same "the test suite legitimately does this far more than any real
+    # client would" reasoning as check_rate_limit's own guard above —
+    # this function's own regression test calls it directly, bypassing
+    # this exact guard the same way tests/test_rate_limit.py already
+    # does for check_rate_limit.
+    if settings.environment == "test":
+        return
+
+    redis_key = f"failed-login-count:{email}"
+    count = await redis_client.incr(redis_key)
+    if count == 1:
+        await redis_client.expire(redis_key, FAILED_LOGIN_ABUSE_WINDOW_SECONDS)
+
+    # Fires exactly once per window, on the attempt that crosses the
+    # threshold — not on every attempt after it too, which would just be
+    # the same signal repeated as log spam.
+    if count == FAILED_LOGIN_ABUSE_THRESHOLD:
+        logger.warning("repeated_failed_login_detected", email=email, attempt_count=count)

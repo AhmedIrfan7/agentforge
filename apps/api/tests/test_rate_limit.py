@@ -7,6 +7,10 @@ As of roadmap step 199, also proves the per-tenant message-send
 limiters (`routers/conversation.py:rate_limit_message_send`, `routers/
 public_conversation.py:rate_limit_public_message_send`) the same way —
 called directly, real production-limit enforcement, real Redis.
+
+As of roadmap step 259, also proves the newly-covered document-upload
+and search limiters (real tenant-keyed budgets, same technique) and
+`record_failed_login_attempt`'s own real abuse-detection threshold.
 """
 
 import uuid
@@ -19,10 +23,20 @@ from starlette.requests import Request
 from config import settings
 from errors import TooManyRequestsError
 from models.assistant import Assistant
-from rate_limit import MESSAGE_SEND_RATE_LIMIT, check_rate_limit, rate_limit
+from rate_limit import (
+    DOCUMENT_UPLOAD_RATE_LIMIT,
+    FAILED_LOGIN_ABUSE_THRESHOLD,
+    MESSAGE_SEND_RATE_LIMIT,
+    SEARCH_RATE_LIMIT,
+    check_rate_limit,
+    rate_limit,
+    record_failed_login_attempt,
+)
 from redis_client import redis_client
 from routers.conversation import rate_limit_message_send
+from routers.document import rate_limit_document_upload
 from routers.public_conversation import rate_limit_public_message_send
+from routers.retrieval import rate_limit_search
 
 
 def _fake_request(ip: str) -> Request:
@@ -166,3 +180,98 @@ async def test_message_send_rate_limit_is_shared_across_authenticated_and_anonym
         # immediately, with no separate allowance of its own.
         with pytest.raises(TooManyRequestsError):
             await rate_limit_public_message_send(assistant=assistant)
+
+
+@pytest.mark.anyio
+async def test_document_upload_rate_limit_is_isolated_per_tenant(
+    _clean_tenant_keys: list[uuid.UUID],
+) -> None:
+    tenant_a, tenant_b = uuid.uuid4(), uuid.uuid4()
+    _clean_tenant_keys.extend([tenant_a, tenant_b])
+
+    with patch.object(settings, "environment", "production"):
+        for _ in range(DOCUMENT_UPLOAD_RATE_LIMIT):
+            await rate_limit_document_upload(tenant_id=tenant_a)
+        with pytest.raises(TooManyRequestsError):
+            await rate_limit_document_upload(tenant_id=tenant_a)
+
+        await rate_limit_document_upload(tenant_id=tenant_b)
+
+
+@pytest.mark.anyio
+async def test_search_rate_limit_is_shared_across_all_four_search_routes(
+    _clean_tenant_keys: list[uuid.UUID],
+) -> None:
+    """dense/keyword/hybrid/context search all call the SAME
+    rate_limit_search dependency (routers/retrieval.py) -- proves they
+    really draw from one shared per-tenant budget, not four independent
+    ones, matching MESSAGE_SEND_RATE_LIMIT's own established pattern."""
+    tenant_id = uuid.uuid4()
+    _clean_tenant_keys.append(tenant_id)
+
+    with patch.object(settings, "environment", "production"):
+        for _ in range(SEARCH_RATE_LIMIT):
+            await rate_limit_search(tenant_id=tenant_id)
+        with pytest.raises(TooManyRequestsError):
+            await rate_limit_search(tenant_id=tenant_id)
+
+
+@pytest.fixture
+async def _clean_failed_login_key() -> AsyncGenerator[str]:
+    email = "test-abuse-detection@example.com"
+    yield email
+    await redis_client.delete(f"failed-login-count:{email}")
+
+
+@pytest.mark.anyio
+async def test_record_failed_login_attempt_never_raises(
+    _clean_failed_login_key: str,
+) -> None:
+    # Unlike check_rate_limit, this never blocks the request itself --
+    # rate_limit(key_prefix="login", ...) already owns that job. This
+    # only ever logs, so even far past its own threshold it must still
+    # return cleanly.
+    with patch.object(settings, "environment", "production"):
+        for _ in range(FAILED_LOGIN_ABUSE_THRESHOLD + 5):
+            await record_failed_login_attempt(_clean_failed_login_key)
+
+
+@pytest.mark.anyio
+async def test_record_failed_login_attempt_logs_once_at_the_real_threshold(
+    _clean_failed_login_key: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # structlog's own stdlib routing (logging_config.py) bypasses
+    # pytest's caplog capture entirely (confirmed live: the real event
+    # reaches stdout, but caplog.text stays empty) -- spying directly on
+    # rate_limit.logger.warning is the robust way to assert this.
+    email = _clean_failed_login_key
+    calls: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "rate_limit.logger.warning", lambda event, **kwargs: calls.append((event, kwargs))
+    )
+
+    with patch.object(settings, "environment", "production"):
+        for _ in range(FAILED_LOGIN_ABUSE_THRESHOLD - 1):
+            await record_failed_login_attempt(email)
+        assert calls == []
+
+        # The attempt that crosses the threshold.
+        await record_failed_login_attempt(email)
+        assert len(calls) == 1
+        assert calls[0][0] == "repeated_failed_login_detected"
+        assert calls[0][1] == {"email": email, "attempt_count": FAILED_LOGIN_ABUSE_THRESHOLD}
+
+        # One more, past the threshold -- must not log a second time
+        # for the same window (would just be the same signal repeated).
+        await record_failed_login_attempt(email)
+        assert len(calls) == 1
+
+
+@pytest.mark.anyio
+async def test_record_failed_login_attempt_is_a_noop_under_test_environment(
+    _clean_failed_login_key: str,
+) -> None:
+    # No patch here -- settings.environment is genuinely "test" (see
+    # tests/conftest.py) -- must never touch Redis or raise.
+    for _ in range(FAILED_LOGIN_ABUSE_THRESHOLD + 1):
+        await record_failed_login_attempt(_clean_failed_login_key)

@@ -53,6 +53,11 @@ from embeddings_pipeline import dispatch_embedding_generation
 from errors import ConflictError, InvalidChunkingStrategyError, NotFoundError
 from extraction import dispatch_extraction
 from pipeline_status import compute_pipeline_stages
+from rate_limit import (
+    DOCUMENT_UPLOAD_RATE_LIMIT,
+    DOCUMENT_UPLOAD_RATE_LIMIT_WINDOW_SECONDS,
+    check_rate_limit,
+)
 from repositories.chunk import ChunkRepository
 from repositories.document import DocumentRepository
 from repositories.document_version import DocumentVersionRepository
@@ -82,11 +87,26 @@ TenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
 UserId = Annotated[uuid.UUID, Depends(get_current_user_id)]
 
 
+async def rate_limit_document_upload(tenant_id: TenantId) -> None:
+    # AGENTS.md's own "RATE LIMITING" section names "Document uploads"
+    # by name -- tenant-keyed, not per-IP, matching the same "one
+    # shared budget for the real cost being protected" reasoning
+    # rate_limit.py's own MESSAGE_SEND_RATE_LIMIT docstring establishes.
+    await check_rate_limit(
+        f"document_upload:{tenant_id}",
+        limit=DOCUMENT_UPLOAD_RATE_LIMIT,
+        window_seconds=DOCUMENT_UPLOAD_RATE_LIMIT_WINDOW_SECONDS,
+    )
+
+
 @router.post(
     "",
     response_model=DocumentRead,
     status_code=201,
-    dependencies=[Depends(require_permission("document:create"))],
+    dependencies=[
+        Depends(require_permission("document:create")),
+        Depends(rate_limit_document_upload),
+    ],
 )
 async def upload_document(
     session: TenantDb,

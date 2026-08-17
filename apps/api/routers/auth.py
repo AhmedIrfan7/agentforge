@@ -19,6 +19,15 @@ the identical event shape -- the same "don't let a defender-facing
 signal leak what the client-facing error message already deliberately
 doesn't" reasoning `invalid_credentials` below already applies to the
 HTTP response.
+
+As of step 259, both branches also call
+`rate_limit.py:record_failed_login_attempt` -- genuinely distinct from
+this same route's own `rate_limit(key_prefix="login", ...)` dependency
+above (which caps volume per client IP): this tracks failures per
+EMAIL, so it still catches a slow, distributed credential-stuffing
+attempt against one specific account spread across many different IPs,
+each individually well under the per-IP cap. See rate_limit.py's own
+docstring for the full reasoning.
 """
 
 import uuid
@@ -44,7 +53,7 @@ from errors import ConflictError, UnauthorizedError
 from logging_config import get_logger
 from models.user import User
 from notifications.email import send_email
-from rate_limit import rate_limit
+from rate_limit import rate_limit, record_failed_login_attempt
 from repositories.session import SessionRepository
 from repositories.user import UserRepository
 from repositories.verification_token import VerificationTokenRepository
@@ -195,9 +204,11 @@ async def login(
     invalid_credentials = UnauthorizedError("Invalid email or password.")
     if user is None or user.hashed_password is None:
         logger.warning("login_failed", email=body.email, ip=client_ip)
+        await record_failed_login_attempt(body.email)
         raise invalid_credentials
     if not verify_password(body.password, user.hashed_password):
         logger.warning("login_failed", email=body.email, ip=client_ip)
+        await record_failed_login_attempt(body.email)
         raise invalid_credentials
 
     if needs_rehash(user.hashed_password):

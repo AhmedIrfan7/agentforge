@@ -117,6 +117,7 @@ from dependencies.knowledge_base import TargetKnowledgeBase
 from dependencies.rbac import require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from embeddings.openai import OpenAIEmbeddingProvider
+from rate_limit import SEARCH_RATE_LIMIT, SEARCH_RATE_LIMIT_WINDOW_SECONDS, check_rate_limit
 from redis_client import redis_client
 from repositories.chunk import ChunkRepository
 from repositories.document import DocumentRepository
@@ -147,10 +148,24 @@ _retriever_agent = RetrieverAgent(OpenAIEmbeddingProvider(), PgVectorStore())
 _reranker = LexicalReranker()
 
 
+async def rate_limit_search(tenant_id: TenantId) -> None:
+    # AGENTS.md's own "RATE LIMITING" section names "Search" by name.
+    # ONE shared per-tenant budget across all four real search routes
+    # below (dense/keyword/hybrid/context) -- the same "one door, one
+    # real underlying cost" reasoning MESSAGE_SEND_RATE_LIMIT already
+    # established, since every one of them costs one real embedding
+    # call plus one real DB round trip.
+    await check_rate_limit(
+        f"search:{tenant_id}",
+        limit=SEARCH_RATE_LIMIT,
+        window_seconds=SEARCH_RATE_LIMIT_WINDOW_SECONDS,
+    )
+
+
 @router.post(
     "/search",
     response_model=list[SearchResultRead],
-    dependencies=[Depends(require_permission("knowledge_base:read"))],
+    dependencies=[Depends(require_permission("knowledge_base:read")), Depends(rate_limit_search)],
 )
 async def dense_search(
     body: SearchRequest,
@@ -171,7 +186,7 @@ async def dense_search(
 @router.post(
     "/search/keyword",
     response_model=list[SearchResultRead],
-    dependencies=[Depends(require_permission("knowledge_base:read"))],
+    dependencies=[Depends(require_permission("knowledge_base:read")), Depends(rate_limit_search)],
 )
 async def keyword_search(
     body: SearchRequest,
@@ -193,7 +208,7 @@ async def keyword_search(
 @router.post(
     "/search/hybrid",
     response_model=list[SearchResultRead],
-    dependencies=[Depends(require_permission("knowledge_base:read"))],
+    dependencies=[Depends(require_permission("knowledge_base:read")), Depends(rate_limit_search)],
 )
 async def hybrid_search(
     body: SearchRequest,
@@ -234,7 +249,7 @@ def _context_cache_key(
 @router.post(
     "/context",
     response_model=list[ContextResultRead],
-    dependencies=[Depends(require_permission("knowledge_base:read"))],
+    dependencies=[Depends(require_permission("knowledge_base:read")), Depends(rate_limit_search)],
 )
 async def build_search_context(
     body: ContextSearchRequest,
