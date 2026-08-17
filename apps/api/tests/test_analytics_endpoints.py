@@ -1,5 +1,5 @@
 """Integration tests against the real FastAPI app for
-routers/analytics.py (roadmap steps 243-245, each the first real
+routers/analytics.py (roadmap steps 243-246, each the first real
 caller of its own analytics/agent.py:AnalyticsAgent method).
 """
 
@@ -311,6 +311,42 @@ async def test_end_user_role_cannot_read_agent_performance_metrics() -> None:
         await _cleanup_org(org_id)
         await _cleanup_user(owner_email)
         await _cleanup_user(end_user_email)
+
+
+@pytest.mark.anyio
+async def test_owner_can_read_real_usage_metrics() -> None:
+    email = "endpoint-test-analytics-owner-8@example.com"
+    org_id, headers = _new_org(email)
+    try:
+        assistant_id = await _new_assistant(org_id, headers)
+        await _new_conversation_with_messages(org_id, assistant_id, message_count=3)
+        kb_id = await _new_knowledge_base(org_id, headers)
+        await _new_document(org_id, kb_id, slug="usage-doc", doc_metadata={})
+
+        response = client.get(f"/organizations/{org_id}/analytics/usage", headers=headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["message_count"] == 3
+        assert body["document_upload_count"] == 1
+        assert body["storage_bytes"] == 10
+        assert body["voice_minutes"] == 0.0
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_end_user_role_cannot_read_usage_metrics() -> None:
+    owner_email = "endpoint-test-analytics-owner-9@example.com"
+    org_id, _owner_headers = _new_org(owner_email)
+    end_user_email = "endpoint-test-analytics-enduser-usage@example.com"
+    try:
+        end_user_headers = await _add_member_with_role(org_id, end_user_email, "end_user")
+
+        response = client.get(f"/organizations/{org_id}/analytics/usage", headers=end_user_headers)
+        assert response.status_code == 403
+    finally:
+        await _cleanup_org(org_id)
         await _cleanup_user(owner_email)
         await _cleanup_user(end_user_email)
 

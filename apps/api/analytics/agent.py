@@ -13,12 +13,12 @@ asked for yet" this codebase's own established discipline avoids
 everywhere else (KnowledgeBase/Assistant/Message model docstrings all
 make the identical argument).
 
-conversation_metrics() (243), knowledge_metrics() (244), and
-agent_performance_metrics() (245) are real, working exceptions --
-proving the skeleton is genuinely callable end to end (real DB
-queries, real tests) rather than a class of empty names, each filled
-in exactly when its own dedicated roadmap step arrived, not
-speculatively ahead of it. Every other method still raises
+conversation_metrics() (243), knowledge_metrics() (244),
+agent_performance_metrics() (245), and usage_metrics() (246) are real,
+working exceptions -- proving the skeleton is genuinely callable end
+to end (real DB queries, real tests) rather than a class of empty
+names, each filled in exactly when its own dedicated roadmap step
+arrived, not speculatively ahead of it. Every other method still raises
 NotImplementedError with a docstring naming its real future roadmap
 step where one is already scheduled (through 250), or saying plainly
 that none exists yet where AGENTS.md names the responsibility but no
@@ -47,6 +47,7 @@ from models.agent_execution_log import AgentExecutionLog
 from models.conversation import Conversation
 from models.document import Document
 from models.message import Message
+from models.voice_session import VoiceSession
 
 _RECENT_WINDOW = timedelta(days=7)
 
@@ -85,6 +86,14 @@ class AgentPerformanceEntry:
 @dataclass
 class AgentPerformanceMetrics:
     per_agent: list[AgentPerformanceEntry]
+
+
+@dataclass
+class UsageMetrics:
+    message_count: int
+    voice_minutes: float
+    document_upload_count: int
+    storage_bytes: int
 
 
 class AnalyticsAgent:
@@ -228,12 +237,58 @@ class AnalyticsAgent:
         ]
         return AgentPerformanceMetrics(per_agent=per_agent)
 
-    async def usage_metrics(self, session: AsyncSession, tenant_id: uuid.UUID) -> NoReturn:
-        """Messages/voice-minutes/uploads/storage per org -- roadmap
-        step 246 ("usage-tracking"). Deliberately NOT folded into
-        conversation_metrics() above: 246 names these as their own
-        distinct metric category, separate from conversation counts."""
-        raise NotImplementedError("Usage metrics land with roadmap step 246.")
+    async def usage_metrics(self, session: AsyncSession, tenant_id: uuid.UUID) -> UsageMetrics:
+        """Real, not a stub -- all four numbers this step's own literal
+        wording names map directly onto columns that already exist for
+        other real reasons, no new tracking data invented. Deliberately
+        NOT folded into conversation_metrics() above: 246 names these
+        as their own distinct metric category, separate from
+        conversation counts, even though message_count and
+        conversation_metrics().total_messages compute the identical
+        query -- two honest callers of the same real number, not a
+        reason to make one depend on the other's own unrelated shape.
+
+        voice_minutes sums real session duration (ended_at - created_at,
+        step 219/228's own real lifecycle fields) for sessions that have
+        actually ended -- a still-live session (ended_at IS NULL) has no
+        real duration yet to count. storage_bytes sums Document.size_bytes
+        (step 084) directly -- the exact real byte count already stored
+        per upload, not an estimate.
+        """
+        message_count = (
+            await session.scalar(
+                select(func.count()).select_from(Message).where(Message.tenant_id == tenant_id)
+            )
+            or 0
+        )
+        voice_seconds = (
+            await session.scalar(
+                select(
+                    func.sum(func.extract("epoch", VoiceSession.ended_at - VoiceSession.created_at))
+                ).where(VoiceSession.tenant_id == tenant_id, VoiceSession.ended_at.is_not(None))
+            )
+            or 0
+        )
+        document_upload_count = (
+            await session.scalar(
+                select(func.count()).select_from(Document).where(Document.tenant_id == tenant_id)
+            )
+            or 0
+        )
+        storage_bytes = (
+            await session.scalar(
+                select(func.coalesce(func.sum(Document.size_bytes), 0)).where(
+                    Document.tenant_id == tenant_id
+                )
+            )
+            or 0
+        )
+        return UsageMetrics(
+            message_count=message_count,
+            voice_minutes=float(voice_seconds) / 60,
+            document_upload_count=document_upload_count,
+            storage_bytes=storage_bytes,
+        )
 
     async def retrieval_quality_metrics(
         self, session: AsyncSession, tenant_id: uuid.UUID

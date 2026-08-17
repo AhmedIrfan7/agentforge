@@ -3,16 +3,18 @@
 // Analytics dashboard. Conversation metrics (roadmap step 243) was
 // this page's first section -- the first real UI consumer of
 // analytics/agent.py:AnalyticsAgent.conversation_metrics (242).
-// Knowledge health (244) and agent performance (245, this page's
-// third section) are further independent sections on the SAME page
-// rather than new nav entries each -- all are "analytics" concerns a
-// user expects to find together, and the nav is already six entries
-// deep. No charting library exists in this app yet (apps/widget's own
-// "minimal deps" constraint applies equally here) -- the one real
-// chart each section's data supports honestly is a plain CSS bar, not
-// a fabricated multi-series graph the backend has no data for; agent
-// performance instead lists per-agent rows, since its own real shape
-// (one row per distinct agent_name) is a table, not a single bar.
+// Knowledge health (244), agent performance (245), and usage tracking
+// (246, this page's fourth section) are further independent sections
+// on the SAME page rather than new nav entries each -- all are
+// "analytics" concerns a user expects to find together, and the nav
+// is already six entries deep. No charting library exists in this app
+// yet (apps/widget's own "minimal deps" constraint applies equally
+// here) -- the one real chart each section's data supports honestly
+// is a plain CSS bar, not a fabricated multi-series graph the backend
+// has no data for; agent performance instead lists per-agent rows,
+// since its own real shape (one row per distinct agent_name) is a
+// table, not a single bar; usage is a fourth stat-card row, the same
+// shape conversations' own top row already uses.
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -20,12 +22,24 @@ import {
   getAgentPerformanceMetrics,
   getConversationMetrics,
   getKnowledgeMetrics,
+  getUsageMetrics,
   type AgentPerformanceMetrics,
   type ConversationMetrics,
   type KnowledgeMetrics,
+  type UsageMetrics,
 } from "@/lib/analytics";
 import { useCurrentOrganization } from "@/lib/useCurrentOrganization";
 import styles from "./page.module.css";
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function AnalyticsPage() {
   const { status, organization, error } = useCurrentOrganization();
@@ -56,6 +70,7 @@ export default function AnalyticsPage() {
       <ConversationSection organizationId={organization.id} />
       <KnowledgeHealthSection organizationId={organization.id} />
       <AgentPerformanceSection organizationId={organization.id} />
+      <UsageSection organizationId={organization.id} />
     </div>
   );
 }
@@ -246,6 +261,61 @@ function AgentPerformanceSection({ organizationId }: { organizationId: string })
           </tbody>
         </table>
       )}
+    </div>
+  );
+}
+
+function UsageSection({ organizationId }: { organizationId: string }) {
+  const [metrics, setMetrics] = useState<UsageMetrics | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getUsageMetrics(organizationId)
+      .then((data) => {
+        if (!cancelled) {
+          setMetrics(data);
+        }
+      })
+      .catch((err: Error) => {
+        if (!cancelled) {
+          setError(err.message);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [organizationId]);
+
+  if (error) {
+    return <p className={styles.error}>{error}</p>;
+  }
+
+  if (!metrics) {
+    return <p className={styles.status}>Loading…</p>;
+  }
+
+  return (
+    <div className={styles.chartCard}>
+      <h2 className={styles.sectionHeading}>Usage</h2>
+      <div className={styles.cards}>
+        <div className={styles.card}>
+          <div className={styles.cardValue}>{metrics.message_count}</div>
+          <div className={styles.cardLabel}>Messages</div>
+        </div>
+        <div className={styles.card}>
+          <div className={styles.cardValue}>{metrics.voice_minutes.toFixed(1)}</div>
+          <div className={styles.cardLabel}>Voice minutes</div>
+        </div>
+        <div className={styles.card}>
+          <div className={styles.cardValue}>{metrics.document_upload_count}</div>
+          <div className={styles.cardLabel}>Uploads</div>
+        </div>
+        <div className={styles.card}>
+          <div className={styles.cardValue}>{formatBytes(metrics.storage_bytes)}</div>
+          <div className={styles.cardLabel}>Storage</div>
+        </div>
+      </div>
     </div>
   );
 }

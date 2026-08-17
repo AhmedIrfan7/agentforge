@@ -23,6 +23,14 @@ import { expect, test } from "@playwright/test";
 // persists a real AgentExecutionLog row per run since a real
 // tenant_id is available in that path -- 2 sends -> 2 planning rows +
 // 2 retriever rows, both 100% success.
+//
+// Step 246's usage section is checked for its own real zero state
+// (voice minutes/uploads/storage) -- a real non-zero voice session
+// needs a live WebSocket call this fetch-based setup has no way to
+// drive, and a real non-zero upload needs the same MinIO/ClamAV
+// pipeline documents.spec.ts-adjacent steps already carve out; both
+// covered by test_analytics_agent.py's own real fixtures plus this
+// step's live verification instead.
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 test("analytics: real conversations show up as real conversation/message counts", async ({
@@ -130,4 +138,8 @@ test("analytics: real conversations show up as real conversation/message counts"
   const perfText = (await page.locator("table").innerText()).replace(/\s+/g, " ");
   expect(perfText).toContain("planning 2 100%");
   expect(perfText).toContain("retriever 2 100%");
+
+  expect(pageText).toContain("0.0 Voice minutes");
+  expect(pageText).toContain("0 Uploads");
+  expect(pageText).toContain("0 B Storage");
 });

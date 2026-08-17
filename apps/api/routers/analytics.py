@@ -1,10 +1,11 @@
 """Analytics endpoints -- conversations (step 243), knowledge health
-(244), agent performance (245), each the first real caller of its own
-analytics/agent.py:AnalyticsAgent method. `_analytics_agent` is a
-module-level singleton, same shape routers/retrieval.py's own
-`_retriever_agent` already established: the agent itself is stateless
-(no per-request collaborator held on the instance), only the
-session/tenant_id passed into each call are request-scoped.
+(244), agent performance (245), usage tracking (246), each the first
+real caller of its own analytics/agent.py:AnalyticsAgent method.
+`_analytics_agent` is a module-level singleton, same shape routers/
+retrieval.py's own `_retriever_agent` already established: the agent
+itself is stateless (no per-request collaborator held on the
+instance), only the session/tenant_id passed into each call are
+request-scoped.
 """
 
 import uuid
@@ -21,6 +22,7 @@ from schemas.analytics import (
     AgentPerformanceMetricsRead,
     ConversationMetricsRead,
     KnowledgeMetricsRead,
+    UsageMetricsRead,
 )
 
 router = APIRouter(prefix="/organizations/{organization_id}/analytics", tags=["analytics"])
@@ -82,4 +84,19 @@ async def get_agent_performance_metrics(
             )
             for entry in metrics.per_agent
         ]
+    )
+
+
+@router.get(
+    "/usage",
+    response_model=UsageMetricsRead,
+    dependencies=[Depends(require_permission("analytics:read"))],
+)
+async def get_usage_metrics(session: TenantDb, tenant_id: TenantId) -> UsageMetricsRead:
+    metrics = await _analytics_agent.usage_metrics(session, tenant_id)
+    return UsageMetricsRead(
+        message_count=metrics.message_count,
+        voice_minutes=metrics.voice_minutes,
+        document_upload_count=metrics.document_upload_count,
+        storage_bytes=metrics.storage_bytes,
     )

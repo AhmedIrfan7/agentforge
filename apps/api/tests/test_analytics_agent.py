@@ -21,6 +21,7 @@ from models.document import Document
 from models.knowledge_base import KnowledgeBase
 from models.message import Message
 from models.organization import Organization
+from models.voice_session import VoiceSession
 from models.workspace import Workspace
 
 agent = AnalyticsAgent()
@@ -96,6 +97,16 @@ async def _new_conversation_with_messages(
                 .values(created_at=created_at)
             )
             await session.commit()
+
+
+async def _new_conversation(tenant_id: uuid.UUID, assistant_id: uuid.UUID) -> uuid.UUID:
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        conversation = Conversation(tenant_id=tenant_id, assistant_id=assistant_id)
+        session.add(conversation)
+        await session.flush()
+        await session.commit()
+        return conversation.id
 
 
 async def _new_knowledge_base(tenant_id: uuid.UUID, slug: str) -> uuid.UUID:
@@ -180,6 +191,33 @@ async def _new_execution_log(
         await session.commit()
 
 
+async def _new_voice_session(
+    tenant_id: uuid.UUID, conversation_id: uuid.UUID, *, ended_minutes_after_start: float | None
+) -> None:
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        voice_session = VoiceSession(tenant_id=tenant_id, conversation_id=conversation_id)
+        session.add(voice_session)
+        await session.flush()
+        await session.commit()
+
+        if ended_minutes_after_start is not None:
+            # Same "SET LOCAL only lasts one transaction, re-call after
+            # commit" fix the conversation-backdating helper above
+            # already needed -- precise, known durations need explicit
+            # created_at/ended_at, not whatever real wall-clock time
+            # this test happens to run at.
+            start = datetime.now(UTC)
+            end = start + timedelta(minutes=ended_minutes_after_start)
+            await set_tenant_context(session, tenant_id)
+            await session.execute(
+                update(VoiceSession)
+                .where(VoiceSession.id == voice_session.id)
+                .values(created_at=start, ended_at=end)
+            )
+            await session.commit()
+
+
 async def _cleanup_org(org_id: uuid.UUID) -> None:
     async with get_session() as session:
         await set_tenant_context(session, org_id)
@@ -188,6 +226,7 @@ async def _cleanup_org(org_id: uuid.UUID) -> None:
             Conversation,
             Document,
             AgentExecutionLog,
+            VoiceSession,
             Assistant,
             KnowledgeBase,
             Workspace,
@@ -479,10 +518,89 @@ async def test_agent_performance_metrics_is_scoped_to_its_own_tenant() -> None:
 
 
 @pytest.mark.anyio
+async def test_usage_metrics_counts_real_messages_and_uploads_and_storage() -> None:
+    org_id = await _new_org("analytics-usage")
+    try:
+        assistant_id = await _new_assistant(org_id, "analytics-usage-1")
+        await _new_conversation_with_messages(org_id, assistant_id, message_count=5)
+        kb_id = await _new_knowledge_base(org_id, "analytics-usage-2")
+        await _new_document(org_id, kb_id, slug="doc-a", doc_metadata={})
+        await _new_document(org_id, kb_id, slug="doc-b", doc_metadata={})
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            metrics = await agent.usage_metrics(session, org_id)
+
+        assert metrics.message_count == 5
+        assert metrics.document_upload_count == 2
+        # _new_document's own real size_bytes=10 per document.
+        assert metrics.storage_bytes == 20
+        assert metrics.voice_minutes == 0.0
+    finally:
+        await _cleanup_org(org_id)
+
+
+@pytest.mark.anyio
+async def test_usage_metrics_sums_voice_minutes_for_ended_sessions_only() -> None:
+    org_id = await _new_org("analytics-usage-voice")
+    try:
+        assistant_id = await _new_assistant(org_id, "analytics-usage-voice")
+        conversation_id = await _new_conversation(org_id, assistant_id)
+        await _new_voice_session(org_id, conversation_id, ended_minutes_after_start=3.0)
+        await _new_voice_session(org_id, conversation_id, ended_minutes_after_start=2.0)
+        # Still live -- ended_at IS NULL, has no real duration to count.
+        await _new_voice_session(org_id, conversation_id, ended_minutes_after_start=None)
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            metrics = await agent.usage_metrics(session, org_id)
+
+        assert metrics.voice_minutes == pytest.approx(5.0, abs=0.01)
+    finally:
+        await _cleanup_org(org_id)
+
+
+@pytest.mark.anyio
+async def test_usage_metrics_on_an_empty_org_is_all_zeroes() -> None:
+    org_id = await _new_org("analytics-usage-empty")
+    try:
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            metrics = await agent.usage_metrics(session, org_id)
+
+        assert metrics.message_count == 0
+        assert metrics.voice_minutes == 0.0
+        assert metrics.document_upload_count == 0
+        assert metrics.storage_bytes == 0
+    finally:
+        await _cleanup_org(org_id)
+
+
+@pytest.mark.anyio
+async def test_usage_metrics_is_scoped_to_its_own_tenant() -> None:
+    org_a = await _new_org("analytics-usage-tenant-a")
+    org_b = await _new_org("analytics-usage-tenant-b")
+    try:
+        kb_a = await _new_knowledge_base(org_a, "analytics-usage-tenant-a")
+        kb_b = await _new_knowledge_base(org_b, "analytics-usage-tenant-b")
+        await _new_document(org_a, kb_a, slug="doc-a", doc_metadata={})
+        await _new_document(org_b, kb_b, slug="doc-b1", doc_metadata={})
+        await _new_document(org_b, kb_b, slug="doc-b2", doc_metadata={})
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_a)
+            metrics_a = await agent.usage_metrics(session, org_a)
+
+        assert metrics_a.document_upload_count == 1
+    finally:
+        await _cleanup_org(org_a)
+        await _cleanup_org(org_b)
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "method_name",
     [
-        "usage_metrics",
         "retrieval_quality_metrics",
         "failure_pattern_metrics",
         "latency_metrics",

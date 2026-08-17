@@ -28,6 +28,13 @@ export interface AgentPerformanceMetrics {
   per_agent: AgentPerformanceEntry[];
 }
 
+export interface UsageMetrics {
+  message_count: number;
+  voice_minutes: number;
+  document_upload_count: number;
+  storage_bytes: number;
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const response = await authorizedFetch(path);
   if (!response.ok) {
@@ -53,4 +60,8 @@ export async function getAgentPerformanceMetrics(
   return getJson<AgentPerformanceMetrics>(
     `/organizations/${organizationId}/analytics/agent-performance`,
   );
+}
+
+export async function getUsageMetrics(organizationId: string): Promise<UsageMetrics> {
+  return getJson<UsageMetrics>(`/organizations/${organizationId}/analytics/usage`);
 }

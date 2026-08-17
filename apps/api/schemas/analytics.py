@@ -24,3 +24,10 @@ class AgentPerformanceEntryRead(BaseModel):
 
 class AgentPerformanceMetricsRead(BaseModel):
     per_agent: list[AgentPerformanceEntryRead]
+
+
+class UsageMetricsRead(BaseModel):
+    message_count: int
+    voice_minutes: float
+    document_upload_count: int
+    storage_bytes: int
