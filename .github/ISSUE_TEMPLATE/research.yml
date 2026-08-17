@@ -1,0 +1,44 @@
+name: Research / design question
+description: An open architecture or design question that doesn't have an obvious answer yet — not a bug, not a ready-to-build feature.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For questions that need real investigation or a design decision
+        before any code gets written — the kind of thing that, once
+        resolved, might become a real ADR in [`docs/adr/`](../../docs/adr/)
+        (see the existing ones there for what a resolved version of this
+        looks like). If you already know exactly what to build, use
+        **Feature request** instead.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What's the open question?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Why does this matter?
+      description: What real scenario, constraint, or tradeoff makes this worth resolving deliberately rather than picking an answer ad hoc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: options
+    attributes:
+      label: Options considered so far (if any)
+      description: Real alternatives and their real tradeoffs, if you've already thought some through.
+    validations:
+      required: false
+
+  - type: textarea
+    id: related
+    attributes:
+      label: Related docs
+      description: Links to relevant sections of `AGENTS.md`, existing ADRs in `docs/adr/`, or roadmap steps in `docs/ROADMAP.md` this touches.
+    validations:
+      required: false

@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a new capability or improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        AgentForge is built against a real, public 300-step roadmap
+        ([`docs/ROADMAP.md`](../../docs/ROADMAP.md)) and a full engineering
+        constitution ([`AGENTS.md`](../../AGENTS.md)) — checking both before
+        filing helps avoid duplicating something already planned or already
+        ruled out for a real, documented reason.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the real gap or friction, not just the feature itself.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you'd want to see, and any real alternatives you considered.
+    validations:
+      required: true
+
+  - type: textarea
+    id: roadmap-check
+    attributes:
+      label: Roadmap / constitution check
+      description: Does this already appear in `docs/ROADMAP.md`? Does `AGENTS.md` say anything relevant (including reasons something was deliberately deferred or ruled out)?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: I'd be interested in implementing this myself once the project is open for external PRs (see `CONTRIBUTING.md`)
+          required: false
