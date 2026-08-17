@@ -1,0 +1,83 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 640px;
+}
+
+.heading {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.sectionHeading {
+  font-size: 1.0625rem;
+  font-weight: 600;
+}
+
+.subtext {
+  color: rgba(128, 128, 128, 0.9);
+  font-size: 0.9375rem;
+}
+
+.status {
+  color: rgba(128, 128, 128, 0.8);
+}
+
+.error {
+  font-size: 0.8125rem;
+  color: #dc2626;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 12px;
+}
+
+.cardValue {
+  font-size: 1.75rem;
+  font-weight: 700;
+}
+
+.cardLabel {
+  font-size: 0.8125rem;
+  color: rgba(128, 128, 128, 0.85);
+}
+
+.chartCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 12px;
+}
+
+.barTrack {
+  height: 14px;
+  border-radius: 7px;
+  background: rgba(128, 128, 128, 0.15);
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  background: #4f46e5;
+  border-radius: 7px;
+  transition: width 0.3s ease;
+}
+
+.chartCaption {
+  font-size: 0.8125rem;
+  color: rgba(128, 128, 128, 0.85);
+}
