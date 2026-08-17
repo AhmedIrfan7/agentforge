@@ -307,7 +307,7 @@ Same defense-in-depth as every other tenant-scoped subsystem: Postgres RLS on `v
 
 ## Security architecture
 
-_Milestone 10 is in progress (steps 251–266) — this section grows as each step lands; not yet complete._
+_Milestone 10 (steps 251–266) is complete — this section documents it in full, step by step._
 
 **Prompt injection defense (step 251).** `agents/safety.py:SafetyAgent` wraps retrieved/prior-turn content in explicit `<retrieved_content>` delimiter tags before it reaches a real LLM call, paired with a matching system-prompt instruction that content inside those tags is data, never an instruction to obey. Applied at both real LLM call sites this codebase has (`follow_up_questions.py`, `memory_summarization.py`).
 
@@ -330,6 +330,16 @@ _Milestone 10 is in progress (steps 251–266) — this section grows as each st
 **Dependency & static-analysis scanning (steps 260–261).** CI runs `pip-audit` (apps/api) and `pnpm audit` (apps/web + apps/widget) against the real locked dependency sets, plus GitHub CodeQL (Python and JavaScript/TypeScript) — all on push/PR and a weekly cron, so a newly-published advisory against already-merged code still gets caught.
 
 **Security test suite (step 262).** `tests/test_security_suite.py` — HTTP-level auth-bypass tests (missing/malformed/forged/expired tokens, including a live-verified alg=none forgery attempt) and SQL-injection-shaped payload tests. Cross-tenant access and RBAC already had extensive dedicated coverage elsewhere (RLS-level isolation tests, per-endpoint tests, the audit-log tests above) — not duplicated, only referenced.
+
+**Incident-response runbook (step 263).** [`docs/runbooks/incident-response.md`](runbooks/incident-response.md) — grounded in the real architecture as it exists today rather than speculative production infra, with real, per-failure-type diagnostic playbooks pointing at the surfaces above (`GET /system-health`, `GET /metrics`, `AuditLog`, the security test suite) and an honest "Known gaps" section rather than pretending everything's covered.
+
+**Responsible disclosure policy (step 264).** [`SECURITY.md`](../SECURITY.md) at the repo root, backed by GitHub's own private vulnerability reporting (enabled for this repo as part of this step, not just documented) as the preferred report channel, with email as a fallback.
+
+**Backup automation + restore-drill (step 265).** `scripts/backup.sh` (real `pg_dump` of Postgres + a tarball of MinIO's data) and `scripts/restore-drill.sh`, which restores a specific backup into a throwaway container and verifies real, queryable data comes back — proving a backup is actually restorable, not just that a dump file exists. `make backup` / `make restore-drill BACKUP=...`.
+
+### Summary
+
+Ten steps, three shapes of work: from-scratch implementation where a real gap existed (251, 255–259, 262, 265), audits that confirmed already-correct behavior and turned it into a permanent regression test (252, 254), and documentation that's honest about what's real today versus what Milestone 11 (deployment infra) will need to add (263, 264, 266 — this section itself). The throughline every step shares: live verification over assumption — a real curl loop, a real forged token, a real restore into a real throwaway container — and naming gaps explicitly (no backup schedule yet, no production deployment yet, no region redundancy yet) rather than implying more coverage than actually exists.
 
 ## Infrastructure & deployment
 
