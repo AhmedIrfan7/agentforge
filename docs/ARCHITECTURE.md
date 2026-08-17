@@ -340,5 +340,6 @@ _To be filled in as Milestone 11 lands._
 - [`docs/ROADMAP.md`](ROADMAP.md) — the 300-step implementation plan
 - [`docs/adr/`](adr/) — Architecture Decision Records
 - [`docs/runbooks/incident-response.md`](runbooks/incident-response.md) — what to do when something real breaks
+- [`SECURITY.md`](../SECURITY.md) — responsible disclosure policy
 - [`docs/embedding.md`](embedding.md) — customer-facing widget embedding guide
 - [`AGENTS.md`](../AGENTS.md) — the project's full engineering constitution

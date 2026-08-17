@@ -125,8 +125,8 @@ failure too, not two separate incidents.
   secret itself was exposed — this invalidates every existing session (see
   [`docs/adr/0004-secrets-management.md`](../adr/0004-secrets-management.md) for what
   each secret actually protects).
-- Report responsible-disclosure findings per `SECURITY.md` (repo root) once roadmap
-  step 264 adds it — not yet present as of this doc's own step 263.
+- Report responsible-disclosure findings per [`SECURITY.md`](../../SECURITY.md)
+  (repo root, roadmap step 264).
 
 ## Known gaps (honest, not hidden)
 
