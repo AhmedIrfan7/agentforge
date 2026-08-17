@@ -2,10 +2,11 @@
 
 ## Supported versions
 
-AgentForge has no versioned releases yet (roadmap step 293 tags the first
-`v0.1.0-beta`) — only the `main` branch is maintained and monitored for
-security issues. If you're running a fork or an old commit, please update to
-the latest `main` before reporting, since the issue may already be fixed.
+[`v0.1.0-beta`](https://github.com/AhmedIrfan7/agentforge/releases/tag/v0.1.0-beta)
+is the first tagged release, but only the `main` branch is actively
+maintained and monitored for security issues. If you're running a fork or
+an old commit, please update to the latest `main` before reporting, since
+the issue may already be fixed.
 
 ## Reporting a vulnerability
 
@@ -40,9 +41,8 @@ letting one tenant see or affect another's data.
   which already runs `pip-audit`/`pnpm audit` on every push and weekly).
 - Findings that require physical access to a user's device, or social
   engineering.
-- This project has no live production deployment yet (Milestone 11 of
-  [`docs/ROADMAP.md`](docs/ROADMAP.md) builds that) — there is no hosted
-  instance to test against beyond your own local setup.
+- This project is self-hosted only — there is no hosted instance to test
+  against beyond your own local setup or self-hosted deployment.
 
 ## Response expectations
 
