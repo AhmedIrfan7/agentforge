@@ -164,3 +164,6 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod exec api alembic 
 `--build` rebuilds only what changed (Docker's own layer cache); running
 migrations again is always safe (`alembic upgrade head` is idempotent —
 already-applied migrations are skipped).
+
+If an update goes wrong, see [`docs/rollback-procedure.md`](rollback-procedure.md)
+for the real, live-verified reverse of everything above.
