@@ -307,7 +307,13 @@ Same defense-in-depth as every other tenant-scoped subsystem: Postgres RLS on `v
 
 ## Security architecture
 
-_To be filled in as Milestone 10 lands._
+_Milestone 10 is in progress (steps 251–266) — this section grows as each step lands; not yet complete._
+
+**Prompt injection defense (step 251).** `agents/safety.py:SafetyAgent` wraps retrieved/prior-turn content in explicit `<retrieved_content>` delimiter tags before it reaches a real LLM call, paired with a matching system-prompt instruction that content inside those tags is data, never an instruction to obey. Applied at both real LLM call sites this codebase has (`follow_up_questions.py`, `memory_summarization.py`).
+
+**API input/output validation (step 252).** Every route's request body and success response resolves to a real, named Pydantic schema — no raw `dict`/`Any` passthrough. Enforced as a standing regression test (`tests/test_api_schema_validation.py`), which introspects the app's own generated OpenAPI schema rather than trusting route decorators to stay correct by convention.
+
+**Secrets management (step 253).** Environment variables, centralized through one typed `config.py:Settings` object — no scattered `os.environ.get()` calls. Full rationale, the real current secrets inventory, and the migration path to a dedicated vault if this project ever needs one: [`docs/adr/0004-secrets-management.md`](adr/0004-secrets-management.md).
 
 ## Infrastructure & deployment
 

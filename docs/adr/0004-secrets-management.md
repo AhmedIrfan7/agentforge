@@ -1,0 +1,41 @@
+# ADR-0004: Secrets Management
+
+## Status
+Accepted — 2026-08-17
+
+## Problem
+`AGENTS.md`'s own "SECRET MANAGEMENT" section is explicit: never hardcode secrets, manage API keys/database credentials/cloud credentials/embedding-and-speech-and-LLM-provider keys/encryption keys/webhook secrets, support secure rotation, avoid exposing secrets in logs. By this step (roadmap 253) the app already has a real, working answer to all of this — `config.py:Settings`, `.env.example`, a fail-closed placeholder check — built incrementally across Milestones 1-8 without ever being written down as one coherent decision. This ADR documents the approach that already exists and, per this step's own literal wording, the real path to a dedicated secrets vault if this project ever needs one, so that migration doesn't get invented ad hoc under pressure later.
+
+## Decisions
+
+### Storage: environment variables, one centralized `Settings` object, no scattered `os.environ.get()`
+**Alternatives considered:**
+- A dedicated secrets vault now (HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager).
+- Secrets committed to the repo in an encrypted file (e.g. `git-crypt`, SOPS).
+- Scattered `os.environ.get()` calls at each real call site, no central config module.
+
+**Why environment variables + `config.py:Settings`:**
+- *vs. a dedicated vault:* real operational cost (a service to run and secure, a client library and network dependency in every process that reads a secret, real rotation/versioning machinery to build) with no real trigger yet — one deployment environment, no compliance requirement forcing centralized rotation, no multiple services/teams needing scoped access to different secret subsets. The same "premature complexity for current scale" reasoning ADR-0001 already applied to infrastructure generally, and ADR-0003 applied to database-per-tenant. Every real production platform this project is likely to deploy to (Railway, Render, Fly.io, a real cloud provider's own App Runner/ECS/Cloud Run) already injects environment variables at runtime from ITS OWN secret store — `.env`-shaped config gets a real vault's actual guarantee (not committed to source, injected at deploy time) for free, without this codebase needing its own vault client.
+- *vs. committing an encrypted secrets file:* adds a real dependency (a decryption key that itself has to be managed and rotated — the same problem one level removed) and a merge-conflict-prone binary/encrypted blob in version control, for no benefit env vars don't already provide at this scale.
+- *vs. scattered `os.environ.get()`:* every secret's real name, type, default, and validation lives in exactly one place (`config.py:Settings`, a `pydantic_settings.BaseSettings` subclass) — a typo'd env var name fails at startup with a clear Pydantic error instead of silently returning `None` deep inside whatever module happened to read it. `.env.example` (checked into git, real values never are) is the single canonical list of every secret this app manages, with an inline comment explaining what each one is and pointing at the ADR/roadmap step that introduced it.
+
+**The real, current inventory (`apps/api/config.py`, `.env.example`):** `SECRET_KEY` (general app secret), `DATABASE_URL`/`DATABASE_MIGRATIONS_URL` (least-privilege app role vs. bootstrap superuser credentials — see ADR-0003), `STORAGE_ACCESS_KEY`/`STORAGE_SECRET_KEY` (MinIO/S3-compatible object storage), `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` (LLM/embedding providers), `JWT_SECRET` (access/refresh token signing), `GOOGLE_CLIENT_SECRET` (OAuth), `MFA_ENCRYPTION_KEY` (a Fernet key encrypting each enrolled user's TOTP secret at rest, `auth/mfa.py`).
+
+### Fail-closed placeholder rejection in production, for the secrets a leaked default would directly compromise
+**The chosen design:** `config.py:Settings._reject_placeholder_secrets_in_production` raises at startup, not silently in production, if `SECRET_KEY`, `JWT_SECRET`, or `MFA_ENCRYPTION_KEY` still hold their obvious placeholder values when `ENVIRONMENT=production`. Deliberately scoped to exactly these three: each is *directly* usable to compromise the system the instant its real value is known (forge a session, forge a JWT, decrypt every enrolled user's TOTP secret) — AGENTS.md §9's "insecure defaults are a design bug, not an ops footnote" applies most sharply here.
+
+**Honest, real gap this ADR is surfacing, not concealing:** `STORAGE_SECRET_KEY`, `GOOGLE_CLIENT_SECRET`, `OPENAI_API_KEY`, and `ANTHROPIC_API_KEY` are NOT covered by this guard. `GOOGLE_CLIENT_SECRET`/`OPENAI_API_KEY`/`ANTHROPIC_API_KEY` left empty in production only make their own feature fail closed (Google login rejects the request; an LLM call raises `LLMProviderError`) rather than exposing anything — a deliberate, already-documented exception (`config.py`'s own comment on `google_client_secret`). `STORAGE_SECRET_KEY` is different and is a real, undated gap: its local-dev default (`agentforge123`) is a real, guessable credential, and unlike the other three it is never checked against a placeholder list at all. A production deployment that forgot to override it would silently use a guessable object-storage credential. Flagged here honestly rather than papered over; closing it (extending the same placeholder-rejection list) is real, low-effort future work with no design questions left open.
+
+### Rotation: manual today, no automated mechanism
+Every secret above can be rotated by updating the deployment environment's own env vars and restarting the process — no code change required for any of them. There is no automated rotation *mechanism* (no scheduled key rotation, no dual-key overlap window for zero-downtime JWT/Fernet key rotation). Real, honest future work if a compliance requirement or an actual incident ever forces it; not invented speculatively here.
+
+### Logging: no automated redaction, an established discipline of only logging named fields
+No log-scrubbing/redaction middleware exists. In practice, no secret has ever reached a log line across this whole codebase, because the established `structlog` convention (used consistently since Milestone 1) is to log specific, deliberately-chosen named fields (e.g. `logger.info("health_check_requested", environment=settings.environment)`), never a raw request body or a whole settings object. This is a real, working practice, not a documented policy with automated enforcement — a future contributor who logs a raw request body containing a password or an API key would not be stopped by any tooling today. Worth a real lint rule or a redaction middleware if this codebase's logging surface grows past what code review alone can reliably catch.
+
+## Consequences
+- Every new secret this project adds gets one line in `config.py:Settings` (typed, defaulted, documented) and one line in `.env.example` (with a comment) — never a bare `os.environ.get()` at its own call site.
+- A secret that would directly compromise the system if leaked (matching the reasoning `SECRET_KEY`/`JWT_SECRET`/`MFA_ENCRYPTION_KEY` already get) should be added to `_reject_placeholder_secrets_in_production`'s own checklist at the same time it's introduced, not as a follow-up.
+- `STORAGE_SECRET_KEY` staying outside that guard is a known, real gap this ADR names explicitly rather than an oversight to rediscover later.
+
+## Future migration path
+Move to a dedicated secrets vault (HashiCorp Vault, AWS Secrets Manager, or the equivalent for whichever cloud this project eventually deploys to) if any of these become real: a compliance requirement (SOC 2, HIPAA, etc.) mandates centralized secret rotation and access auditing; multiple services or environments need scoped, per-consumer access to different secret subsets rather than one flat env-var set; or a real rotation incident (a leaked key) makes "restart the process with a new env var" too slow or too manual to trust. The migration itself is additive, not a rewrite: `config.py:Settings` already centralizes every secret behind one typed object — swapping its source from `pydantic_settings`' env-var loading to a vault-backed loader (most vault clients offer a drop-in `BaseSettings` source) changes one module, not every call site that reads `settings.<field>` today.
