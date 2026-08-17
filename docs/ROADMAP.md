@@ -324,7 +324,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 274. Add horizontal-scaling config for API/workers
 - [x] 275. Add CDN config for widget assets
 - [x] 276. Add environment-config documentation (all env vars)
-- [ ] 277. Add rollback-procedure documentation
+- [x] 277. Add rollback-procedure documentation
 - [ ] 278. Add infra-as-code skeleton (Terraform/Pulumi) for one reference cloud target
 - [ ] 279. Add uptime/alerting integration
 - [ ] 280. Document infra architecture in `docs/ARCHITECTURE.md`
