@@ -13,3 +13,14 @@ class KnowledgeMetricsRead(BaseModel):
     duplicate_document_count: int
     low_confidence_document_count: int
     unused_document_count: int
+
+
+class AgentPerformanceEntryRead(BaseModel):
+    agent_name: str
+    execution_count: int
+    success_rate: float
+    average_latency_ms: float
+
+
+class AgentPerformanceMetricsRead(BaseModel):
+    per_agent: list[AgentPerformanceEntryRead]

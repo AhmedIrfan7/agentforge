@@ -14,6 +14,7 @@ from sqlalchemy import select, update
 
 from analytics.agent import AnalyticsAgent
 from db import get_session, set_tenant_context
+from models.agent_execution_log import AgentExecutionLog
 from models.assistant import Assistant
 from models.conversation import Conversation
 from models.document import Document
@@ -166,10 +167,31 @@ async def _new_message_citing(
         await session.commit()
 
 
+async def _new_execution_log(
+    tenant_id: uuid.UUID, *, agent_name: str, status: str, latency_ms: float
+) -> None:
+    async with get_session() as session:
+        await set_tenant_context(session, tenant_id)
+        session.add(
+            AgentExecutionLog(
+                tenant_id=tenant_id, agent_name=agent_name, status=status, latency_ms=latency_ms
+            )
+        )
+        await session.commit()
+
+
 async def _cleanup_org(org_id: uuid.UUID) -> None:
     async with get_session() as session:
         await set_tenant_context(session, org_id)
-        for model in (Message, Conversation, Document, Assistant, KnowledgeBase, Workspace):
+        for model in (
+            Message,
+            Conversation,
+            Document,
+            AgentExecutionLog,
+            Assistant,
+            KnowledgeBase,
+            Workspace,
+        ):
             result = await session.execute(select(model).where(model.tenant_id == org_id))
             for row in result.scalars().all():
                 await session.delete(row)
@@ -379,10 +401,87 @@ async def test_knowledge_metrics_is_scoped_to_its_own_tenant() -> None:
 
 
 @pytest.mark.anyio
+async def test_agent_performance_metrics_aggregates_real_execution_history() -> None:
+    org_id = await _new_org("analytics-perf")
+    try:
+        await _new_execution_log(org_id, agent_name="retriever", status="success", latency_ms=100)
+        await _new_execution_log(org_id, agent_name="retriever", status="success", latency_ms=200)
+        await _new_execution_log(org_id, agent_name="retriever", status="failure", latency_ms=50)
+        await _new_execution_log(org_id, agent_name="planning", status="success", latency_ms=10)
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            metrics = await agent.agent_performance_metrics(session, org_id)
+
+        by_name = {entry.agent_name: entry for entry in metrics.per_agent}
+        assert set(by_name) == {"retriever", "planning"}
+
+        retriever = by_name["retriever"]
+        assert retriever.execution_count == 3
+        assert retriever.success_rate == pytest.approx(2 / 3)
+        assert retriever.average_latency_ms == pytest.approx((100 + 200 + 50) / 3)
+
+        planning = by_name["planning"]
+        assert planning.execution_count == 1
+        assert planning.success_rate == 1.0
+    finally:
+        await _cleanup_org(org_id)
+
+
+@pytest.mark.anyio
+async def test_agent_performance_metrics_orders_busiest_agent_first() -> None:
+    org_id = await _new_org("analytics-perf-order")
+    try:
+        await _new_execution_log(org_id, agent_name="quiet", status="success", latency_ms=1)
+        for _ in range(3):
+            await _new_execution_log(org_id, agent_name="busy", status="success", latency_ms=1)
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            metrics = await agent.agent_performance_metrics(session, org_id)
+
+        assert [entry.agent_name for entry in metrics.per_agent] == ["busy", "quiet"]
+    finally:
+        await _cleanup_org(org_id)
+
+
+@pytest.mark.anyio
+async def test_agent_performance_metrics_on_an_empty_org_returns_an_empty_list() -> None:
+    org_id = await _new_org("analytics-perf-empty")
+    try:
+        async with get_session() as session:
+            await set_tenant_context(session, org_id)
+            metrics = await agent.agent_performance_metrics(session, org_id)
+
+        assert metrics.per_agent == []
+    finally:
+        await _cleanup_org(org_id)
+
+
+@pytest.mark.anyio
+async def test_agent_performance_metrics_is_scoped_to_its_own_tenant() -> None:
+    org_a = await _new_org("analytics-perf-tenant-a")
+    org_b = await _new_org("analytics-perf-tenant-b")
+    try:
+        await _new_execution_log(org_a, agent_name="retriever", status="success", latency_ms=1)
+        await _new_execution_log(org_b, agent_name="retriever", status="success", latency_ms=1)
+        await _new_execution_log(org_b, agent_name="retriever", status="success", latency_ms=1)
+
+        async with get_session() as session:
+            await set_tenant_context(session, org_a)
+            metrics_a = await agent.agent_performance_metrics(session, org_a)
+
+        assert len(metrics_a.per_agent) == 1
+        assert metrics_a.per_agent[0].execution_count == 1
+    finally:
+        await _cleanup_org(org_a)
+        await _cleanup_org(org_b)
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "method_name",
     [
-        "agent_performance_metrics",
         "usage_metrics",
         "retrieval_quality_metrics",
         "failure_pattern_metrics",

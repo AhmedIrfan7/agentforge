@@ -15,6 +15,14 @@ import { expect, test } from "@playwright/test";
 // step's own live verification instead, the same honest split
 // documents.spec.ts-adjacent steps already established for MinIO/
 // ClamAV-dependent flows.
+//
+// Step 245's agent-performance table is fully real here too, no
+// carve-out needed: each of the 2 real sends below runs the real
+// orchestrator (planning always, retriever since both queries are
+// non-empty "document_search" intent), and agents/tracing.py now
+// persists a real AgentExecutionLog row per run since a real
+// tenant_id is available in that path -- 2 sends -> 2 planning rows +
+// 2 retriever rows, both 100% success.
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 test("analytics: real conversations show up as real conversation/message counts", async ({
@@ -118,4 +126,8 @@ test("analytics: real conversations show up as real conversation/message counts"
   // Real empty state -- this flow's own knowledge base never got a
   // document.
   await expect(page.getByText("No documents yet.")).toBeVisible();
+
+  const perfText = (await page.locator("table").innerText()).replace(/\s+/g, " ");
+  expect(perfText).toContain("planning 2 100%");
+  expect(perfText).toContain("retriever 2 100%");
 });

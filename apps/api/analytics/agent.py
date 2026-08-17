@@ -13,10 +13,11 @@ asked for yet" this codebase's own established discipline avoids
 everywhere else (KnowledgeBase/Assistant/Message model docstrings all
 make the identical argument).
 
-conversation_metrics() (243) and knowledge_metrics() (244) are real,
-working exceptions -- proving the skeleton is genuinely callable end to
-end (real DB queries, real tests) rather than a class of empty names,
-each filled in exactly when its own dedicated roadmap step arrived, not
+conversation_metrics() (243), knowledge_metrics() (244), and
+agent_performance_metrics() (245) are real, working exceptions --
+proving the skeleton is genuinely callable end to end (real DB
+queries, real tests) rather than a class of empty names, each filled
+in exactly when its own dedicated roadmap step arrived, not
 speculatively ahead of it. Every other method still raises
 NotImplementedError with a docstring naming its real future roadmap
 step where one is already scheduled (through 250), or saying plainly
@@ -39,9 +40,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import NoReturn
 
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.agent_execution_log import AgentExecutionLog
 from models.conversation import Conversation
 from models.document import Document
 from models.message import Message
@@ -70,6 +72,19 @@ class KnowledgeMetrics:
     duplicate_document_count: int
     low_confidence_document_count: int
     unused_document_count: int
+
+
+@dataclass
+class AgentPerformanceEntry:
+    agent_name: str
+    execution_count: int
+    success_rate: float
+    average_latency_ms: float
+
+
+@dataclass
+class AgentPerformanceMetrics:
+    per_agent: list[AgentPerformanceEntry]
 
 
 class AnalyticsAgent:
@@ -177,11 +192,41 @@ class AnalyticsAgent:
 
     async def agent_performance_metrics(
         self, session: AsyncSession, tenant_id: uuid.UUID
-    ) -> NoReturn:
-        """Per-agent latency/success, aggregated from the real per-
-        execution events agents/tracing.py already logs -- roadmap step
-        245 ("agent-performance dashboard")."""
-        raise NotImplementedError("Agent-performance metrics land with roadmap step 245.")
+    ) -> AgentPerformanceMetrics:
+        """Real, not a stub -- aggregates agents/tracing.py's own real
+        per-execution history. That history is only queryable as of
+        step 245 itself: agents/tracing.py:traced_run now persists an
+        AgentExecutionLog row per call when a real tenant_id is passed
+        (orchestrator.py's own per-request nodes do), where it used to
+        only log structurally. Ordered by execution_count descending --
+        the busiest agents are the ones a "performance" dashboard's own
+        reader most wants to see first.
+        """
+        stmt = (
+            select(
+                AgentExecutionLog.agent_name,
+                func.count().label("execution_count"),
+                func.avg(AgentExecutionLog.latency_ms).label("average_latency_ms"),
+                func.sum(case((AgentExecutionLog.status == "success", 1), else_=0)).label(
+                    "success_count"
+                ),
+            )
+            .where(AgentExecutionLog.tenant_id == tenant_id)
+            .group_by(AgentExecutionLog.agent_name)
+            .order_by(func.count().desc())
+        )
+        rows = (await session.execute(stmt)).all()
+
+        per_agent = [
+            AgentPerformanceEntry(
+                agent_name=row.agent_name,
+                execution_count=row.execution_count,
+                success_rate=(row.success_count / row.execution_count),
+                average_latency_ms=float(row.average_latency_ms),
+            )
+            for row in rows
+        ]
+        return AgentPerformanceMetrics(per_agent=per_agent)
 
     async def usage_metrics(self, session: AsyncSession, tenant_id: uuid.UUID) -> NoReturn:
         """Messages/voice-minutes/uploads/storage per org -- roadmap
@@ -208,12 +253,14 @@ class AnalyticsAgent:
         raise NotImplementedError("Failure-pattern analytics has no dedicated roadmap step yet.")
 
     async def latency_metrics(self, session: AsyncSession, tenant_id: uuid.UUID) -> NoReturn:
-        """agents/tracing.py already logs real per-execution latency
-        events -- aggregating them here is real, undated future work;
-        no roadmap step through 250 names it specifically (245's own
-        "agent-performance dashboard" is the closer real fit, but
-        AGENTS.md lists them as separate responsibilities, so this
-        stays its own method rather than being silently folded in)."""
+        """agent_performance_metrics() (245) now covers PER-AGENT
+        average latency, using the same AgentExecutionLog history this
+        method would need. AGENTS.md still lists "latency" as its own
+        ANALYTICS AGENT responsibility, distinct from "agent
+        performance" -- read as broader latency analysis (percentiles,
+        trends over time, not just a per-agent mean), which no roadmap
+        step through 250 names specifically; real, undated future work,
+        not silently subsumed by 245."""
         raise NotImplementedError("Latency analytics has no dedicated roadmap step yet.")
 
     async def business_insight_metrics(

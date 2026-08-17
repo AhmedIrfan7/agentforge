@@ -1,6 +1,6 @@
 """Integration tests against the real FastAPI app for
-routers/analytics.py (roadmap step 243, the first real caller of
-analytics/agent.py:AnalyticsAgent.conversation_metrics, 242).
+routers/analytics.py (roadmap steps 243-245, each the first real
+caller of its own analytics/agent.py:AnalyticsAgent method).
 """
 
 import uuid
@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from db import get_session, set_tenant_context
 from main import app
+from models.agent_execution_log import AgentExecutionLog
 from models.assistant import Assistant
 from models.audit_log import AuditLog
 from models.conversation import Conversation
@@ -63,6 +64,19 @@ async def _new_document(
         await session.commit()
 
 
+async def _new_execution_log(
+    org_id: uuid.UUID, *, agent_name: str, status: str, latency_ms: float
+) -> None:
+    async with get_session() as session:
+        await set_tenant_context(session, org_id)
+        session.add(
+            AgentExecutionLog(
+                tenant_id=org_id, agent_name=agent_name, status=status, latency_ms=latency_ms
+            )
+        )
+        await session.commit()
+
+
 async def _cleanup_org(org_id: uuid.UUID) -> None:
     async with get_session() as session:
         await set_tenant_context(session, org_id)
@@ -70,6 +84,7 @@ async def _cleanup_org(org_id: uuid.UUID) -> None:
             Message,
             Conversation,
             Document,
+            AgentExecutionLog,
             Assistant,
             KnowledgeBase,
             Workspace,
@@ -250,6 +265,52 @@ async def test_end_user_role_cannot_read_knowledge_metrics() -> None:
         assert response.status_code == 403
     finally:
         await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(end_user_email)
+
+
+@pytest.mark.anyio
+async def test_owner_can_read_real_agent_performance_metrics() -> None:
+    email = "endpoint-test-analytics-owner-6@example.com"
+    org_id, headers = _new_org(email)
+    try:
+        await _new_execution_log(org_id, agent_name="retriever", status="success", latency_ms=100)
+        await _new_execution_log(org_id, agent_name="retriever", status="failure", latency_ms=50)
+
+        response = client.get(
+            f"/organizations/{org_id}/analytics/agent-performance", headers=headers
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["per_agent"] == [
+            {
+                "agent_name": "retriever",
+                "execution_count": 2,
+                "success_rate": 0.5,
+                "average_latency_ms": 75.0,
+            }
+        ]
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(email)
+
+
+@pytest.mark.anyio
+async def test_end_user_role_cannot_read_agent_performance_metrics() -> None:
+    owner_email = "endpoint-test-analytics-owner-7@example.com"
+    org_id, _owner_headers = _new_org(owner_email)
+    end_user_email = "endpoint-test-analytics-enduser-perf@example.com"
+    try:
+        end_user_headers = await _add_member_with_role(org_id, end_user_email, "end_user")
+
+        response = client.get(
+            f"/organizations/{org_id}/analytics/agent-performance", headers=end_user_headers
+        )
+        assert response.status_code == 403
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(end_user_email)
         await _cleanup_user(owner_email)
         await _cleanup_user(end_user_email)
 

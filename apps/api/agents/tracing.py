@@ -42,15 +42,35 @@ of what's real today, not a placeholder pretending otherwise. The
 `isinstance` check means tracing starts reporting real tokens
 automatically once a real LLM-calling agent lands, with no change
 needed here.
+
+As of step 245, `traced_run` also PERSISTS each trace to a real
+`AgentExecutionLog` row when a caller passes `tenant_id` -- the real
+backend gap step 245's own "agent-performance dashboard" needed
+(structlog events alone give the dashboard nothing to query). Optional
+and additive, not a breaking change: every existing call site
+(agents/parallel.py, agents/resilience.py, this module's own tests)
+keeps working unchanged by simply not passing it, since only
+orchestrator.py's real per-request nodes (`_planning_node`,
+`_execute_node`) have a genuine tenant_id in scope to give it.
+Persistence uses its own short-lived `get_worker_session()` (the same
+per-call pattern `orchestrator.py:_RetrieverGraphAgent` already
+established), wrapped in its own `except Exception` that logs and
+swallows rather than propagating -- the same "tracing observes without
+altering control flow" principle this file's own logging path already
+follows, applied to the new persistence path: a transient DB hiccup
+while tracing must never turn into a broken chat turn for a real user.
 """
 
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Literal
 
 from agents.base import Agent
+from db import get_worker_session, set_tenant_context
 from llm.base import LLMResponse
 from logging_config import get_logger
+from models.agent_execution_log import AgentExecutionLog
 
 logger = get_logger(__name__)
 
@@ -75,31 +95,50 @@ def _log_trace(trace: AgentExecutionTrace) -> None:
     )
 
 
-async def traced_run[InputT, OutputT](agent: Agent[InputT, OutputT], input: InputT) -> OutputT:
+async def _persist_trace(trace: AgentExecutionTrace, tenant_id: uuid.UUID) -> None:
+    try:
+        async with get_worker_session() as session:
+            await set_tenant_context(session, tenant_id)
+            session.add(
+                AgentExecutionLog(
+                    tenant_id=tenant_id,
+                    agent_name=trace.agent_name,
+                    status=trace.status,
+                    latency_ms=trace.latency_ms,
+                )
+            )
+            await session.commit()
+    except Exception:
+        logger.exception("agent_execution_trace_persist_failed", agent_name=trace.agent_name)
+
+
+async def traced_run[InputT, OutputT](
+    agent: Agent[InputT, OutputT], input: InputT, *, tenant_id: uuid.UUID | None = None
+) -> OutputT:
     start = time.perf_counter()
     try:
         output = await agent.run(input)
     except Exception:
-        _log_trace(
-            AgentExecutionTrace(
-                agent_name=agent.name,
-                status="failure",
-                latency_ms=(time.perf_counter() - start) * 1000,
-                prompt_tokens=None,
-                completion_tokens=None,
-            )
+        trace = AgentExecutionTrace(
+            agent_name=agent.name,
+            status="failure",
+            latency_ms=(time.perf_counter() - start) * 1000,
+            prompt_tokens=None,
+            completion_tokens=None,
         )
+        _log_trace(trace)
+        if tenant_id is not None:
+            await _persist_trace(trace, tenant_id)
         raise
 
-    _log_trace(
-        AgentExecutionTrace(
-            agent_name=agent.name,
-            status="success",
-            latency_ms=(time.perf_counter() - start) * 1000,
-            prompt_tokens=output.prompt_tokens if isinstance(output, LLMResponse) else None,
-            completion_tokens=(
-                output.completion_tokens if isinstance(output, LLMResponse) else None
-            ),
-        )
+    trace = AgentExecutionTrace(
+        agent_name=agent.name,
+        status="success",
+        latency_ms=(time.perf_counter() - start) * 1000,
+        prompt_tokens=output.prompt_tokens if isinstance(output, LLMResponse) else None,
+        completion_tokens=(output.completion_tokens if isinstance(output, LLMResponse) else None),
     )
+    _log_trace(trace)
+    if tenant_id is not None:
+        await _persist_trace(trace, tenant_id)
     return output

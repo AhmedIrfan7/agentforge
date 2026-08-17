@@ -17,6 +17,17 @@ export interface KnowledgeMetrics {
   unused_document_count: number;
 }
 
+export interface AgentPerformanceEntry {
+  agent_name: string;
+  execution_count: number;
+  success_rate: number;
+  average_latency_ms: number;
+}
+
+export interface AgentPerformanceMetrics {
+  per_agent: AgentPerformanceEntry[];
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const response = await authorizedFetch(path);
   if (!response.ok) {
@@ -34,4 +45,12 @@ export async function getConversationMetrics(organizationId: string): Promise<Co
 
 export async function getKnowledgeMetrics(organizationId: string): Promise<KnowledgeMetrics> {
   return getJson<KnowledgeMetrics>(`/organizations/${organizationId}/analytics/knowledge`);
+}
+
+export async function getAgentPerformanceMetrics(
+  organizationId: string,
+): Promise<AgentPerformanceMetrics> {
+  return getJson<AgentPerformanceMetrics>(
+    `/organizations/${organizationId}/analytics/agent-performance`,
+  );
 }

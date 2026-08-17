@@ -139,7 +139,7 @@ async def _intent_analysis_node(state: OrchestratorState) -> dict[str, str]:
 
 
 async def _planning_node(state: OrchestratorState) -> dict[str, list[str]]:
-    plan = await traced_run(_planning_agent, state["intent"])
+    plan = await traced_run(_planning_agent, state["intent"], tenant_id=state["tenant_id"])
     return {"agent_names": plan.agent_names}
 
 
@@ -162,7 +162,7 @@ async def _execute_node(state: OrchestratorState) -> dict[str, object]:
         return {"response": state["query"], "chunks": []}
 
     agent = _RetrieverGraphAgent(state["tenant_id"], state["knowledge_base_id"])
-    results = await traced_run(agent, state["query"])
+    results = await traced_run(agent, state["query"], tenant_id=state["tenant_id"])
     if not results:
         return {"response": "No results found.", "chunks": []}
     return {"response": "\n\n".join(r.text for r in results), "chunks": results}

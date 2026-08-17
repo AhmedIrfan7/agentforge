@@ -1,6 +1,7 @@
 """Import every model module here so its table registers on db.Base.metadata
 for Alembic autogenerate — see migrations/env.py."""
 
+from models.agent_execution_log import AgentExecutionLog
 from models.api_key import ApiKey
 from models.assistant import Assistant
 from models.audit_log import AuditLog
@@ -26,6 +27,7 @@ from models.voice_session import VoiceSession
 from models.workspace import Workspace
 
 __all__ = [
+    "AgentExecutionLog",
     "ApiKey",
     "Assistant",
     "AuditLog",
