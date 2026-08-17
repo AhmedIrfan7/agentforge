@@ -27,6 +27,7 @@ from routers import (
     system_health,
     workspace,
 )
+from schemas.health import HealthRead
 
 configure_logging()
 logger = get_logger(__name__)
@@ -83,7 +84,7 @@ app.include_router(public_voice.router)
 app.include_router(memory.router)
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
+@app.get("/health", response_model=HealthRead)
+def health() -> HealthRead:
     logger.info("health_check_requested", environment=settings.environment)
-    return {"status": "ok"}
+    return HealthRead(status="ok")
