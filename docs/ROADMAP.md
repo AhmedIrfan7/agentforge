@@ -322,7 +322,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 272. Add production-deployment workflow with manual approval gate
 - [x] 273. Add health-check + readiness probes
 - [x] 274. Add horizontal-scaling config for API/workers
-- [ ] 275. Add CDN config for widget assets
+- [x] 275. Add CDN config for widget assets
 - [ ] 276. Add environment-config documentation (all env vars)
 - [ ] 277. Add rollback-procedure documentation
 - [ ] 278. Add infra-as-code skeleton (Terraform/Pulumi) for one reference cloud target
