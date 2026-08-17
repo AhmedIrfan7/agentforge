@@ -1,4 +1,9 @@
 # syntax=docker/dockerfile:1
+#
+# Build context is THIS DIRECTORY (apps/api), not the repo root -- unlike
+# apps/web/Dockerfile, which needs the monorepo root to see pnpm-workspace.yaml
+# and packages/shared. e.g.:
+#   docker build -f apps/api/Dockerfile -t agentforge-api apps/api
 
 FROM python:3.12-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \

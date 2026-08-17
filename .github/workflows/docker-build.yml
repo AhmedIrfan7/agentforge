@@ -1,0 +1,74 @@
+name: Docker Build
+
+# Roadmap step 267. apps/api/Dockerfile and apps/web/Dockerfile have
+# existed since roadmap "step 032" -- long before this CI workflow --
+# and no CI job anywhere had ever actually built them since. Live
+# verification during step 267 confirmed both still build and run
+# correctly today, but that was only ever proven by hand; this job is
+# what stops the next ~235 steps of drift from silently breaking them
+# again the same way.
+#
+# Build-only, not push -- neither image has anywhere real to publish to
+# yet (Milestone 11's own later steps, e.g. 270's "build+push images on
+# merge to main"). Proving the image builds and its container actually
+# serves a real request is the real, valuable check at this stage.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-api-image:
+    name: Build + smoke-test apps/api image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/api
+          file: apps/api/Dockerfile
+          push: false
+          load: true
+          tags: agentforge-api:ci
+      - name: Smoke test (container starts, health endpoint responds, runs as non-root)
+        run: |
+          docker run -d --name api-smoke -p 8000:8000 \
+            -e SECRET_KEY="ci-smoke-test-secret-at-least-32-bytes-long" \
+            -e JWT_SECRET="ci-smoke-test-jwt-secret-at-least-32-bytes" \
+            agentforge-api:ci
+          for _ in $(seq 1 20); do
+            if curl -sf http://localhost:8000/health > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://localhost:8000/health
+          [ "$(docker exec api-smoke whoami)" = "app" ]
+          docker rm -f api-smoke
+
+  build-web-image:
+    name: Build + smoke-test apps/web image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: false
+          load: true
+          tags: agentforge-web:ci
+      - name: Smoke test (container starts, responds, runs as non-root)
+        run: |
+          docker run -d --name web-smoke -p 3000:3000 agentforge-web:ci
+          for _ in $(seq 1 20); do
+            if curl -sf http://localhost:3000/ > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://localhost:3000/ > /dev/null
+          [ "$(docker exec web-smoke whoami)" = "app" ]
+          docker rm -f web-smoke
