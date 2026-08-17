@@ -89,7 +89,7 @@ Anonymous-session tokens (a separate, deliberately weaker token for embeddable-w
 
 ### RBAC
 
-Five built-in roles (`org_owner`, `admin`, `manager`, `viewer`, `guest`), a real permission catalog, and a `RolePermission` join table (migration `a870af57e4d3` seeds the roles, `1d0ef14faf9e` seeds the permission grants) — `org_owner` is the only role that can delete the organization itself. `dependencies/rbac.py:require_permission(key)` is the per-route enforcement point: it resolves the union of permissions every role the caller holds *within the current tenant* grants (a user can hold both an org-level and a workspace-level membership at once), and denies otherwise. A denial writes a real `AuditLog` row (`AGENTS.md`'s "AUDIT LOGGING" section names authorization failures explicitly) inside the same transaction the check itself ran in.
+Ten built-in roles (`org_owner`, `admin`, `manager`, `knowledge_manager`, `developer`, `support_agent`, `analyst`, `viewer`, `end_user`, `guest`), a real permission catalog, and a `RolePermission` join table (migration `a870af57e4d3` seeds the roles, `1d0ef14faf9e` seeds the permission grants) — `org_owner` is the only role that can delete the organization itself. `dependencies/rbac.py:require_permission(key)` is the per-route enforcement point: it resolves the union of permissions every role the caller holds *within the current tenant* grants (a user can hold both an org-level and a workspace-level membership at once), and denies otherwise. A denial writes a real `AuditLog` row (`AGENTS.md`'s "AUDIT LOGGING" section names authorization failures explicitly) inside the same transaction the check itself ran in.
 
 ### Testing
 
