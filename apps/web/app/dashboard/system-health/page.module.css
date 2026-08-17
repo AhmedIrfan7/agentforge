@@ -1,0 +1,97 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 640px;
+}
+
+.heading {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.sectionHeading {
+  font-size: 1.0625rem;
+  font-weight: 600;
+}
+
+.subtext {
+  color: rgba(128, 128, 128, 0.9);
+  font-size: 0.9375rem;
+}
+
+.status {
+  color: rgba(128, 128, 128, 0.8);
+}
+
+.error {
+  font-size: 0.8125rem;
+  color: #dc2626;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 12px;
+}
+
+.cardValue {
+  font-size: 1.75rem;
+  font-weight: 700;
+}
+
+.cardLabel {
+  font-size: 0.8125rem;
+  color: rgba(128, 128, 128, 0.85);
+}
+
+.chartCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 12px;
+}
+
+.workerList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+}
+
+.workerItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.875rem;
+  font-family: monospace;
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #dc2626;
+}
+
+.statusDot[data-status="online"] {
+  background: #16a34a;
+}
+
+.providerState {
+  margin-left: auto;
+  font-family: sans-serif;
+  font-size: 0.8125rem;
+  color: rgba(128, 128, 128, 0.85);
+}

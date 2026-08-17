@@ -23,6 +23,7 @@ from routers import (
     public_voice,
     retrieval,
     security_settings,
+    system_health,
     workspace,
 )
 
@@ -69,6 +70,7 @@ app.include_router(api_key.router)
 app.include_router(analytics.router)
 app.include_router(security_settings.router)
 app.include_router(audit_log.router)
+app.include_router(system_health.router)
 app.include_router(knowledge_base.router)
 app.include_router(document.router)
 app.include_router(retrieval.router)
