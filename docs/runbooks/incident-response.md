@@ -102,13 +102,15 @@ failure too, not two separate incidents.
   `Chunk`/`DocumentVersion` cascade on `Document` delete) — a delete you didn't
   expect the blast radius of is more likely a real cascade working as designed than
   a bug. Check the model's own `ondelete=` before assuming corruption.
-- There is **no backup/restore automation yet** — roadmap step 265 ("Add backup
-  automation + restore-drill script") is the step that builds this. Until it lands,
-  recovering deleted data means restoring the entire local Postgres data volume from
-  whatever manual backup exists, which is not a currently-tested or currently-real
-  procedure. Treat "did we actually test restoring from backup" as an open, named
-  gap, not an assumption — this doc will link to the real restore-drill script once
-  step 265 exists.
+- Recovering deleted/corrupted data means restoring from a real backup:
+  `make backup` (`scripts/backup.sh`) produces a real `pg_dump` of Postgres plus a
+  tarball of MinIO's data directory under `backups/<timestamp>/`. Restoring for real
+  means loading `postgres.dump` back into the real Postgres container with
+  `pg_restore` and extracting the MinIO tarball back into `.docker-data/minio` — do
+  this against a real incident with real care, not blindly; `make restore-drill
+  BACKUP=backups/<timestamp>` (`scripts/restore-drill.sh`) is the SAFE way to
+  verify a specific backup is actually restorable, since it drills against a
+  throwaway container, never overwriting real data.
 
 ## Security incident (suspected breach, auth bypass, cross-tenant leak)
 
@@ -130,7 +132,9 @@ failure too, not two separate incidents.
 
 ## Known gaps (honest, not hidden)
 
-- No backup automation or tested restore procedure yet (step 265).
+- Backup/restore-drill scripts exist (step 265) but there's no automated *schedule*
+  running them yet — `make backup` is a manual, on-demand action today, not a cron
+  job. A real deployment (Milestone 11) needs a real schedule, not just the tooling.
 - No real production deployment, so no real deploy-rollback procedure yet
   (Milestone 11, steps 267–280).
 - No region redundancy — explicitly a "Future" item in AGENTS.md's own BACKUPS

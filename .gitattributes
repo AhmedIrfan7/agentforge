@@ -1,0 +1,6 @@
+# Shell scripts need real LF line endings on every platform -- a CRLF-
+# corrupted shebang line (`#!/usr/bin/env bash\r`) fails with "bad
+# interpreter" on Linux/Mac, confirmed as a real risk here since this
+# repo has no prior .gitattributes and Windows checkouts otherwise get
+# CRLF by default (roadmap step 265, scripts/backup.sh + restore-drill.sh).
+*.sh text eol=lf

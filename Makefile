@@ -1,4 +1,4 @@
-.PHONY: help up down api-dev web-dev api-test api-lint api-format web-lint web-format web-build install api-migrate api-seed
+.PHONY: help up down api-dev web-dev api-test api-lint api-format web-lint web-format web-build install api-migrate api-seed backup restore-drill
 
 help:
 	@echo "AgentForge dev commands:"
@@ -15,6 +15,8 @@ help:
 	@echo "  make web-lint    - run eslint on apps/web"
 	@echo "  make web-format  - format apps/web with prettier"
 	@echo "  make web-build   - production build apps/web"
+	@echo "  make backup      - back up Postgres + MinIO to backups/<timestamp>/"
+	@echo "  make restore-drill BACKUP=backups/<timestamp> - restore-test a backup"
 
 install:
 	cd apps/api && uv sync
@@ -55,3 +57,9 @@ web-format:
 
 web-build:
 	pnpm --filter @agentforge/web run build
+
+backup:
+	./scripts/backup.sh
+
+restore-drill:
+	./scripts/restore-drill.sh $(BACKUP)

@@ -41,5 +41,8 @@ pnpm-debug.log*
 # --- Docker / local data volumes ---
 .docker-data/
 
+# --- Backups (roadmap step 265) -- real tenant data, never committed ---
+backups/
+
 # --- Misc ---
 *.tmp
