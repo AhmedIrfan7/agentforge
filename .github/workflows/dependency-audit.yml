@@ -1,0 +1,45 @@
+name: Dependency Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, independent of any push -- catches a NEW advisory published
+    # against an already-locked dependency, which a push-only trigger
+    # would never re-check (AGENTS.md's own "CONTINUOUS INTEGRATION"
+    # section: "Failed checks should block progression" only means
+    # something if this actually re-runs against unchanged code).
+    - cron: "0 6 * * 1"
+
+jobs:
+  api-dependency-audit:
+    name: Audit apps/api dependencies (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+      - name: Export locked dependencies
+        working-directory: apps/api
+        run: uv export --format requirements-txt --no-hashes -o requirements-audit.txt
+      - name: pip-audit
+        working-directory: apps/api
+        run: uvx pip-audit -r requirements-audit.txt
+
+  web-dependency-audit:
+    name: Audit apps/web + apps/widget dependencies (pnpm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: pnpm audit
+        run: pnpm audit

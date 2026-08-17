@@ -2,6 +2,18 @@ packages:
   - "apps/*"
   - "packages/*"
 
+# Forces a patched nanoid across the whole tree regardless of who
+# requires it (roadmap step 260) -- next@16.3.0's own bundled postcss
+# pins nanoid@3.3.17 (GHSA-2v37-7h3g-55p8, high: custom generators can
+# loop indefinitely when size is zero), a transitive dependency this
+# project has no direct control over otherwise. Not exploitable through
+# this app's own real usage (nothing here calls nanoid with a custom
+# generator), but a real reported CVE `pnpm audit` correctly flags —
+# fixing it here rather than shipping step 260's new CI scanner already
+# red on day one.
+overrides:
+  nanoid: ">=3.3.18"
+
 # Native/postinstall build scripts explicitly allowed to run.
 # Keep this list minimal and reviewed — arbitrary postinstall scripts
 # are a real supply-chain risk (AGENTS.md SECTION 9).
