@@ -57,6 +57,13 @@ server exactly once, on a real worker boot (Celery's own `worker_init`
 signal) -- not on every plain `import celery_app`, which would otherwise
 try to bind settings.worker_metrics_port every time a test or the API
 process imports this module and crash on the second bind.
+
+As of step 258, setup_error_tracking() runs here too, same
+"agentforge-worker" service_name as setup_tracing() -- its own
+CeleryIntegration is what actually reports a real task failure to
+Sentry (see error_tracking.py's own docstring for the live-verified
+proof this needs no extra signal handler here, unlike metrics.py's own
+task_prerun/task_postrun/task_failure counters).
 """
 
 from typing import Any
@@ -65,9 +72,11 @@ from celery import Celery
 from celery.signals import worker_init
 
 from config import settings
+from error_tracking import setup_error_tracking
 from metrics import start_worker_metrics_server
 from observability import setup_tracing
 
+setup_error_tracking(service_name="agentforge-worker")
 setup_tracing(service_name="agentforge-worker")
 
 

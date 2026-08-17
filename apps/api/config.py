@@ -145,6 +145,12 @@ class Settings(BaseSettings):
     # metrics on; see metrics.py's start_worker_metrics_server().
     worker_metrics_port: int = 9100
 
+    # Centralized error tracking (roadmap step 258). Empty by default --
+    # same "real code, genuinely inert until configured" pattern as
+    # otel_exporter_otlp_endpoint/openai_api_key (ADR-0004): no real
+    # Sentry project exists for this codebase yet. See error_tracking.py.
+    sentry_dsn: str = ""
+
     @property
     def is_development(self) -> bool:
         return self.environment == "development"

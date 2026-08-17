@@ -2,6 +2,7 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
+from error_tracking import setup_error_tracking
 from errors import register_exception_handlers
 from logging_config import configure_logging, get_logger
 from metrics import register_metrics_middleware, render_metrics
@@ -33,6 +34,7 @@ from schemas.health import HealthRead
 
 configure_logging()
 logger = get_logger(__name__)
+setup_error_tracking(service_name="agentforge-api")
 setup_tracing(service_name="agentforge-api")
 
 app = FastAPI(title="AgentForge API")
