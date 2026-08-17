@@ -290,7 +290,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 246. Add usage-tracking (messages/voice-minutes/uploads/storage per org)
 - [x] 247. Add audit-log viewer UI
 - [x] 248. Add system-health dashboard (queue depth, worker status, provider status)
-- [ ] 249. Add platform-admin layer (cross-org super-admin views)
+- [x] 249. Add platform-admin layer (cross-org super-admin views)
 - [ ] 250. Add dashboard e2e test (login → upload doc → processed → chat → see analytics)
 
 ## Milestone 10 — Security & Observability (steps 251–266)
