@@ -300,7 +300,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 253. Document secrets-management approach (env-based now, vault path documented)
 - [x] 254. Add encryption-at-rest for sensitive columns (API keys, tokens)
 - [x] 255. Add security-event audit logging (failed logins, permission denials, cross-tenant attempts)
-- [ ] 256. Add OpenTelemetry tracing across API+workers
+- [x] 256. Add OpenTelemetry tracing across API+workers
 - [ ] 257. Add Prometheus-compatible metrics export
 - [ ] 258. Add centralized error tracking (Sentry or equivalent)
 - [ ] 259. Refine rate-limit + abuse-detection middleware
