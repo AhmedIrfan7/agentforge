@@ -343,13 +343,20 @@ Ten steps, three shapes of work: from-scratch implementation where a real gap ex
 
 ## Infrastructure & deployment
 
-_To be filled in as Milestone 11 lands._
+_Milestone 11 (steps 267–280) is in progress — this section grows as each step lands._
+
+**Production Dockerfiles (step 267).** `apps/api/Dockerfile` and `apps/web/Dockerfile` — multi-stage, non-root `app` user, real healthchecks. Both existed since much earlier in this project's history but had zero CI coverage until this step; [`.github/workflows/docker-build.yml`](../.github/workflows/docker-build.yml) now builds and smoke-tests both on every push/PR. `apps/widget` deploys as a static bundle to a CDN (step 209/210) and correctly has no Dockerfile of its own.
+
+**Reference deployment (step 268).** [`docker-compose.prod.yml`](../docker-compose.prod.yml) — a real, single-host production stack (the two Dockerfiles above plus the existing infra services), real secrets via `.env.prod` (template: [`.env.prod.example`](../.env.prod.example)), `ENVIRONMENT=production` so `config.py`'s own placeholder-secret validator enforces real secrets at startup.
+
+**Self-hosted deployment documentation (step 269).** [`docs/self-hosted-deployment.md`](self-hosted-deployment.md) — every command in it was actually run against this stack, including the two real bugs step 268 caught live (a broken worker startup command, and a Next.js build-time-vs-runtime env var that would have silently shipped every deployment pointed at `localhost`).
 
 ## Related documents
 
 - [`docs/ROADMAP.md`](ROADMAP.md) — the 300-step implementation plan
 - [`docs/adr/`](adr/) — Architecture Decision Records
 - [`docs/runbooks/incident-response.md`](runbooks/incident-response.md) — what to do when something real breaks
+- [`docs/self-hosted-deployment.md`](self-hosted-deployment.md) — how to actually run this in production on one host
 - [`SECURITY.md`](../SECURITY.md) — responsible disclosure policy
 - [`docs/embedding.md`](embedding.md) — customer-facing widget embedding guide
 - [`AGENTS.md`](../AGENTS.md) — the project's full engineering constitution
