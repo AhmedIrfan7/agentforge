@@ -24,7 +24,17 @@ _PLACEHOLDER_SECRET = "change-me-to-a-random-value-at-least-32-bytes-long"
 # print(Fernet.generate_key().decode())"`.
 _PLACEHOLDER_MFA_KEY = "Y2hhbmdlLW1lLXRvLWEtcmVhbC0zMi1ieXRlLWtleSE="
 
-_PLACEHOLDER_SECRETS = frozenset({_PLACEHOLDER_SECRET, _PLACEHOLDER_MFA_KEY})
+# The local-dev default object-storage credential -- docs/adr/0004-secrets-
+# management.md flagged this as a real, undated gap (unlike SECRET_KEY/
+# JWT_SECRET/MFA_ENCRYPTION_KEY, it was never checked against a placeholder
+# list at all, so a production deployment that forgot to override it would
+# silently use a guessable credential). Closed here per that ADR's own
+# "real, low-effort future work" note.
+_PLACEHOLDER_STORAGE_SECRET_KEY = "agentforge123"
+
+_PLACEHOLDER_SECRETS = frozenset(
+    {_PLACEHOLDER_SECRET, _PLACEHOLDER_MFA_KEY, _PLACEHOLDER_STORAGE_SECRET_KEY}
+)
 
 
 class Settings(BaseSettings):
@@ -69,7 +79,7 @@ class Settings(BaseSettings):
 
     storage_endpoint_url: str = "http://localhost:9000"
     storage_access_key: str = "agentforge"
-    storage_secret_key: str = "agentforge123"
+    storage_secret_key: str = _PLACEHOLDER_STORAGE_SECRET_KEY
     storage_bucket: str = "agentforge-dev"
 
     openai_api_key: str = ""
@@ -167,6 +177,10 @@ class Settings(BaseSettings):
             if self.mfa_encryption_key in _PLACEHOLDER_SECRETS:
                 raise ValueError(
                     "MFA_ENCRYPTION_KEY is still the placeholder value — set a real Fernet key."
+                )
+            if self.storage_secret_key in _PLACEHOLDER_SECRETS:
+                raise ValueError(
+                    "STORAGE_SECRET_KEY is still the placeholder value — set a real credential."
                 )
         return self
 

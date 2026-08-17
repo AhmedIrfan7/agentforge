@@ -52,7 +52,7 @@ Real files, in order of how you'd actually touch them:
 | --- | --- | --- | --- |
 | `STORAGE_ENDPOINT_URL` | local dev value | **Yes** | |
 | `STORAGE_ACCESS_KEY` | `agentforge` | **Yes** | |
-| `STORAGE_SECRET_KEY` | `agentforge123` | **Yes** | Real, guessable local-dev default — see `docs/adr/0004-secrets-management.md` for the honestly-named gap that this specific one isn't gated by the placeholder-rejection validator the way `SECRET_KEY`/`JWT_SECRET`/`MFA_ENCRYPTION_KEY` are. |
+| `STORAGE_SECRET_KEY` | `agentforge123` | **Yes** | Startup fails closed in production if this is still the placeholder value — same guard as `SECRET_KEY`/`JWT_SECRET`/`MFA_ENCRYPTION_KEY`. |
 | `STORAGE_BUCKET` | `agentforge-dev` | Recommended | Use a distinct bucket name per real environment. |
 
 ### Auth

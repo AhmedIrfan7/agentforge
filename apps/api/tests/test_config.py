@@ -46,11 +46,22 @@ def test_placeholder_mfa_key_rejected_in_production() -> None:
         )
 
 
+def test_placeholder_storage_secret_key_rejected_in_production() -> None:
+    with pytest.raises(ValidationError, match="STORAGE_SECRET_KEY is still the placeholder"):
+        Settings(
+            environment="production",
+            secret_key="a-real-secret-that-is-long-enough",
+            jwt_secret="another-real-secret-that-is-long-enough",
+            mfa_encryption_key=_REAL_FERNET_KEY,
+        )
+
+
 def test_real_secrets_accepted_in_production() -> None:
     settings = Settings(
         environment="production",
         secret_key="a-real-secret-that-is-long-enough",
         jwt_secret="another-real-secret-that-is-long-enough",
         mfa_encryption_key=_REAL_FERNET_KEY,
+        storage_secret_key="a-real-storage-credential",
     )
     assert settings.environment == "production"

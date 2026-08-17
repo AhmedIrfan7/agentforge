@@ -58,7 +58,7 @@ AuditLog (tenant_id, but intentionally no FK to Organization — an audit trail 
 
 `apps/api/db.py:set_tenant_context(session, tenant_id)` issues `SET LOCAL app.current_tenant_id = '<uuid>'` — inlined into the SQL text (Postgres's `SET`/`SET LOCAL` don't accept bind parameters), safe here specifically because `tenant_id` is a `uuid.UUID` Python object, not a raw string. `SET LOCAL` only lasts for the current transaction; each new transaction on a session needs it set again.
 
-FastAPI routes get this automatically via `apps/api/dependencies/tenant.py:get_tenant_db` — a per-request dependency that resolves a trusted `tenant_id` and calls `set_tenant_context()` before yielding the session, then auto-commits on success / rolls back on any exception. **How `tenant_id` gets resolved is still a placeholder** (`get_current_tenant_id()` raises `NotImplementedError`) until Milestone 2's authentication exists — deliberately, not a shortcut that trusts a client-supplied header (`AGENTS.md` §9 is explicit that tenant context must never come from client input). Routes wired against `get_tenant_db` today (e.g. `routers/workspace.py`) are correctly built but non-functional until then; they need zero route-code changes once real auth lands.
+FastAPI routes get this automatically via `apps/api/dependencies/tenant.py:get_tenant_db` — a per-request dependency that resolves a trusted `tenant_id` and calls `set_tenant_context()` before yielding the session, then auto-commits on success / rolls back on any exception. `tenant_id` is resolved from the authenticated caller's real membership (`get_current_tenant_id()`, see Authentication & authorization below) plus an `organization_id` path parameter checked against it — deliberately never trusted from a client-supplied header alone (`AGENTS.md` §9 is explicit that tenant context must never come from unchecked client input).
 
 ### Testing tenant isolation
 
@@ -66,7 +66,34 @@ FastAPI routes get this automatically via `apps/api/dependencies/tenant.py:get_t
 
 ## Authentication & authorization
 
-_To be filled in as Milestone 2 lands._
+### Identity & credentials
+
+`User` is a global identity (one row per person, not tenant-scoped — a person can belong to multiple organizations via `Membership`). Passwords are hashed with **argon2id** (`apps/api/auth/passwords.py`, `argon2-cffi`'s `PasswordHasher` with its own OWASP-recommended defaults — no hand-tuned cost parameters without a documented reason). Signup (`POST /auth/signup`) sends a real email-verification link (`auth/verification.py`); login doesn't require a verified email today, but every other credential-issuing flow (magic link, password reset) does.
+
+### Sessions & tokens
+
+Two different token shapes for two different jobs:
+
+- **Access tokens** (`auth/jwt.py`) are stateless JWTs (HS256, `config.jwt_access_token_ttl_minutes`, default 15 minutes), carrying only `sub` (user id) — nothing tenant-specific, since which organization applies is resolved per-request (see Multi-tenancy above), not baked into the token at login.
+- **Refresh tokens** are opaque random strings (`secrets.token_urlsafe`), not JWTs, stored server-side (`models/session.py`) hashed with SHA-256 so a stolen DB dump doesn't hand out usable tokens — a fast hash is sufficient here (unlike passwords) because the token already carries 256 bits of entropy; there's nothing to brute-force from the hash. Being server-side is what makes real logout/revocation possible before a token's natural expiry, which a stateless JWT alone can't do.
+
+Anonymous-session tokens (a separate, deliberately weaker token for embeddable-widget visitors) are covered in the Embeddable widget section below, not here — they authorize one specific `Conversation`, not a `User`.
+
+### MFA (TOTP)
+
+`auth/mfa.py` — RFC 6238 TOTP enrollment/verification plus one-time backup codes. The TOTP secret is **encrypted** (Fernet, `config.mfa_encryption_key`), not hashed — unlike a password, a TOTP code can only be checked by regenerating the expected code from the secret, so the secret has to stay recoverable; a compromised database alone doesn't leak usable secrets without the separate, deployment-only encryption key. Backup codes are the opposite: compared for exact match, so they're hashed (argon2, same as passwords). A user with MFA enabled gets an `MfaRequiredResponse` from `/auth/login` instead of tokens directly, then completes a second step with a TOTP code or backup code.
+
+### OAuth
+
+`auth/oauth.py` — Google OAuth today, behind an `OAuthProvider` Protocol built for a second provider without a rewrite (see [`docs/extension-points.md`](extension-points.md)). The callback is handled by the API directly (`google_redirect_uri` points at `apps/api`, not the frontend's origin) since the frontend has no route for it yet.
+
+### RBAC
+
+Five built-in roles (`org_owner`, `admin`, `manager`, `viewer`, `guest`), a real permission catalog, and a `RolePermission` join table (migration `a870af57e4d3` seeds the roles, `1d0ef14faf9e` seeds the permission grants) — `org_owner` is the only role that can delete the organization itself. `dependencies/rbac.py:require_permission(key)` is the per-route enforcement point: it resolves the union of permissions every role the caller holds *within the current tenant* grants (a user can hold both an org-level and a workspace-level membership at once), and denies otherwise. A denial writes a real `AuditLog` row (`AGENTS.md`'s "AUDIT LOGGING" section names authorization failures explicitly) inside the same transaction the check itself ran in.
+
+### Testing
+
+`tests/test_rbac_enforcement.py` (roadmap step 081) is the systematic proof — a seeded role→permission matrix check plus real HTTP tests for the tier distinctions that matter (admin vs. org_owner-only delete, manager vs. security-settings access, viewer read-vs-write, guest's zero permissions), not just one per-feature happy-path test. `tests/test_security_suite.py` adds auth-bypass and SQL-injection-shaped-input regression coverage on top.
 
 ## Knowledge pipeline & RAG
 

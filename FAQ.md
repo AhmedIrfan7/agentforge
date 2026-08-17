@@ -74,12 +74,12 @@ MinIO/S3, LangGraph, Docker Compose. Rationale for each choice:
 
 ## Can I contribute?
 
-Not via pull request yet — Milestone 12 (the one in progress now) is
-specifically about getting the project ready for that: issue templates,
-labels, and a first tagged beta release. Bug reports and design feedback
-on the roadmap/architecture direction are welcome via GitHub Issues in
-the meantime. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the exact
-current status and what changes once Milestone 12 closes, and
+Not via pull request yet. Milestone 12 (Open Source Readiness / Public
+Beta — issue templates, labels, and the first tagged beta release) is
+done, but pull requests specifically still aren't open. Bug reports and
+design feedback on the roadmap/architecture direction are welcome via
+GitHub Issues in the meantime. See [`CONTRIBUTING.md`](CONTRIBUTING.md)
+for the exact current status and what changes once PRs open, and
 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) for community expectations.
 
 ## Where do I ask a question that isn't a bug report?
