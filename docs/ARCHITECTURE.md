@@ -390,4 +390,5 @@ The same throughline Milestone 10 established holds here too, tested harder: liv
 - [`docs/embedding.md`](embedding.md) — customer-facing widget embedding guide
 - [`docs/extension-points.md`](extension-points.md) — real provider/agent interfaces built for extension
 - [`docs/api-reference.md`](api-reference.md) — how to browse the REST API's OpenAPI-generated reference
+- [`docs/performance-benchmark.md`](performance-benchmark.md) — real, measured local latency numbers for the core API paths
 - [`AGENTS.md`](../AGENTS.md) — the project's full engineering constitution

@@ -1,4 +1,4 @@
-.PHONY: help up down api-dev web-dev worker-dev api-test api-lint api-format web-lint web-format web-build install api-migrate api-seed backup restore-drill api-openapi-export
+.PHONY: help up down api-dev web-dev worker-dev api-test api-lint api-format web-lint web-format web-build install api-migrate api-seed backup restore-drill api-openapi-export api-benchmark
 
 help:
 	@echo "AgentForge dev commands:"
@@ -19,6 +19,7 @@ help:
 	@echo "  make backup      - back up Postgres + MinIO to backups/<timestamp>/"
 	@echo "  make restore-drill BACKUP=backups/<timestamp> - restore-test a backup"
 	@echo "  make api-openapi-export - regenerate docs/openapi.json from the live app"
+	@echo "  make api-benchmark - real latency benchmark against a running api-dev server"
 
 install:
 	cd apps/api && uv sync
@@ -71,3 +72,6 @@ restore-drill:
 
 api-openapi-export:
 	cd apps/api && uv run python -m scripts.export_openapi
+
+api-benchmark:
+	cd apps/api && uv run python -m scripts.benchmark_api
