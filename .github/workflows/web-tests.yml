@@ -11,13 +11,13 @@ jobs:
     name: Next.js production build
     runs-on: ubuntu-latest
     # Postgres + Redis back the real apps/api instance step 198's e2e
-    # test needs -- no MinIO/ClamAV here, unlike api-tests.yml's own
-    # services: this test never uploads a document, so nothing in its
-    # path ever touches storage or the virus scanner. Redis is still
-    # required even though nothing consumes from it: message-send
-    # synchronously calls message_embedding.py's `.delay()` inside the
-    # request itself, which needs a reachable Celery broker to publish
-    # to, even with no worker running to consume it.
+    # test needs. MinIO + ClamAV (below, plain `docker run` steps, same
+    # as api-tests.yml) and a real Celery worker were added at step 250
+    # -- the first e2e spec in this suite that actually uploads a real
+    # document (dashboardGoldenPath.spec.ts) needs the real pipeline
+    # (antivirus scan, storage, extraction) to run for real, not just
+    # sit dispatched-and-unconsumed the way message-send's own .delay()
+    # call already did here before this step.
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -47,6 +47,12 @@ jobs:
       DATABASE_MIGRATIONS_URL: postgresql+asyncpg://agentforge:agentforge@localhost:5432/agentforge
       REDIS_URL: redis://localhost:6379/0
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      STORAGE_ENDPOINT_URL: http://localhost:9000
+      STORAGE_ACCESS_KEY: agentforge
+      STORAGE_SECRET_KEY: agentforge123
+      STORAGE_BUCKET: agentforge-dev
+      CLAMAV_HOST: localhost
+      CLAMAV_PORT: 3310
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -72,6 +78,31 @@ jobs:
       - name: Run migrations
         working-directory: apps/api
         run: uv run alembic upgrade head
+      # MinIO/ClamAV steps below are identical to api-tests.yml's own --
+      # see that file's comments for why each runs as a plain `docker
+      # run` step rather than a `services:` container.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=agentforge \
+            -e MINIO_ROOT_PASSWORD=agentforge123 \
+            minio/minio:latest server /data
+      - name: Wait for MinIO and create bucket
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 1
+          done
+          docker exec minio mc alias set local http://localhost:9000 agentforge agentforge123
+          docker exec minio mc mb local/agentforge-dev --ignore-existing
+      - name: Start ClamAV
+        run: docker run -d --name clamav -p 3310:3310 clamav/clamav:1.5
+      - name: Wait for ClamAV
+        run: |
+          for i in $(seq 1 60); do
+            docker exec clamav clamdscan --ping 1 && break
+            sleep 2
+          done
       - name: Start API server
         working-directory: apps/api
         run: |
@@ -80,6 +111,16 @@ jobs:
             curl -sf http://localhost:8000/health && break
             sleep 1
           done
+      # Real worker (step 250) -- dashboardGoldenPath.spec.ts uploads a
+      # real document and needs something to actually consume
+      # dispatch_extraction/dispatch_embedding_generation, not just
+      # leave them sitting in the broker the way earlier specs' own
+      # unconsumed .delay() calls always have. --concurrency=1 keeps
+      # this runner-friendly -- nothing about this workflow's own e2e
+      # suite needs real task throughput, only real completion.
+      - name: Start Celery worker
+        working-directory: apps/api
+        run: nohup uv run celery -A celery_app worker --loglevel=info --concurrency=1 > celery.log 2>&1 &
       - name: Install Playwright browsers
         working-directory: apps/web
         run: npx playwright install --with-deps chromium
@@ -88,6 +129,9 @@ jobs:
       - name: Print API server log on failure
         if: failure()
         run: cat apps/api/uvicorn.log
+      - name: Print Celery worker log on failure
+        if: failure()
+        run: cat apps/api/celery.log
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -96,7 +140,9 @@ jobs:
           retention-days: 7
 
 # Playwright e2e tests (step 198) now run alongside the production
-# build, against a real apps/api instance this job starts itself --
-# see apps/web/e2e/chat.spec.ts's own docstring for why no document
-# upload (and therefore no MinIO/ClamAV) is needed for this particular
-# test.
+# build, against a real apps/api instance this job starts itself.
+# chat.spec.ts's own docstring still explains why IT doesn't upload a
+# document (an empty-KB "No results found." reply is itself a real,
+# deterministic assertion needing none of the ingestion pipeline) --
+# MinIO/ClamAV/the worker above exist for dashboardGoldenPath.spec.ts
+# (step 250), the first spec in this suite that does.
