@@ -331,7 +331,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 
 ## Milestone 12 — Open Source Readiness / Public Beta (steps 281–295)
 
-- [ ] 281. Finalize README (quickstart, architecture diagram, screenshots)
+- [x] 281. Finalize README (quickstart, architecture diagram, screenshots)
 - [ ] 282. Finalize `CONTRIBUTING.md` (dev setup, PR process, coding standards)
 - [ ] 283. Add issue templates (bug/feature/research)
 - [ ] 284. Add PR template
