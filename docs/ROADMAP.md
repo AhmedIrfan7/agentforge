@@ -307,7 +307,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 260. Add automated dependency-vulnerability scanning in CI
 - [x] 261. Add SAST scanning in CI
 - [x] 262. Add security test suite (auth bypass, cross-tenant, injection attempts)
-- [ ] 263. Add incident-response runbook doc
+- [x] 263. Add incident-response runbook doc
 - [ ] 264. Add `SECURITY.md` (responsible disclosure policy)
 - [ ] 265. Add backup automation + restore-drill script
 - [ ] 266. Document security architecture in `docs/ARCHITECTURE.md`
