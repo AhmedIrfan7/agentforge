@@ -42,7 +42,77 @@ logger = get_logger(__name__)
 setup_error_tracking(service_name="agentforge-api")
 setup_tracing(service_name="agentforge-api")
 
-app = FastAPI(title="AgentForge API")
+# Tag descriptions shown as group headers on the auto-generated /docs
+# (Swagger UI) and /redoc pages -- every tag here is a real one a router
+# already sets (grep `tags=` under routers/), listed in the same
+# top-to-bottom order app.include_router() below registers them, so the
+# rendered docs read in a sensible tour order rather than alphabetically.
+OPENAPI_TAGS = [
+    {"name": "auth", "description": "Login, signup, tokens, MFA, and Google OAuth."},
+    {
+        "name": "organizations",
+        "description": "Tenant organizations -- the top-level isolation boundary.",
+    },
+    {"name": "workspaces", "description": "Workspaces within an organization."},
+    {"name": "invitations", "description": "Inviting new members to an organization."},
+    {"name": "members", "description": "Organization membership and roles."},
+    {"name": "api-keys", "description": "Programmatic API keys scoped to an organization."},
+    {
+        "name": "analytics",
+        "description": "Usage and conversation analytics for the admin dashboard.",
+    },
+    {"name": "security-settings", "description": "Per-organization security policy configuration."},
+    {"name": "audit-logs", "description": "Read-only audit trail of security-relevant actions."},
+    {
+        "name": "system-health",
+        "description": "Operator-facing health/dependency status (distinct from /health, /ready).",
+    },
+    {
+        "name": "platform-admin",
+        "description": "Cross-tenant platform-operator endpoints -- not for regular org admins.",
+    },
+    {
+        "name": "knowledge-bases",
+        "description": "Knowledge bases -- a workspace's collections of ingested documents.",
+    },
+    {
+        "name": "documents",
+        "description": "Uploading and managing documents within a knowledge base.",
+    },
+    {
+        "name": "retrieval",
+        "description": "Vector + keyword search and reranking over a knowledge base.",
+    },
+    {
+        "name": "assistants",
+        "description": "Configuring AI assistants (agents, prompts, voice) atop a knowledge base.",
+    },
+    {
+        "name": "conversations",
+        "description": "Authenticated-caller conversation history and management.",
+    },
+    {
+        "name": "public-chat",
+        "description": "Anonymous, embeddable-widget-facing chat endpoints (no login required).",
+    },
+    {
+        "name": "public-voice",
+        "description": "Anonymous, embeddable-widget-facing voice-call endpoints (no login).",
+    },
+    {"name": "memory", "description": "Cross-conversation assistant memory."},
+]
+
+app = FastAPI(
+    title="AgentForge API",
+    description=(
+        "REST API for AgentForge, a multi-tenant AI SaaS platform for "
+        "chat and voice assistants backed by an organization's own "
+        "documents. See https://github.com/AhmedIrfan7/agentforge for "
+        "the full project."
+    ),
+    version="0.1.0",
+    openapi_tags=OPENAPI_TAGS,
+)
 instrument_fastapi_app(app)
 
 # Wide open, deliberately: every real JSON API route in this codebase

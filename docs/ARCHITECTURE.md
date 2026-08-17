@@ -388,4 +388,6 @@ The same throughline Milestone 10 established holds here too, tested harder: liv
 - [`infra/terraform/`](../infra/terraform/) — real Terraform for a DigitalOcean reference deployment
 - [`SECURITY.md`](../SECURITY.md) — responsible disclosure policy
 - [`docs/embedding.md`](embedding.md) — customer-facing widget embedding guide
+- [`docs/extension-points.md`](extension-points.md) — real provider/agent interfaces built for extension
+- [`docs/api-reference.md`](api-reference.md) — how to browse the REST API's OpenAPI-generated reference
 - [`AGENTS.md`](../AGENTS.md) — the project's full engineering constitution

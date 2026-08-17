@@ -1,4 +1,4 @@
-.PHONY: help up down api-dev web-dev api-test api-lint api-format web-lint web-format web-build install api-migrate api-seed backup restore-drill
+.PHONY: help up down api-dev web-dev api-test api-lint api-format web-lint web-format web-build install api-migrate api-seed backup restore-drill api-openapi-export
 
 help:
 	@echo "AgentForge dev commands:"
@@ -17,6 +17,7 @@ help:
 	@echo "  make web-build   - production build apps/web"
 	@echo "  make backup      - back up Postgres + MinIO to backups/<timestamp>/"
 	@echo "  make restore-drill BACKUP=backups/<timestamp> - restore-test a backup"
+	@echo "  make api-openapi-export - regenerate docs/openapi.json from the live app"
 
 install:
 	cd apps/api && uv sync
@@ -63,3 +64,6 @@ backup:
 
 restore-drill:
 	./scripts/restore-drill.sh $(BACKUP)
+
+api-openapi-export:
+	cd apps/api && uv run python -m scripts.export_openapi

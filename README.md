@@ -50,7 +50,7 @@ flowchart LR
     Worker --> Storage
 ```
 
-Full detail — data model, RAG pipeline, memory architecture, security design — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). For the provider/agent interfaces built for extension (LLM, embeddings, voice, OAuth, agents), see [`docs/extension-points.md`](docs/extension-points.md).
+Full detail — data model, RAG pipeline, memory architecture, security design — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). For the provider/agent interfaces built for extension (LLM, embeddings, voice, OAuth, agents), see [`docs/extension-points.md`](docs/extension-points.md). For the REST API itself, see [`docs/api-reference.md`](docs/api-reference.md) (OpenAPI-generated, `/docs` and `/redoc` when the server is running).
 
 ## Repository layout
 
