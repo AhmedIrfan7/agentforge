@@ -317,6 +317,20 @@ _Milestone 10 is in progress (steps 251–266) — this section grows as each st
 
 **Encryption at rest (step 254).** Audited every model in `models/__init__.py`'s own canonical registry — every credential-shaped column already hashes (passwords, backup codes, refresh tokens, API keys, invitation/verification tokens) or Fernet-encrypts (MFA TOTP secrets, which unlike a password must stay recoverable) its real value before storage; no plaintext secret column exists anywhere in the schema. Enforced as a standing regression test (`tests/test_sensitive_column_encryption.py`) that scans every real column name for credential-shaped tokens (password/secret/token/credential/key) and fails unless it's hashed, encrypted, or a reviewed, individually-justified exception (e.g. `Document.storage_key`, an object-storage path, not a secret).
 
+**Security event audit logging (step 255).** Permission denials and cross-tenant access attempts each write a real `AuditLog` row (`security.permission_denied`, `security.cross_tenant_attempt`) inside the same transaction the check itself ran in — a cross-tenant attempt is attributed to the org that was *targeted*, so its own admins see it through the existing audit-log viewer. Failed logins have no tenant context yet, so they log a structured `login_failed` event instead.
+
+**Distributed tracing (step 256).** OpenTelemetry instruments FastAPI, Celery (both dispatch and execution sides), and SQLAlchemy, with a distinct `service.name` per process (`agentforge-api` / `agentforge-worker`). Gated by an empty-by-default `OTEL_EXPORTER_OTLP_ENDPOINT` — real, tested code that's genuinely inert until a real collector is configured.
+
+**Metrics export (step 257).** `GET /metrics` on the API exposes Prometheus-format HTTP request counters/histograms labeled by route pattern. The Celery worker process has no web server of its own, so it exposes its own task counters on a second, dedicated port (`WORKER_METRICS_PORT`) via `prometheus_client.start_http_server()` — a real deployment scrapes both as separate jobs.
+
+**Error tracking (step 258).** `sentry-sdk` wired into both processes, gated by an empty-by-default `SENTRY_DSN`. No explicit `capture_exception()` calls anywhere — the installed integrations (`FastApiIntegration`, `StarletteIntegration`, `CeleryIntegration`) correctly capture real unhandled exceptions and task failures while correctly *not* capturing expected `AppError` 4xx responses, which each have their own specific registered handler.
+
+**Rate limiting & abuse detection (step 259).** Redis-backed fixed-window limiting, per-client-IP for auth routes and per-tenant for message-send/document-upload/search (one shared budget per real underlying cost, not per route). A separate, distinct signal — `record_failed_login_attempt` — tracks failed logins per *email* (not per IP), catching a slow, distributed credential-stuffing attempt that stays under the per-IP cap; it only logs, it never blocks.
+
+**Dependency & static-analysis scanning (steps 260–261).** CI runs `pip-audit` (apps/api) and `pnpm audit` (apps/web + apps/widget) against the real locked dependency sets, plus GitHub CodeQL (Python and JavaScript/TypeScript) — all on push/PR and a weekly cron, so a newly-published advisory against already-merged code still gets caught.
+
+**Security test suite (step 262).** `tests/test_security_suite.py` — HTTP-level auth-bypass tests (missing/malformed/forged/expired tokens, including a live-verified alg=none forgery attempt) and SQL-injection-shaped payload tests. Cross-tenant access and RBAC already had extensive dedicated coverage elsewhere (RLS-level isolation tests, per-endpoint tests, the audit-log tests above) — not duplicated, only referenced.
+
 ## Infrastructure & deployment
 
 _To be filled in as Milestone 11 lands._
@@ -325,5 +339,6 @@ _To be filled in as Milestone 11 lands._
 
 - [`docs/ROADMAP.md`](ROADMAP.md) — the 300-step implementation plan
 - [`docs/adr/`](adr/) — Architecture Decision Records
+- [`docs/runbooks/incident-response.md`](runbooks/incident-response.md) — what to do when something real breaks
 - [`docs/embedding.md`](embedding.md) — customer-facing widget embedding guide
 - [`AGENTS.md`](../AGENTS.md) — the project's full engineering constitution
