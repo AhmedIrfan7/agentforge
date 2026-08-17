@@ -1,0 +1,47 @@
+name: Staging Deploy
+
+# Roadmap step 271. Ready to configure, not a fiction: this project has
+# no real staging host yet -- AGENTS.md's own "CONTINUOUS DELIVERY"
+# section explicitly names "Future deployment automation" as future
+# work, not something already built to point at (confirmed repeatedly
+# across Milestones 10 and 11: no real OTLP collector, no real Sentry
+# project, no real cloud target anywhere in this codebase). This
+# workflow is real and correct as written; it simply has nothing to
+# deploy TO until STAGING_HOST/STAGING_SSH_USER/STAGING_SSH_KEY/
+# STAGING_DEPLOY_PATH secrets are configured on this repo's own
+# "staging" environment (Settings -> Environments), at which point it
+# works with zero further code changes.
+#
+# workflow_dispatch only -- no staging host to auto-deploy to on every
+# merge yet, and even once one exists, a staging deploy is a
+# deliberate action, not something that should silently fire on every
+# push to main the way docker-build.yml's own GHCR push does.
+#
+# Deploys via SSH + git pull + docker-compose.prod.yml's own real
+# `up -d --build` flow (docs/self-hosted-deployment.md) -- the exact
+# same commands a human operator would run by hand on that same host,
+# automated rather than reinvented as something bespoke to CI.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-staging:
+    name: Deploy to staging
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.STAGING_DEPLOY_PATH }}"
+            git fetch origin main
+            git checkout origin/main
+            docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T api alembic upgrade head
+            curl -sf http://localhost:8000/health

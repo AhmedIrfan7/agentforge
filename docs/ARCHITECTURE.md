@@ -351,6 +351,10 @@ _Milestone 11 (steps 267–280) is in progress — this section grows as each st
 
 **Self-hosted deployment documentation (step 269).** [`docs/self-hosted-deployment.md`](self-hosted-deployment.md) — every command in it was actually run against this stack, including the two real bugs step 268 caught live (a broken worker startup command, and a Next.js build-time-vs-runtime env var that would have silently shipped every deployment pointed at `localhost`).
 
+**CI/CD image publishing (step 270).** [`.github/workflows/docker-build.yml`](../.github/workflows/docker-build.yml) pushes `api`/`web` images to GHCR (`ghcr.io/ahmedirfan7/...`) on every real push to main (never a PR). Confirmed live end to end, including an independent, unauthenticated `docker pull` from this machine — the images are genuinely public and pullable, not just "the CI step exited 0."
+
+**Staging deploy workflow (step 271).** [`.github/workflows/staging-deploy.yml`](../.github/workflows/staging-deploy.yml) — real and correct, `workflow_dispatch`-triggered SSH deploy using the exact same `docker-compose.prod.yml` commands a human operator would run by hand, honestly waiting on `STAGING_HOST`/`STAGING_SSH_USER`/`STAGING_SSH_KEY`/`STAGING_DEPLOY_PATH` secrets this project doesn't have yet (no real staging host exists — AGENTS.md's own "CONTINUOUS DELIVERY" section names "Future deployment automation" as future, not built). `docker-compose.prod.yml`'s own `api`/`worker` services now carry both `build:` and an `image:` default pointing at the GHCR tag step 270 publishes — the same file supports both "build from source locally" (self-hosted) and "pull the CI-built image" (staging) without duplicating service definitions across two files.
+
 ## Related documents
 
 - [`docs/ROADMAP.md`](ROADMAP.md) — the 300-step implementation plan

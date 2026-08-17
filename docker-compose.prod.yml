@@ -69,9 +69,18 @@ services:
       start_period: 60s
 
   api:
+    # Both `build:` and `image:` -- a real, deliberate choice (roadmap
+    # step 271): `docker compose up --build` (docs/self-hosted-
+    # deployment.md's own real flow) builds from source locally and
+    # tags the result as $API_IMAGE; `docker compose pull && up` (no
+    # --build -- .github/workflows/staging-deploy.yml's own flow)
+    # instead pulls that exact tag from GHCR, already built by step
+    # 270's own CI. Same file, same real service definitions, two real
+    # deploy paths -- not two files to keep in sync by hand.
     build:
       context: apps/api
       dockerfile: Dockerfile
+    image: ${API_IMAGE:-ghcr.io/ahmedirfan7/agentforge-api:latest}
     restart: always
     env_file: .env.prod
     environment:
@@ -104,6 +113,7 @@ services:
     build:
       context: apps/api
       dockerfile: Dockerfile
+    image: ${API_IMAGE:-ghcr.io/ahmedirfan7/agentforge-api:latest}
     restart: always
     env_file: .env.prod
     environment:
