@@ -345,7 +345,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 292. Add `CHANGELOG.md` + semantic-versioning setup
 - [x] 293. Tag `v0.1.0-beta` release
 - [x] 294. Publish public beta announcement (GitHub Discussions)
-- [ ] 295. Collect and triage first round of community feedback
+- [x] 295. Collect and triage first round of community feedback
 
 ## Milestone 13 — v1.0 Release (steps 296–300)
 
