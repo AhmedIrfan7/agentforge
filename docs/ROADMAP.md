@@ -327,7 +327,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 277. Add rollback-procedure documentation
 - [x] 278. Add infra-as-code skeleton (Terraform/Pulumi) for one reference cloud target
 - [x] 279. Add uptime/alerting integration
-- [ ] 280. Document infra architecture in `docs/ARCHITECTURE.md`
+- [x] 280. Document infra architecture in `docs/ARCHITECTURE.md`
 
 ## Milestone 12 — Open Source Readiness / Public Beta (steps 281–295)
 
