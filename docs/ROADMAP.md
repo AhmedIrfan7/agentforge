@@ -336,7 +336,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 283. Add issue templates (bug/feature/research)
 - [x] 284. Add PR template
 - [x] 285. Set up GitHub labels
-- [ ] 286. Set up GitHub milestones matching this roadmap
+- [x] 286. Set up GitHub milestones matching this roadmap
 - [ ] 287. Add public-facing roadmap summary to README
 - [ ] 288. Add `FAQ.md`
 - [ ] 289. Document plugin/extension points
