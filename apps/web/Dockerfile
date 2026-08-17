@@ -20,6 +20,14 @@ WORKDIR /repo
 COPY --from=deps /repo/node_modules ./node_modules
 COPY --from=deps /repo/apps/web/node_modules ./apps/web/node_modules
 COPY . .
+# NEXT_PUBLIC_* vars are inlined into the client bundle at BUILD time
+# (Next.js's own static replacement of process.env.NEXT_PUBLIC_API_URL,
+# see apps/web/lib/api.ts) -- setting this as a container ENV at
+# `docker run` time has no effect once the bundle already exists, so it
+# must be a real build ARG, passed through docker-compose.prod.yml's
+# own `build.args` (roadmap step 268).
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 RUN pnpm --filter @agentforge/web run build
 
 FROM base AS runtime

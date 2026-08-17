@@ -1,0 +1,153 @@
+# Reference single-host production deployment (roadmap step 268).
+#
+# Not multi-region/Kubernetes -- docs/ARCHITECTURE.md's own
+# "Infrastructure & deployment" section is still growing through
+# Milestone 11, and this project has no real cloud deployment target
+# yet (steps 271/272/278 build that later). This is the honest,
+# runnable target for a small-scale production deployment on ONE host:
+# Docker Compose, real secrets via a real .env.prod file (never
+# committed -- see .env.prod.example), named volumes instead of dev's
+# bind-mounted .docker-data/ paths, api/worker built from the same real
+# Dockerfile step 267 gave CI coverage to.
+#
+# Usage:
+#   cp .env.prod.example .env.prod
+#   # fill in every real secret -- see .env.prod.example's own comments
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: agentforge
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d agentforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  clamav:
+    image: clamav/clamav:1.5
+    restart: always
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping", "1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  api:
+    build:
+      context: apps/api
+      dockerfile: Dockerfile
+    restart: always
+    env_file: .env.prod
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://agentforge_app:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/agentforge
+      DATABASE_MIGRATIONS_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/agentforge
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ENDPOINT_URL: http://minio:9000
+      STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER}
+      STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      STORAGE_BUCKET: agentforge-prod
+      CLAMAV_HOST: clamav
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+
+  # Same real image as api -- one Dockerfile, two roles, matching how
+  # this project already runs locally (uvicorn vs `celery worker`, see
+  # the Makefile's own api-dev target vs celery_app.py's own module
+  # docstring for the equivalent local command).
+  worker:
+    build:
+      context: apps/api
+      dockerfile: Dockerfile
+    restart: always
+    env_file: .env.prod
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://agentforge_app:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/agentforge
+      DATABASE_MIGRATIONS_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/agentforge
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ENDPOINT_URL: http://minio:9000
+      STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER}
+      STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      STORAGE_BUCKET: agentforge-prod
+      CLAMAV_HOST: clamav
+    # Not `uv run celery ...` -- the runtime stage's own PATH already
+    # points at /app/.venv/bin (see apps/api/Dockerfile), and uv itself
+    # was only ever copied into the discarded builder stage.
+    command: ["celery", "-A", "celery_app", "worker", "--loglevel=info"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      # A real build ARG, not `environment:` below -- NEXT_PUBLIC_API_URL
+      # gets baked into the client bundle at BUILD time (see
+      # apps/web/Dockerfile's own comment); setting it as a runtime
+      # container env var would have no effect on the already-built
+      # bundle.
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required}
+    restart: always
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

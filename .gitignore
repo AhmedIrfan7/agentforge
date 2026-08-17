@@ -26,6 +26,7 @@ pages-root/
 .env
 .env.*
 !.env.example
+!.env.prod.example
 
 # --- Editors / OS ---
 .vscode/
