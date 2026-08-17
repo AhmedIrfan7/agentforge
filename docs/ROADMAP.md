@@ -315,7 +315,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 ## Milestone 11 — Infrastructure & Deployment (steps 267–280)
 
 - [x] 267. Add production Dockerfiles (multi-stage, non-root user)
-- [ ] 268. Add `docker-compose.prod.yml` reference deployment
+- [x] 268. Add `docker-compose.prod.yml` reference deployment
 - [ ] 269. Add self-hosted deployment documentation
 - [ ] 270. Add CI/CD: build+push images on merge to main
 - [ ] 271. Add staging-deployment workflow
