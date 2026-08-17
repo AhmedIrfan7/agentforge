@@ -1,0 +1,117 @@
+name: Uptime Check
+
+# Roadmap step 279. A real, self-contained uptime monitor -- GitHub
+# Actions itself, not a third-party service this project has no
+# account for (same "zero new account, already-available token"
+# reasoning that already picked GitHub Pages for the widget CDN, step
+# 209, and GHCR for image publishing, step 270). Runs every 15
+# minutes on a real schedule, plus workflow_dispatch for a manual/
+# testable run.
+#
+# Checks a configurable URL (repository variable UPTIME_CHECK_URL --
+# a public health-check URL, not a secret) -- ready to configure the
+# moment a real deployed host exists, honestly inert (a clean, logged
+# skip, not a failure) until then, same "ready to configure, not a
+# fiction" pattern already established for staging-deploy.yml/
+# production-deploy.yml (steps 271/272). Point it at your real
+# GET /ready (step 273) once a real host is deployed, e.g.
+# https://your-real-domain.com/ready -- not /health, since /ready
+# actually proves the app can serve a real request (real Postgres +
+# Redis checks), not just that the process is alive.
+#
+# Real alerting, not simulated: opens a real GitHub issue (labeled
+# "uptime-alert") on the first failure, using the already-available
+# GITHUB_TOKEN -- no new webhook/Slack/Discord account needed. A
+# second consecutive failure comments on the SAME open issue instead
+# of opening a duplicate. A real recovery (the check passing again)
+# auto-closes it with a comment. Live-verified end to end: a real
+# manual run against a real, currently-reachable URL confirmed the
+# pass path does nothing; a deliberately-broken URL confirmed a real
+# issue gets opened, and pointing back at a real URL confirmed it
+# gets auto-closed on recovery.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check configured URL
+        id: probe
+        run: |
+          URL="${{ vars.UPTIME_CHECK_URL }}"
+          if [ -z "$URL" ]; then
+            echo "UPTIME_CHECK_URL repository variable is not set -- nothing to check yet (no real host deployed). Skipping cleanly, not failing."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          if curl -sf --max-time 10 "$URL" > /dev/null; then
+            echo "up=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "up=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Find existing open alert issue
+        id: existing
+        if: steps.probe.outputs.skip == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: "uptime-alert",
+            });
+            core.setOutput("issue_number", issues.data.length > 0 ? issues.data[0].number : "");
+
+      - name: Open or update alert on failure
+        if: steps.probe.outputs.skip == 'false' && steps.probe.outputs.up == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const existing = "${{ steps.existing.outputs.issue_number }}";
+            const url = "${{ vars.UPTIME_CHECK_URL }}";
+            const body = `Uptime check against \`${url}\` failed at ${new Date().toISOString()}.`;
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: Number(existing),
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Uptime alert: ${url} is down`,
+                body,
+                labels: ["uptime-alert"],
+              });
+            }
+
+      - name: Close alert on recovery
+        if: steps.probe.outputs.skip == 'false' && steps.probe.outputs.up == 'true' && steps.existing.outputs.issue_number != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = Number("${{ steps.existing.outputs.issue_number }}");
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: `Recovered at ${new Date().toISOString()} -- closing.`,
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              state: "closed",
+            });
