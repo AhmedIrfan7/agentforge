@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.configuration import AgentConfiguration
 from antivirus import scan_for_viruses
+from auth.passwords import hash_password
 from db import get_session, set_tenant_context
 from extraction import dispatch_extraction
 from logging_config import configure_logging, get_logger
@@ -40,7 +41,15 @@ from storage import ensure_bucket_exists, upload_file
 
 DEMO_ORG_SLUG = "demo-org"
 DEMO_WORKSPACE_SLUG = "demo-workspace"
-DEMO_USER_EMAIL = "demo@agentforge.local"
+# .local is not a valid public TLD -- the real EmailStr validator both
+# /auth/signup and /auth/login use rejects it ("special-use or reserved
+# name"), discovered live while actually trying to log in as this seeded
+# user through the real app, not just inspecting the code. A plain
+# ORM-level User(email=...) insert (this file) skips that validation
+# entirely, which is exactly how this went unnoticed until now -- the
+# row existed, it just could never actually be logged into.
+DEMO_USER_EMAIL = "demo@example.com"
+DEMO_USER_PASSWORD = "Demo12345!"
 DEMO_KNOWLEDGE_BASE_SLUG = "demo-knowledge-base"
 DEMO_ASSISTANT_SLUG = "demo-assistant"
 DEMO_DOCUMENT_FILENAME = "agentforge-overview.md"
@@ -128,7 +137,12 @@ async def seed() -> None:
         await session.flush()
         logger.info("seed_created_organization", id=str(org.id), slug=org.slug)
 
-        user = User(email=DEMO_USER_EMAIL, full_name="Demo User")
+        user = User(
+            email=DEMO_USER_EMAIL,
+            full_name="Demo User",
+            hashed_password=hash_password(DEMO_USER_PASSWORD),
+            is_email_verified=True,
+        )
         session.add(user)
         await session.flush()
         logger.info("seed_created_user", id=str(user.id), email=user.email)
@@ -197,6 +211,14 @@ async def seed() -> None:
                 "the demo document is queued for extraction/chunking/embedding but a "
                 "Celery worker must be running to actually process it -- `make worker-dev`"
             ),
+        )
+        # Plain print, not structured logging -- a real, known local-dev-only
+        # credential is fine to print for a human to read once at seed time,
+        # but doesn't belong in the same structured log stream everything
+        # else here goes through (ADR-0004's own "avoid exposing secrets in
+        # logs" guidance, applied even to an intentionally-public dev value).
+        print(
+            f"\nLog in at http://localhost:3000/login as {DEMO_USER_EMAIL} / {DEMO_USER_PASSWORD}"
         )
 
 
