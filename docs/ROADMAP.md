@@ -297,7 +297,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 
 - [x] 251. Harden Safety Agent: explicit separation of retrieved content from system instructions
 - [x] 252. Add strict schema validation on every API route (no raw dict passthrough)
-- [ ] 253. Document secrets-management approach (env-based now, vault path documented)
+- [x] 253. Document secrets-management approach (env-based now, vault path documented)
 - [ ] 254. Add encryption-at-rest for sensitive columns (API keys, tokens)
 - [ ] 255. Add security-event audit logging (failed logins, permission denials, cross-tenant attempts)
 - [ ] 256. Add OpenTelemetry tracing across API+workers
