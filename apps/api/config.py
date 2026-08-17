@@ -130,6 +130,14 @@ class Settings(BaseSettings):
     clamav_host: str = "localhost"
     clamav_port: int = 3310
 
+    # OpenTelemetry distributed tracing (roadmap step 256). Empty by
+    # default -- same "real, tested code, genuinely inert until a real
+    # endpoint is configured" pattern openai_api_key/anthropic_api_key
+    # already established (see ADR-0004): no real OTLP collector
+    # (Jaeger, Honeycomb, Datadog, etc.) exists for this project yet.
+    # See observability.py for what happens with no endpoint configured.
+    otel_exporter_otlp_endpoint: str = ""
+
     @property
     def is_development(self) -> bool:
         return self.environment == "development"

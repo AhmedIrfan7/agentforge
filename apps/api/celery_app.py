@@ -37,11 +37,22 @@ Run a worker locally (from apps/api): `uv run celery -A celery_app worker --logl
 On Windows, add `--pool=solo` -- Celery's default "prefork" pool needs
 os.fork, which Windows doesn't have. CI and production (Linux) don't
 need that flag.
+
+As of step 256, setup_tracing() runs here too (this module is every
+worker process's own real entrypoint, `-A celery_app worker`, the same
+way main.py is the API's) -- a distinct service_name ("agentforge-
+worker") from the API's own, so a real trace backend can tell which
+process a given span came from. See observability.py's own docstring
+for why this is real, unconditional instrumentation that goes nowhere
+without a real OTLP endpoint configured.
 """
 
 from celery import Celery
 
 from config import settings
+from observability import setup_tracing
+
+setup_tracing(service_name="agentforge-worker")
 
 celery_app = Celery("agentforge", broker=settings.redis_url, backend=settings.redis_url)
 celery_app.conf.update(

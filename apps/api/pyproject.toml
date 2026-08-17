@@ -35,6 +35,12 @@ dependencies = [
     "langgraph>=1.2.11",
     "markdown>=3.10.3",
     "nh3>=0.3.6",
+    "opentelemetry-api>=1.44.0",
+    "opentelemetry-sdk>=1.44.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.44.0",
+    "opentelemetry-instrumentation-fastapi>=0.65b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.65b0",
+    "opentelemetry-instrumentation-celery>=0.65b0",
 ]
 
 [dependency-groups]
@@ -92,6 +98,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["celery.*"]
 ignore_missing_imports = true
+
 
 # reportlab is dev-only (test fixtures for extraction_pdf.py, roadmap
 # step 091 — generates real PDFs to test against, never imported by

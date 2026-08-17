@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 from errors import register_exception_handlers
 from logging_config import configure_logging, get_logger
+from observability import instrument_fastapi_app, setup_tracing
 from routers import (
     analytics,
     api_key,
@@ -31,8 +32,10 @@ from schemas.health import HealthRead
 
 configure_logging()
 logger = get_logger(__name__)
+setup_tracing(service_name="agentforge-api")
 
 app = FastAPI(title="AgentForge API")
+instrument_fastapi_app(app)
 
 # Wide open, deliberately: every real JSON API route in this codebase
 # authenticates via a Bearer token attached by the caller's own JS
