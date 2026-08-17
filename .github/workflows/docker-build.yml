@@ -1,17 +1,34 @@
 name: Docker Build
 
-# Roadmap step 267. apps/api/Dockerfile and apps/web/Dockerfile have
+# Roadmap step 267 (build + smoke-test) and step 270 (build+push images
+# on merge to main). apps/api/Dockerfile and apps/web/Dockerfile have
 # existed since roadmap "step 032" -- long before this CI workflow --
-# and no CI job anywhere had ever actually built them since. Live
-# verification during step 267 confirmed both still build and run
-# correctly today, but that was only ever proven by hand; this job is
-# what stops the next ~235 steps of drift from silently breaking them
-# again the same way.
+# and no CI job anywhere had ever actually built them since. This job
+# is what stops that class of silent drift from happening again.
 #
-# Build-only, not push -- neither image has anywhere real to publish to
-# yet (Milestone 11's own later steps, e.g. 270's "build+push images on
-# merge to main"). Proving the image builds and its container actually
-# serves a real request is the real, valuable check at this stage.
+# Every push/PR to main builds and smoke-tests both images (proving the
+# image builds and its container actually serves a real request, not
+# just "no build error"). Only a real push to main (never a PR --
+# github.event_name check below) also pushes to GHCR -- a PR from an
+# untrusted fork shouldn't be able to publish an image under this
+# repo's own name.
+#
+# GHCR (ghcr.io), not Docker Hub -- zero new account/secret needed
+# beyond the already-available GITHUB_TOKEN, same reasoning that chose
+# GitHub Pages for the widget CDN (step 209) and GitHub's own private
+# vulnerability reporting (step 264). Image paths are lowercase
+# (ghcr.io/ahmedirfan7/...) because GHCR requires it -- this repo's own
+# real owner login, "AhmedIrfan7", has uppercase letters.
+#
+# Honest limitation, not fixed here: apps/web's own image bakes
+# NEXT_PUBLIC_API_URL in at BUILD time (see apps/web/Dockerfile's own
+# comment, discovered live during step 268) -- the pushed web image
+# uses a placeholder value and is NOT meant to be deployed directly;
+# docs/self-hosted-deployment.md's own real deployment flow builds
+# locally instead (`docker compose ... up -d --build`), which is where
+# a real NEXT_PUBLIC_API_URL actually gets baked in correctly. The
+# pushed web image exists mainly so `docker pull` + inspect is possible
+# without a full local build, not as a drop-in production artifact.
 
 on:
   push:
@@ -19,10 +36,18 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  REGISTRY: ghcr.io
+  API_IMAGE: ghcr.io/ahmedirfan7/agentforge-api
+  WEB_IMAGE: ghcr.io/ahmedirfan7/agentforge-web
+
 jobs:
   build-api-image:
     name: Build + smoke-test apps/api image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -33,13 +58,15 @@ jobs:
           file: apps/api/Dockerfile
           push: false
           load: true
-          tags: agentforge-api:ci
+          tags: |
+            ${{ env.API_IMAGE }}:latest
+            ${{ env.API_IMAGE }}:sha-${{ github.sha }}
       - name: Smoke test (container starts, health endpoint responds, runs as non-root)
         run: |
           docker run -d --name api-smoke -p 8000:8000 \
             -e SECRET_KEY="ci-smoke-test-secret-at-least-32-bytes-long" \
             -e JWT_SECRET="ci-smoke-test-jwt-secret-at-least-32-bytes" \
-            agentforge-api:ci
+            ${{ env.API_IMAGE }}:latest
           for _ in $(seq 1 20); do
             if curl -sf http://localhost:8000/health > /dev/null; then break; fi
             sleep 1
@@ -47,10 +74,25 @@ jobs:
           curl -sf http://localhost:8000/health
           [ "$(docker exec api-smoke whoami)" = "app" ]
           docker rm -f api-smoke
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push
+        if: github.event_name == 'push'
+        run: |
+          docker push ${{ env.API_IMAGE }}:latest
+          docker push ${{ env.API_IMAGE }}:sha-${{ github.sha }}
 
   build-web-image:
     name: Build + smoke-test apps/web image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -61,10 +103,18 @@ jobs:
           file: apps/web/Dockerfile
           push: false
           load: true
-          tags: agentforge-web:ci
+          # A real deployment builds locally with its own real domain
+          # (docs/self-hosted-deployment.md) -- this placeholder just
+          # needs to be build-valid, never actually reached from a
+          # browser.
+          build-args: |
+            NEXT_PUBLIC_API_URL=https://api.example.invalid
+          tags: |
+            ${{ env.WEB_IMAGE }}:latest
+            ${{ env.WEB_IMAGE }}:sha-${{ github.sha }}
       - name: Smoke test (container starts, responds, runs as non-root)
         run: |
-          docker run -d --name web-smoke -p 3000:3000 agentforge-web:ci
+          docker run -d --name web-smoke -p 3000:3000 ${{ env.WEB_IMAGE }}:latest
           for _ in $(seq 1 20); do
             if curl -sf http://localhost:3000/ > /dev/null; then break; fi
             sleep 1
@@ -72,3 +122,15 @@ jobs:
           curl -sf http://localhost:3000/ > /dev/null
           [ "$(docker exec web-smoke whoami)" = "app" ]
           docker rm -f web-smoke
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push
+        if: github.event_name == 'push'
+        run: |
+          docker push ${{ env.WEB_IMAGE }}:latest
+          docker push ${{ env.WEB_IMAGE }}:sha-${{ github.sha }}
