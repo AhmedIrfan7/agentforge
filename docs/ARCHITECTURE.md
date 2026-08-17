@@ -367,6 +367,8 @@ _Milestone 11 (steps 267–280) is in progress — this section grows as each st
 
 **Rollback procedure (step 277).** [`docs/rollback-procedure.md`](rollback-procedure.md) — confirmed live, not assumed, that this project's own 62 Alembic migrations all have real, working `downgrade()` implementations, not empty stubs: ran every migration forward against a real throwaway Postgres container, rolled the latest one back, confirmed the real row it seeded was really gone, then re-upgraded and confirmed it came back correctly. Names the one real, honest limitation this can never solve — a downgrade reverses schema, never restores data a forward migration actually deleted; that's what `scripts/restore-drill.sh` (step 265) is for instead.
 
+**Infra-as-code skeleton (step 278).** [`infra/terraform/`](../infra/terraform/) — real, valid Terraform for ONE reference cloud target (DigitalOcean, chosen for the same "match this project's actual single-host architecture" reasoning that already picked plain Docker Compose over Kubernetes). Provisions a Droplet + firewall (only 22/80/443 open) with Docker installed via cloud-init; deliberately does NOT provision `.env.prod` itself — Terraform state/cloud-init `user_data` are not secret stores. Never `terraform apply`'d against a real account (none exists) — `terraform init`/`validate`/`fmt -check` were all actually run (real, offline, no credentials needed) and pass clean.
+
 ## Related documents
 
 - [`docs/ROADMAP.md`](ROADMAP.md) — the 300-step implementation plan
@@ -375,6 +377,7 @@ _Milestone 11 (steps 267–280) is in progress — this section grows as each st
 - [`docs/self-hosted-deployment.md`](self-hosted-deployment.md) — how to actually run this in production on one host
 - [`docs/rollback-procedure.md`](rollback-procedure.md) — how to actually undo a bad deploy
 - [`docs/environment-variables.md`](environment-variables.md) — every real env var this project reads, in one place
+- [`infra/terraform/`](../infra/terraform/) — real Terraform for a DigitalOcean reference deployment
 - [`SECURITY.md`](../SECURITY.md) — responsible disclosure policy
 - [`docs/embedding.md`](embedding.md) — customer-facing widget embedding guide
 - [`AGENTS.md`](../AGENTS.md) — the project's full engineering constitution

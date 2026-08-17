@@ -45,5 +45,15 @@ pnpm-debug.log*
 # --- Backups (roadmap step 265) -- real tenant data, never committed ---
 backups/
 
+# --- Terraform (roadmap step 278) -- .terraform.lock.hcl IS committed
+# (Terraform's own convention), only the downloaded provider binaries
+# and any real local state/plan output are not. ---
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/*.tfplan
+infra/terraform/*.tfvars
+!infra/terraform/*.tfvars.example
+
 # --- Misc ---
 *.tmp

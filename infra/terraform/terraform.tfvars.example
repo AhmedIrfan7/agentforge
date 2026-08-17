@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars and fill in for a real deployment.
+# Never commit the real terraform.tfvars file -- it's gitignored.
+#
+# do_token is deliberately NOT set here -- pass it via the TF_VAR_do_token
+# environment variable instead (never write a real API token to a file
+# that could accidentally get committed, even a gitignored one on a
+# shared machine): export TF_VAR_do_token="dop_v1_..."
+
+ssh_key_fingerprint = "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
+region              = "nyc3"
+droplet_size        = "s-4vcpu-8gb"
+environment_name    = "production"

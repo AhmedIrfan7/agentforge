@@ -1,0 +1,28 @@
+#cloud-config
+# Real first-boot provisioning: installs Docker Engine + the Compose
+# plugin (the official install method -- ubuntu-24-04-x64's own repos
+# ship an older Docker version, not the current one), clones this
+# repo, and stops there. Deliberately does NOT run `docker compose up`
+# -- .env.prod (real secrets) doesn't exist on a fresh host yet, and
+# generating it here would mean baking real secrets into cloud-init
+# user_data, which DigitalOcean's own API can log in plaintext. A
+# human runs the real remaining steps from
+# docs/self-hosted-deployment.md once, the same as any bare-metal host.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+
+runcmd:
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - git clone https://github.com/AhmedIrfan7/agentforge.git /opt/agentforge
+  - echo "Provisioning complete. See /opt/agentforge/docs/self-hosted-deployment.md for the real remaining steps (copy .env.prod, docker compose up)." > /etc/motd
