@@ -353,7 +353,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 297. Run full security review pass
 - [x] 298. Run full performance benchmark pass
 - [x] 299. Final documentation review
-- [ ] 300. Tag `v1.0.0` release
+- [x] 300. Tag `v1.0.0` release — **all 300 steps complete. Project done.**
 
 ---
 
