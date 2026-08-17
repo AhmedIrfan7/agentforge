@@ -11,7 +11,7 @@
 
 Enterprise-grade, open-source, multi-tenant AI SaaS platform for building and deploying AI chatbots **and** AI voice bots that share one intelligence layer.
 
-> Status: pre-beta, actively developed against a public 300-step roadmap ([`docs/ROADMAP.md`](docs/ROADMAP.md)) — Milestones 1–11 (steps 1–280) are complete: multi-tenant auth/RBAC, document ingestion + RAG retrieval, a multi-agent orchestrator, an admin dashboard, security hardening, and real deployment infrastructure (Docker images, CI/CD, staging/production deploy workflows). No tagged release or hosted instance exists yet — see [`docs/self-hosted-deployment.md`](docs/self-hosted-deployment.md) to run it yourself.
+> Status: pre-beta, actively developed against a public 300-step roadmap ([`docs/ROADMAP.md`](docs/ROADMAP.md)) — Milestones 0–11 (steps 1–280) are complete: multi-tenant auth/RBAC, document ingestion + RAG retrieval, a multi-agent orchestrator, an admin dashboard, security hardening, and real deployment infrastructure (Docker images, CI/CD, staging/production deploy workflows). No tagged release or hosted instance exists yet — see [`docs/self-hosted-deployment.md`](docs/self-hosted-deployment.md) to run it yourself.
 
 ## What this is
 
@@ -103,7 +103,24 @@ Not yet open for external contributions — see [`CONTRIBUTING.md`](CONTRIBUTING
 
 ## Roadmap
 
-Full 300-step roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Currently in Milestone 12 (Open Source Readiness / Public Beta).
+Full 300-step roadmap with every individual step: [`docs/ROADMAP.md`](docs/ROADMAP.md). Live progress tracking: [GitHub Milestones](https://github.com/AhmedIrfan7/agentforge/milestones).
+
+| Milestone | Status |
+| --- | --- |
+| 0 — Foundation | ✅ Complete |
+| 1 — Multi-Tenancy Core | ✅ Complete |
+| 2 — Authentication & Authorization | ✅ Complete |
+| 3 — Knowledge Pipeline: Ingestion + RAG | ✅ Complete |
+| 4 — Agent System | ✅ Complete |
+| 5 — Memory System | ✅ Complete |
+| 6 — Conversation Engine | ✅ Complete |
+| 7 — Embeddable Widget | ✅ Complete |
+| 8 — Voice Platform | ✅ Complete |
+| 9 — Admin Dashboard & Analytics | ✅ Complete |
+| 10 — Security & Observability | ✅ Complete |
+| 11 — Infrastructure & Deployment | ✅ Complete |
+| 12 — Open Source Readiness / Public Beta | 🚧 In progress |
+| 13 — v1.0 Release | ⬜ Not started |
 
 ## License
 
