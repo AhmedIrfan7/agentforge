@@ -352,7 +352,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 296. Address beta feedback backlog
 - [x] 297. Run full security review pass
 - [x] 298. Run full performance benchmark pass
-- [ ] 299. Final documentation review
+- [x] 299. Final documentation review
 - [ ] 300. Tag `v1.0.0` release
 
 ---
