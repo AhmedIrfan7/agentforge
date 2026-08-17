@@ -32,6 +32,7 @@ from logging_config import configure_logging, get_logger
 from models.membership import Membership
 from models.organization import Organization
 from models.role import Role
+from models.security_settings import SecuritySettings
 from models.user import User
 from models.workspace import Workspace
 from repositories.assistant import AssistantRepository
@@ -137,6 +138,13 @@ async def seed() -> None:
         await session.flush()
         logger.info("seed_created_organization", id=str(org.id), slug=org.slug)
 
+        # routers/organization.py:create_organization always creates this
+        # alongside a new org (one row per org, never left nullable -- see
+        # models/security_settings.py's own docstring); this direct ORM
+        # insert has to do the same or the dashboard's Settings page 404s
+        # on "Security settings have not been initialized," found live.
+        session.add(SecuritySettings(tenant_id=org.id))
+
         user = User(
             email=DEMO_USER_EMAIL,
             full_name="Demo User",
@@ -193,6 +201,11 @@ async def seed() -> None:
                 "project using the documents in this knowledge base."
             ),
             agent_configuration=AgentConfiguration().model_dump(),
+            # is_public=True: the public/anonymous door (routers/public_
+            # conversation.py) requires it, and an assistant a fresh
+            # contributor can't actually reach from the embeddable widget
+            # without first flipping a flag isn't much of a working demo.
+            is_public=True,
         )
         logger.info("seed_created_assistant", id=str(assistant.id), slug=assistant.slug)
 
