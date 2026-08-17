@@ -302,7 +302,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 255. Add security-event audit logging (failed logins, permission denials, cross-tenant attempts)
 - [x] 256. Add OpenTelemetry tracing across API+workers
 - [x] 257. Add Prometheus-compatible metrics export
-- [ ] 258. Add centralized error tracking (Sentry or equivalent)
+- [x] 258. Add centralized error tracking (Sentry or equivalent)
 - [ ] 259. Refine rate-limit + abuse-detection middleware
 - [ ] 260. Add automated dependency-vulnerability scanning in CI
 - [ ] 261. Add SAST scanning in CI
