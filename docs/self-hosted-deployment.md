@@ -112,6 +112,47 @@ without killing that instance the way a failed liveness check would.
   (step 263).
 - **Security issues**: [`SECURITY.md`](../SECURITY.md) (step 264).
 
+## Horizontal scaling
+
+The app is designed to scale by adding more `api`/`worker` instances, not by
+redesigning anything (AGENTS.md's own "SCALABILITY" section: "Growth should
+primarily require additional infrastructure, not architectural redesign") —
+this already holds true today, not aspirationally:
+
+- **Auth is stateless.** Access tokens are self-contained JWTs
+  (`auth/jwt.py`) — no server-side session store, no sticky sessions needed.
+  Any `api` replica can handle any request from any client.
+- **Tenant isolation is enforced in Postgres itself** (Row-Level Security,
+  `docs/adr/0003-multi-tenancy-isolation-strategy.md`), not in per-process
+  application state — every replica sees the exact same real isolation
+  guarantees, nothing to keep in sync between them.
+- **Celery workers already scale horizontally by design** (roadmap step
+  089) — multiple worker processes safely consume the same shared Redis
+  queue; adding more is just running more of them.
+
+To actually run more than one replica:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build \
+  --scale api=3 --scale worker=2
+```
+
+Confirmed live (a real, generic Docker networking test, not assumed): Docker
+Compose's own embedded DNS round-robins requests across every container
+sharing a scaled service's name — other containers on the same network (a
+reverse proxy, `worker`) reach `api:8000` and land on a different replica
+each time, with zero extra load-balancer config needed at this scale.
+
+**Real caveat, not automatic**: `docker-compose.prod.yml`'s own `api`
+service publishes a fixed host port (`8000:8000`) for the single-replica
+case's own convenience (step 5's `curl http://localhost:8000/health`
+above) — Docker can't bind that same host port twice, so `--scale api=2`
+or higher will fail until that fixed mapping is removed. Once a real
+reverse proxy is in place (the TLS section above), point its own upstream
+at the internal service name `api:8000` instead of a host port, then
+remove `api`'s own `ports:` entry from `docker-compose.prod.yml` to allow
+scaling past one replica.
+
 ## Updating
 
 ```bash

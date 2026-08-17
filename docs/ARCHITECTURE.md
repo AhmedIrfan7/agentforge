@@ -357,6 +357,10 @@ _Milestone 11 (steps 267–280) is in progress — this section grows as each st
 
 **Production deploy workflow with manual approval gate (step 272).** [`.github/workflows/production-deploy.yml`](../.github/workflows/production-deploy.yml) — same real shape as staging's own deploy workflow, targeting a separate `production` GitHub Environment with its own separate secrets (`PRODUCTION_HOST`/etc., distinct from staging's). The "manual approval gate" is GitHub's own real, native Environment protection rule (`required_reviewers`), configured directly via the API on the repo's `production` environment — confirmed live via `gh api repos/.../environments/production`, not simulated in the workflow YAML itself. A `workflow_dispatch` run genuinely pauses for a real reviewer's approval before any deploy step executes.
 
+**Health-check + readiness probes (step 273).** `GET /health` stays a cheap, dependency-free pure liveness check (used by both Dockerfiles' own `HEALTHCHECK` directives); new `GET /ready` does real Postgres + Redis checks and returns 503 if either fails, for a reverse proxy to route around an instance that can't actually serve a request without killing it the way a failed liveness check would.
+
+**Horizontal scaling (step 274).** No architectural change needed — auth is stateless (JWTs, no server-side session store), tenant isolation is enforced in Postgres itself (RLS) rather than per-process state, and Celery workers already scale horizontally by design (step 089). `docker compose ... --scale api=N --scale worker=M` is real and documented in [`docs/self-hosted-deployment.md`](self-hosted-deployment.md#horizontal-scaling), including a live-verified confirmation that Docker Compose's own embedded DNS round-robins across replicas with no extra load-balancer config, and the one real caveat scaling actually requires (removing `api`'s own fixed host port once a reverse proxy is in place).
+
 ## Related documents
 
 - [`docs/ROADMAP.md`](ROADMAP.md) — the 300-step implementation plan
