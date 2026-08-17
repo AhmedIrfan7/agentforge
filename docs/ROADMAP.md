@@ -318,7 +318,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 268. Add `docker-compose.prod.yml` reference deployment
 - [x] 269. Add self-hosted deployment documentation
 - [x] 270. Add CI/CD: build+push images on merge to main
-- [ ] 271. Add staging-deployment workflow
+- [x] 271. Add staging-deployment workflow
 - [ ] 272. Add production-deployment workflow with manual approval gate
 - [ ] 273. Add health-check + readiness probes
 - [ ] 274. Add horizontal-scaling config for API/workers
