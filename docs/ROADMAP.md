@@ -333,7 +333,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 
 - [x] 281. Finalize README (quickstart, architecture diagram, screenshots)
 - [x] 282. Finalize `CONTRIBUTING.md` (dev setup, PR process, coding standards)
-- [ ] 283. Add issue templates (bug/feature/research)
+- [x] 283. Add issue templates (bug/feature/research)
 - [ ] 284. Add PR template
 - [ ] 285. Set up GitHub labels
 - [ ] 286. Set up GitHub milestones matching this roadmap
