@@ -12,6 +12,17 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
+  // Every spec here talks to ONE real, shared Postgres/Redis instance
+  // (no mocked backend, see this file's own docstring) -- with no
+  // `workers` pin, Playwright's own CPU-count-based default let CI run
+  // multiple specs concurrently, and a real cross-spec race surfaced
+  // live (analytics.spec.ts's own conversation count flipped from "2 of
+  // 2" while another spec was creating conversations concurrently under
+  // the same real org/DB). Serial in CI, still fast/parallel locally
+  // (`undefined` keeps Playwright's own default there) -- the identical
+  // "sequential, not concurrent" reasoning this project's own pytest
+  // suite already applies against the same kind of shared real state.
+  workers: process.env.CI ? 1 : undefined,
   reporter: "list",
   use: {
     baseURL: "http://localhost:3000",
