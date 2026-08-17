@@ -369,6 +369,8 @@ _Milestone 11 (steps 267–280) is in progress — this section grows as each st
 
 **Infra-as-code skeleton (step 278).** [`infra/terraform/`](../infra/terraform/) — real, valid Terraform for ONE reference cloud target (DigitalOcean, chosen for the same "match this project's actual single-host architecture" reasoning that already picked plain Docker Compose over Kubernetes). Provisions a Droplet + firewall (only 22/80/443 open) with Docker installed via cloud-init; deliberately does NOT provision `.env.prod` itself — Terraform state/cloud-init `user_data` are not secret stores. Never `terraform apply`'d against a real account (none exists) — `terraform init`/`validate`/`fmt -check` were all actually run (real, offline, no credentials needed) and pass clean.
 
+**Uptime/alerting integration (step 279).** [`.github/workflows/uptime-check.yml`](../.github/workflows/uptime-check.yml) — a real, self-contained uptime monitor using GitHub Actions itself, not a third-party service this project has no account for (same reasoning as GitHub Pages/GHCR elsewhere in this milestone). Polls a configurable `UPTIME_CHECK_URL` repository variable every 15 minutes; honestly inert (a clean, logged skip) until a real host exists to point it at. Real alerting on failure — opens a GitHub issue, comments instead of duplicating on a repeated failure, auto-closes on recovery — all three states live-verified end to end against real URLs (a working one, a deliberately broken one, then working again), including confirming the dedup logic under two rapid consecutive failures.
+
 ## Related documents
 
 - [`docs/ROADMAP.md`](ROADMAP.md) — the 300-step implementation plan
