@@ -1,10 +1,10 @@
 # AgentForge Architecture
 
-This document describes the system **as implemented**, not as aspired to — it grows one section at a time as each subsystem lands, per the checkpoints built into `docs/ROADMAP.md`. For the full product/engineering vision this architecture serves, see [`AGENTS.md`](../AGENTS.md). For why specific technologies were chosen, see [`docs/adr/`](adr/).
+This document describes the system **as implemented**, not as aspired to — it grows one section at a time as each subsystem lands, per the checkpoints built into `docs/ROADMAP.md`. For the full product/engineering vision this architecture serves, see [`AGENTS.md`](../AGENTS.md). For why specific technologies were chosen, see [`docs/adr/`](adr/). For the provider/agent interfaces this system is built to extend, see [`docs/extension-points.md`](extension-points.md).
 
 ## Status
 
-Milestone 8 (Voice Platform) complete; Milestone 9 (Admin Dashboard & Analytics) next. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
+Milestones 0–11 complete (Foundation through Infrastructure & Deployment); Milestone 12 (Open Source Readiness / Public Beta) in progress. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
 
 ## Repository layout
 

@@ -23,6 +23,15 @@ See the [README's own Quickstart](README.md#quickstart-local-development) —
 not duplicated here, so there's one real, maintained copy of these steps
 instead of two that can drift out of sync.
 
+## Adding a provider or agent
+
+Several subsystems (LLM, embeddings, voice STT/TTS, OAuth, agents) are
+built behind a `Protocol` interface specifically so a new real
+implementation doesn't require a rewrite. See
+[`docs/extension-points.md`](docs/extension-points.md) for exactly which
+ones, what's already there, and what implementing a new one looks like
+in practice.
+
 ## Coding standards
 
 Real, currently-enforced conventions — every one of these is checked by CI

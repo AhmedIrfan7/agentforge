@@ -50,7 +50,7 @@ flowchart LR
     Worker --> Storage
 ```
 
-Full detail — data model, RAG pipeline, memory architecture, security design — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Full detail — data model, RAG pipeline, memory architecture, security design — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). For the provider/agent interfaces built for extension (LLM, embeddings, voice, OAuth, agents), see [`docs/extension-points.md`](docs/extension-points.md).
 
 ## Repository layout
 
