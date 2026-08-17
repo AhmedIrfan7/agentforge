@@ -45,14 +45,36 @@ worker") from the API's own, so a real trace backend can tell which
 process a given span came from. See observability.py's own docstring
 for why this is real, unconditional instrumentation that goes nowhere
 without a real OTLP endpoint configured.
+
+As of step 257, importing `metrics` here registers its
+task_prerun/task_postrun/task_failure signal handlers in THIS process
+too (see metrics.py's own docstring for why that's a separate registry
+from the API process's) -- without this import, a real dispatched task
+would run in this process and fire those signals into an empty
+registry, since nothing here would have connected them yet.
+`_on_worker_init` opens metrics.py's dedicated worker metrics HTTP
+server exactly once, on a real worker boot (Celery's own `worker_init`
+signal) -- not on every plain `import celery_app`, which would otherwise
+try to bind settings.worker_metrics_port every time a test or the API
+process imports this module and crash on the second bind.
 """
 
+from typing import Any
+
 from celery import Celery
+from celery.signals import worker_init
 
 from config import settings
+from metrics import start_worker_metrics_server
 from observability import setup_tracing
 
 setup_tracing(service_name="agentforge-worker")
+
+
+@worker_init.connect  # type: ignore[untyped-decorator]
+def _on_worker_init(**kwargs: Any) -> None:
+    start_worker_metrics_server(settings.worker_metrics_port)
+
 
 celery_app = Celery("agentforge", broker=settings.redis_url, backend=settings.redis_url)
 celery_app.conf.update(

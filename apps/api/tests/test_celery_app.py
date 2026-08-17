@@ -11,6 +11,9 @@ in the app dispatches a real task until step 090 -- while adding real
 flakiness risk.
 """
 
+from celery.signals import worker_init
+from pytest import MonkeyPatch
+
 from celery_app import celery_app, ping
 
 
@@ -37,3 +40,19 @@ def test_ping_task_returns_pong() -> None:
     result = ping.apply()
     assert result.successful()
     assert result.result == "pong"
+
+
+def test_worker_init_starts_the_worker_metrics_server(monkeypatch: MonkeyPatch) -> None:
+    # A real socket bind here would collide across pytest-xdist workers
+    # all sharing the same configured port (roadmap step 257) -- spying
+    # on the call instead proves the real wiring (celery_app.py's own
+    # worker_init handler calls metrics.start_worker_metrics_server with
+    # the configured port) without needing a real, held-open socket.
+    calls: list[int] = []
+    monkeypatch.setattr("celery_app.start_worker_metrics_server", calls.append)
+
+    from config import settings
+
+    worker_init.send(sender=None)
+
+    assert calls == [settings.worker_metrics_port]

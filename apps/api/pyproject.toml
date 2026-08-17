@@ -41,6 +41,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.65b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.65b0",
     "opentelemetry-instrumentation-celery>=0.65b0",
+    "prometheus-client>=0.26.0",
 ]
 
 [dependency-groups]

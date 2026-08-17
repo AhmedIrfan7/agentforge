@@ -138,6 +138,13 @@ class Settings(BaseSettings):
     # See observability.py for what happens with no endpoint configured.
     otel_exporter_otlp_endpoint: str = ""
 
+    # Prometheus metrics (roadmap step 257). The API process exposes its
+    # own HTTP request metrics at GET /metrics on its normal port — no
+    # separate config needed there. The Celery worker process has no web
+    # server of its own, so it needs a dedicated port to expose its task
+    # metrics on; see metrics.py's start_worker_metrics_server().
+    worker_metrics_port: int = 9100
+
     @property
     def is_development(self) -> bool:
         return self.environment == "development"

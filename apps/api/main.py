@@ -1,9 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from errors import register_exception_handlers
 from logging_config import configure_logging, get_logger
+from metrics import register_metrics_middleware, render_metrics
 from observability import instrument_fastapi_app, setup_tracing
 from routers import (
     analytics,
@@ -62,6 +63,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+register_metrics_middleware(app)
 register_exception_handlers(app)
 app.include_router(auth.router)
 app.include_router(mfa.router)
@@ -91,3 +93,8 @@ app.include_router(memory.router)
 def health() -> HealthRead:
     logger.info("health_check_requested", environment=settings.environment)
     return HealthRead(status="ok")
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics() -> Response:
+    return render_metrics()
