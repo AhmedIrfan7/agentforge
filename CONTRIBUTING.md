@@ -113,6 +113,9 @@ bind to.
    [`docs/adr/0003-multi-tenancy-isolation-strategy.md`](docs/adr/0003-multi-tenancy-isolation-strategy.md).
    A PR that weakens Row-Level Security isolation, even accidentally, is
    treated as a security bug, not a style preference.
+5. A user-facing change (new capability, behavior change, notable fix)
+   gets a line under [`CHANGELOG.md`](CHANGELOG.md)'s `[Unreleased]`
+   section — internal refactors and test-only changes don't need one.
 
 ## Questions
 

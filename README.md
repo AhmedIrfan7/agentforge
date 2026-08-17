@@ -104,6 +104,10 @@ Coming soon — the dashboard and embeddable widget are real and functional toda
 
 Common questions about what this is, the stack, hosting, and licensing: [`FAQ.md`](FAQ.md).
 
+## Changelog
+
+[`CHANGELOG.md`](CHANGELOG.md) — versioning policy and what's changed. No release has been tagged yet.
+
 ## Contributing
 
 Not yet open for external contributions — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the current status and plan.
