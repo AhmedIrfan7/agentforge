@@ -818,7 +818,9 @@ async def generate_message_follow_up_questions(
     if user_message is None:
         raise NotFoundError(f"No preceding user message found for message {message.id}.")
 
-    questions = await generate_follow_up_questions(user_message.content, message.content)
+    questions = await generate_follow_up_questions(
+        user_message.content, message.content, tenant_id=tenant_id
+    )
     return FollowUpQuestionsRead(questions=questions)
 
 

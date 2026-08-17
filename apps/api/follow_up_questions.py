@@ -43,20 +43,35 @@ numbering," but a real LLM doesn't always comply exactly (confirmed as
 a real, common failure mode for this class of prompt, not a
 theoretical one), and a raw "1. What ...?" line would otherwise leak
 into a suggestion a client displays verbatim.
+
+As of step 251, `assistant_response` is wrapped via `agents/safety.py:
+SafetyAgent` before it becomes a message -- see that module's own
+docstring for the real vulnerability this closes (assistant_response
+IS raw retrieved document text today, no chat/generation model exists
+yet to produce a synthesized reply instead, so it reaches this real LLM
+call completely unmarked without this). `tenant_id` is optional/
+keyword-only and additive, matching every other real `traced_run`
+caller in this codebase (agents/tracing.py, step 245) -- callers that
+predate this (none do yet; this is the first caller) would keep
+working unchanged.
 """
 
 import re
+import uuid
 
+from agents.safety import SEPARATION_INSTRUCTION, ContentSeparationRequest, SafetyAgent
+from agents.tracing import traced_run
 from llm.base import LLMProvider, Message
 from llm.openai import OpenAIProvider
 
 _llm_provider: LLMProvider = OpenAIProvider()
+_safety_agent = SafetyAgent()
 
 _FOLLOW_UP_SYSTEM_PROMPT = (
     "Based on this exchange between a user and an AI assistant, suggest "
     "up to 3 short, natural follow-up questions the user might want to ask "
     "next. Write one question per line, with no numbering, bullets, or "
-    "extra commentary."
+    "extra commentary.\n\n" + SEPARATION_INSTRUCTION
 )
 
 _LIST_MARKER = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s*")
@@ -66,11 +81,16 @@ def _strip_list_marker(line: str) -> str:
     return _LIST_MARKER.sub("", line).strip()
 
 
-async def generate_follow_up_questions(user_query: str, assistant_response: str) -> list[str]:
+async def generate_follow_up_questions(
+    user_query: str, assistant_response: str, *, tenant_id: uuid.UUID | None = None
+) -> list[str]:
+    wrapped_response = await traced_run(
+        _safety_agent, ContentSeparationRequest(content=assistant_response), tenant_id=tenant_id
+    )
     messages = [
         Message(role="system", content=_FOLLOW_UP_SYSTEM_PROMPT),
         Message(role="user", content=user_query),
-        Message(role="assistant", content=assistant_response),
+        Message(role="assistant", content=wrapped_response),
     ]
     response = await _llm_provider.complete(messages)
     return [

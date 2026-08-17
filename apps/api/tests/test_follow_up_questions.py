@@ -3,7 +3,13 @@ real "no key configured" failure path against the actual
 api.openai.com endpoint (same discipline test_openai_llm_provider.py/
 test_memory_summarization.py already established), plus a real
 success path using httpx.MockTransport.
+
+As of step 251, also covers the real content-separation wrapping
+(agents/safety.py:SafetyAgent) applied to `assistant_response` before
+it reaches the real LLM call.
 """
+
+import json
 
 import httpx
 import pytest
@@ -84,3 +90,25 @@ async def test_blank_lines_in_the_response_are_skipped(monkeypatch: pytest.Monke
 
     questions = await generate_follow_up_questions("What is your refund policy?", "30 days.")
     assert questions == ["What about exchanges?", "Any other questions?"]
+
+
+@pytest.mark.anyio
+async def test_assistant_response_is_wrapped_in_retrieved_content_delimiters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_messages: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.read())
+        seen_messages.extend(payload["messages"])
+        return _mock_completion_response("What else?")
+
+    monkeypatch.setattr(
+        "llm.openai.httpx.AsyncClient", _client_factory(httpx.MockTransport(handler))
+    )
+
+    await generate_follow_up_questions("What is your refund policy?", "30 days.")
+
+    assert seen_messages[1] == {"role": "user", "content": "What is your refund policy?"}
+    assert seen_messages[2]["role"] == "assistant"
+    assert seen_messages[2]["content"] == "<retrieved_content>\n30 days.\n</retrieved_content>"

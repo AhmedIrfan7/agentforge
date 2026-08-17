@@ -60,6 +60,11 @@ update_content` (173's own reason that method exists) and logs
 `should_retain` summary is checked at all -- one already rejected by
 `MemoryAgent` has no business being compared against existing memories
 for a *different* reason to keep it.
+
+As of step 251, every stored "assistant" turn is wrapped via
+`agents/safety.py:SafetyAgent` before it reaches this real LLM call --
+see that module's own docstring for why (a stored assistant turn IS raw
+retrieved document text today, completely unmarked without this).
 """
 
 import asyncio
@@ -67,6 +72,8 @@ import uuid
 from typing import Any
 
 from agents.memory import MemoryAgent
+from agents.safety import SEPARATION_INSTRUCTION, ContentSeparationRequest, SafetyAgent
+from agents.tracing import traced_run
 from celery_app import celery_app
 from db import get_worker_session, set_tenant_context
 from llm.base import LLMProvider, Message
@@ -79,12 +86,34 @@ from short_term_memory import clear, get_recent_turns
 
 _llm_provider: LLMProvider = OpenAIProvider()
 _memory_agent = MemoryAgent()
+_safety_agent = SafetyAgent()
 
 _SUMMARIZATION_SYSTEM_PROMPT = (
     "Summarize the key facts, preferences, and important information "
     "from this conversation in two to three sentences. Focus on details "
-    "worth remembering for future conversations."
+    "worth remembering for future conversations.\n\n" + SEPARATION_INSTRUCTION
 )
+
+
+async def _wrap_assistant_turns(turns: list[Message], *, tenant_id: uuid.UUID) -> list[Message]:
+    # As of step 251: each stored "assistant" turn IS raw retrieved
+    # document text today (orchestrator.py's own _execute_node, no
+    # chat/generation model exists yet to produce a synthesized reply
+    # instead) -- see agents/safety.py's own docstring for the real
+    # vulnerability wrapping it closes. User turns pass through
+    # unchanged: AGENTS.md's own PROMPT INJECTION DEFENSE section is
+    # about untrusted RETRIEVED content specifically, a distinct concern
+    # from the user's own typed query.
+    wrapped: list[Message] = []
+    for turn in turns:
+        if turn.role != "assistant":
+            wrapped.append(turn)
+            continue
+        wrapped_content = await traced_run(
+            _safety_agent, ContentSeparationRequest(content=turn.content), tenant_id=tenant_id
+        )
+        wrapped.append(Message(role="assistant", content=wrapped_content))
+    return wrapped
 
 
 async def _run_memory_summarization(session_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
@@ -92,7 +121,8 @@ async def _run_memory_summarization(session_id: uuid.UUID, tenant_id: uuid.UUID)
     if not turns:
         return
 
-    messages = [Message(role="system", content=_SUMMARIZATION_SYSTEM_PROMPT), *turns]
+    wrapped_turns = await _wrap_assistant_turns(turns, tenant_id=tenant_id)
+    messages = [Message(role="system", content=_SUMMARIZATION_SYSTEM_PROMPT), *wrapped_turns]
     response = await _llm_provider.complete(messages)
 
     decision = await _memory_agent.run(Message(role="assistant", content=response.content))

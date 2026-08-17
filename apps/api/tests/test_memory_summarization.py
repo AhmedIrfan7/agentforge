@@ -315,4 +315,11 @@ async def test_sends_the_real_conversation_turns_alongside_a_summarization_syste
 
     assert seen_messages[0]["role"] == "system"
     assert seen_messages[1] == {"role": "user", "content": "My name is Jordan."}
-    assert seen_messages[2] == {"role": "assistant", "content": "Nice to meet you, Jordan."}
+    # As of step 251, a stored assistant turn is wrapped in explicit
+    # <retrieved_content> delimiters before it reaches this real LLM
+    # call (agents/safety.py:SafetyAgent) -- user turns pass through
+    # unwrapped, only the assistant turn changes shape here.
+    assert seen_messages[2]["role"] == "assistant"
+    assert seen_messages[2]["content"] == (
+        "<retrieved_content>\nNice to meet you, Jordan.\n</retrieved_content>"
+    )
