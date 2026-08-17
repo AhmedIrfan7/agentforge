@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,11 +24,12 @@ from config import settings
 from db import set_tenant_context
 from dependencies.auth import get_current_user_id
 from dependencies.db import get_db
-from dependencies.rbac import require_permission
+from dependencies.rbac import ORG_OWNER_ROLE_NAME, require_org_owner, require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
 from errors import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from models.invitation import Invitation
 from models.membership import Membership
+from models.role import Role
 from notifications.email import send_email
 from repositories.invitation import InvitationRepository, get_invitation_by_token_hash
 from repositories.role import RoleRepository
@@ -44,7 +46,7 @@ TenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
 CurrentUserId = Annotated[uuid.UUID, Depends(get_current_user_id)]
 
 
-def _to_invitation_read(invitation: Invitation) -> InvitationRead:
+def _to_invitation_read(invitation: Invitation, role_name: str) -> InvitationRead:
     """Derives status rather than storing it — a fourth column would just
     be another thing to keep in sync with accepted_at/revoked_at/
     expires_at, which already say everything status would (roadmap step
@@ -62,6 +64,7 @@ def _to_invitation_read(invitation: Invitation) -> InvitationRead:
         tenant_id=invitation.tenant_id,
         email=invitation.email,
         role_id=invitation.role_id,
+        role_name=role_name,
         workspace_id=invitation.workspace_id,
         invited_by_user_id=invitation.invited_by_user_id,
         expires_at=invitation.expires_at,
@@ -84,6 +87,12 @@ async def create_invitation(
     role = await RoleRepository(session).get_by_name(body.role_name)
     if role is None:
         raise NotFoundError(f"Role '{body.role_name}' does not exist.")
+    # Same org_owner-only carve-out require_org_owner already enforces
+    # for a direct role change (membership.py, step 239) -- inviting
+    # someone straight into org_owner is the identical privilege grant
+    # through a different door, and must be guarded identically.
+    if role.name == ORG_OWNER_ROLE_NAME:
+        await require_org_owner(session, tenant_id=tenant_id, user_id=user_id)
 
     if body.workspace_id is not None:
         workspace = await WorkspaceRepository(session, tenant_id).get(body.workspace_id)
@@ -123,7 +132,7 @@ async def create_invitation(
         body=f"Click to accept the invitation: {link}\n\nThis link expires in 7 days.",
     )
 
-    return _to_invitation_read(invitation)
+    return _to_invitation_read(invitation, role.name)
 
 
 @router.get(
@@ -137,8 +146,15 @@ async def list_invitations(
     repo = InvitationRepository(session, tenant_id)
     invitations = await repo.list(limit=pagination.limit, offset=pagination.offset)
     total = await repo.count()
+
+    role_ids = {i.role_id for i in invitations}
+    role_names: dict[uuid.UUID, str] = {}
+    if role_ids:
+        result = await session.execute(select(Role).where(Role.id.in_(role_ids)))
+        role_names = {r.id: r.name for r in result.scalars().all()}
+
     return Page(
-        items=[_to_invitation_read(i) for i in invitations],
+        items=[_to_invitation_read(i, role_names[i.role_id]) for i in invitations],
         limit=pagination.limit,
         offset=pagination.offset,
         total=total,

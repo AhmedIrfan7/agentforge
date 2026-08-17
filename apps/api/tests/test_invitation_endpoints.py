@@ -238,6 +238,55 @@ async def test_end_user_role_cannot_create_invitation() -> None:
 
 
 @pytest.mark.anyio
+async def test_non_owner_cannot_invite_someone_as_org_owner() -> None:
+    """admin has invitation:create, but assigning the org_owner role
+    through an invitation is the same privilege grant require_org_owner
+    already blocks for a direct membership role change (step 239) --
+    must be blocked identically through this door (step 240)."""
+    owner_email = "endpoint-test-inv-owner-6@example.com"
+    org_id, owner_headers = await _new_org(owner_email)
+    admin_email = "endpoint-test-inv-admin@example.com"
+    try:
+        admin_token = signup_and_login(
+            client, email=admin_email, password="correct horse battery staple", full_name="Admin"
+        )
+        async with get_session() as session:
+            result = await session.execute(select(User).where(User.email == admin_email))
+            admin_user = result.scalar_one()
+            role_result = await session.execute(select(Role).where(Role.name == "admin"))
+            admin_role = role_result.scalar_one()
+            await set_tenant_context(session, org_id)
+            session.add(
+                Membership(
+                    tenant_id=org_id,
+                    user_id=admin_user.id,
+                    workspace_id=None,
+                    role_id=admin_role.id,
+                )
+            )
+            await session.commit()
+
+        blocked_response = client.post(
+            f"/organizations/{org_id}/invitations",
+            json={"email": "wannabe-owner@example.com", "role_name": "org_owner"},
+            headers=auth_headers(admin_token),
+        )
+        assert blocked_response.status_code == 403
+
+        allowed_response = client.post(
+            f"/organizations/{org_id}/invitations",
+            json={"email": "real-second-owner@example.com", "role_name": "org_owner"},
+            headers=owner_headers,
+        )
+        assert allowed_response.status_code == 201
+        assert allowed_response.json()["role_name"] == "org_owner"
+    finally:
+        await _cleanup_org(org_id)
+        await _cleanup_user(owner_email)
+        await _cleanup_user(admin_email)
+
+
+@pytest.mark.anyio
 async def test_invitation_create_is_audited() -> None:
     email = "endpoint-test-inv-owner-6@example.com"
     org_id, headers = await _new_org(email)

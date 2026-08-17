@@ -24,6 +24,10 @@ class InvitationRead(BaseModel):
     tenant_id: uuid.UUID
     email: str
     role_id: uuid.UUID
+    # Roadmap step 240 (invitation-management UI) needed this to show
+    # a real role name instead of a bare UUID -- no roles-listing
+    # endpoint exists for a client to resolve role_id itself.
+    role_name: str
     workspace_id: uuid.UUID | None
     invited_by_user_id: uuid.UUID
     expires_at: datetime

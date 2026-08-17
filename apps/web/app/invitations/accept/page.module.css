@@ -1,0 +1,45 @@
+.main {
+  display: flex;
+  min-height: 100vh;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.status {
+  color: rgba(128, 128, 128, 0.8);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 420px;
+  padding: 28px;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 12px;
+}
+
+.title {
+  font-size: 1.375rem;
+  font-weight: 600;
+}
+
+.error {
+  font-size: 0.875rem;
+  color: #dc2626;
+}
+
+.link {
+  align-self: flex-start;
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: #4f46e5;
+  color: white;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.link:hover {
+  filter: brightness(90%);
+}

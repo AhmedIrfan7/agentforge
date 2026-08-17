@@ -11,7 +11,9 @@ handing themselves owner-level control:
 - Only an existing org_owner may assign the org_owner role to someone,
   or change/remove an EXISTING org_owner's membership -- same
   "org_owner-only carve-out on top of a broader tier" shape
-  organization:delete already established (step 234).
+  organization:delete already established (step 234). Shared via
+  dependencies/rbac.py:require_org_owner (step 240 also needs it, for
+  inviting someone directly as org_owner).
 - No update or delete may leave an organization with zero org_owner
   memberships.
 Acting on your OWN membership through this admin endpoint is out of
@@ -25,18 +27,16 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import write_audit_log
 from dependencies.auth import get_current_user_id
-from dependencies.rbac import require_permission
+from dependencies.rbac import ORG_OWNER_ROLE_NAME, require_org_owner, require_permission
 from dependencies.tenant import get_current_tenant_id, get_tenant_db
-from errors import ConflictError, ForbiddenError, NotFoundError
+from errors import ConflictError, NotFoundError
 from models.role import Role
 from models.user import User
 from repositories.membership import MembershipRepository
-from repositories.rbac import get_user_memberships
 from repositories.role import RoleRepository
 from schemas.common import Page, PaginationParams
 from schemas.membership import MembershipRead, MembershipUpdate
@@ -46,8 +46,6 @@ router = APIRouter(prefix="/organizations/{organization_id}/members", tags=["mem
 TenantDb = Annotated[AsyncSession, Depends(get_tenant_db)]
 TenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
 CurrentUserId = Annotated[uuid.UUID, Depends(get_current_user_id)]
-
-ORG_OWNER_ROLE_NAME = "org_owner"
 
 
 def _to_membership_read(
@@ -63,19 +61,6 @@ def _to_membership_read(
         role_display_name=role.display_name,
         created_at=created_at,
     )
-
-
-async def _require_acting_org_owner(
-    session: AsyncSession, tenant_id: uuid.UUID, user_id: uuid.UUID
-) -> None:
-    memberships = await get_user_memberships(session, user_id=user_id, tenant_id=tenant_id)
-    role_ids = {m.role_id for m in memberships}
-    role_names: set[str] = set()
-    if role_ids:
-        result = await session.execute(select(Role.name).where(Role.id.in_(role_ids)))
-        role_names = set(result.scalars().all())
-    if ORG_OWNER_ROLE_NAME not in role_names:
-        raise ForbiddenError("Only an organization owner can do this.")
 
 
 async def _ensure_not_last_owner(repo: MembershipRepository, org_owner_role_id: uuid.UUID) -> None:
@@ -132,7 +117,7 @@ async def update_member_role(
     current_is_owner = current_role is not None and current_role.name == ORG_OWNER_ROLE_NAME
     new_is_owner = new_role.name == ORG_OWNER_ROLE_NAME
     if current_is_owner or new_is_owner:
-        await _require_acting_org_owner(session, tenant_id, user_id)
+        await require_org_owner(session, tenant_id=tenant_id, user_id=user_id)
     if current_is_owner and not new_is_owner:
         await _ensure_not_last_owner(repo, current_role.id)  # type: ignore[union-attr]
 
@@ -170,7 +155,7 @@ async def remove_member(
 
     current_role = await session.get(Role, membership.role_id)
     if current_role is not None and current_role.name == ORG_OWNER_ROLE_NAME:
-        await _require_acting_org_owner(session, tenant_id, user_id)
+        await require_org_owner(session, tenant_id=tenant_id, user_id=user_id)
         await _ensure_not_last_owner(repo, current_role.id)
 
     await repo.delete(membership)
