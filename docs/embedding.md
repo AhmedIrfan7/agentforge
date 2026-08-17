@@ -62,7 +62,20 @@ Below a 480px-wide viewport, the chat window switches to a real full-screen layo
 
 ## Pinning a specific widget version
 
-`https://ahmedirfan7.github.io/agentforge/widget.js` always serves the latest release and updates automatically. If you'd rather pin an exact version (e.g. to control exactly when you pick up a change), every published version stays permanently available at `https://ahmedirfan7.github.io/agentforge/v{version}/widget.js` (e.g. `v0.2.0/widget.js`) — see [`versions.json`](https://ahmedirfan7.github.io/agentforge/versions.json) for the full list of published versions.
+`https://ahmedirfan7.github.io/agentforge/widget.js` always serves the latest release and updates automatically. If you'd rather pin an exact version (e.g. to control exactly when you pick up a change), every published version stays permanently available at `https://ahmedirfan7.github.io/agentforge/v{version}/widget.js` (e.g. `v0.2.0/widget.js`) — see [`versions.json`](https://ahmedirfan7.github.io/agentforge/versions.json) for the full list of published versions and each one's real [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) hash.
+
+**Recommended for a pinned version**: add the real `integrity` attribute from `versions.json`. GitHub Pages (this widget's CDN) has no configuration surface for its own cache headers — every file gets a fixed, short `Cache-Control: max-age=600` regardless of whether it can ever change, confirmed live against the real deployed site. A pinned version's content never changes once published, so a real `integrity` hash lets the browser itself cache and skip re-fetching it far more aggressively than the origin's own headers alone allow — and it's a real security hardening on top of that (the browser refuses to execute the script at all if the fetched bytes ever don't match):
+
+```html
+<script
+  src="https://ahmedirfan7.github.io/agentforge/v0.2.0/widget.js"
+  integrity="sha384-..."
+  crossorigin="anonymous"
+  data-assistant-id="YOUR_ASSISTANT_ID"
+></script>
+```
+
+`crossorigin="anonymous"` is required alongside `integrity` — browsers refuse to apply SRI to a cross-origin script fetched without it. The root `widget.js` (auto-updating, no version pin) can't use `integrity` at all, by definition — the whole point of SRI is verifying the fetched bytes never change, which directly conflicts with "always serves the latest release."
 
 ## What the widget does not do yet
 
