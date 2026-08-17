@@ -19,6 +19,7 @@ from routers import (
     mfa,
     oauth,
     organization,
+    platform_admin,
     public_conversation,
     public_voice,
     retrieval,
@@ -71,6 +72,7 @@ app.include_router(analytics.router)
 app.include_router(security_settings.router)
 app.include_router(audit_log.router)
 app.include_router(system_health.router)
+app.include_router(platform_admin.router)
 app.include_router(knowledge_base.router)
 app.include_router(document.router)
 app.include_router(retrieval.router)
