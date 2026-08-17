@@ -1,7 +1,12 @@
+import asyncio
+
+import redis as sync_redis
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from config import settings
+from db import get_session
 from error_tracking import setup_error_tracking
 from errors import register_exception_handlers
 from logging_config import configure_logging, get_logger
@@ -30,7 +35,7 @@ from routers import (
     system_health,
     workspace,
 )
-from schemas.health import HealthRead
+from schemas.health import HealthRead, ReadinessCheck, ReadinessRead
 
 configure_logging()
 logger = get_logger(__name__)
@@ -95,6 +100,61 @@ app.include_router(memory.router)
 def health() -> HealthRead:
     logger.info("health_check_requested", environment=settings.environment)
     return HealthRead(status="ok")
+
+
+def _ping_redis() -> None:
+    # A short-lived plain sync redis-py connection, not redis_client.py's
+    # own async singleton -- that async client is a single connection
+    # bound to whichever event loop first touches it, and this endpoint
+    # is exercised via real HTTP through Starlette TestClient's own
+    # internal portal loop (different from pytest's own test loop),
+    # confirmed live to throw "Event loop is closed" exactly like
+    # routers/system_health.py's own docstring already documents for
+    # the identical root cause. A short-lived sync connection has no
+    # loop to bind to, sidestepping the whole class of problem.
+    sync_client = sync_redis.from_url(settings.redis_url)
+    try:
+        sync_client.ping()
+    finally:
+        sync_client.close()
+
+
+@app.get("/ready", response_model=ReadinessRead)
+async def readiness(response: Response) -> ReadinessRead:
+    # Distinct from /health (roadmap step 273): /health is a pure
+    # liveness check -- is the process itself alive -- and stays cheap
+    # and dependency-free on purpose, since it's what both Dockerfiles'
+    # own HEALTHCHECK directives and docker-build.yml's CI smoke tests
+    # already rely on; changing ITS behavior to depend on Postgres/Redis
+    # would make container restart policies flap on a brief dependency
+    # blip, the wrong failure mode for a liveness probe. /ready answers
+    # a genuinely different question -- can this instance actually serve
+    # a real request right now -- for a real reverse proxy/load balancer
+    # to route traffic away from an instance that can't, without killing
+    # it. Real checks, not assumed: a real `SELECT 1` (no tenant context
+    # needed, touches no tenant-scoped table) and a real Redis PING.
+    database_ok = True
+    try:
+        async with get_session() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception:
+        database_ok = False
+        logger.exception("readiness_check_database_failed")
+
+    redis_ok = True
+    try:
+        await asyncio.to_thread(_ping_redis)
+    except Exception:
+        redis_ok = False
+        logger.exception("readiness_check_redis_failed")
+
+    ready = database_ok and redis_ok
+    if not ready:
+        response.status_code = 503
+    return ReadinessRead(
+        status="ready" if ready else "not_ready",
+        checks=ReadinessCheck(database=database_ok, redis=redis_ok),
+    )
 
 
 @app.get("/metrics", include_in_schema=False)

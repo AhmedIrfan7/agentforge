@@ -83,8 +83,18 @@ not 8000/3000/5432/6379/9000/9001/3310 directly.
 
 ```bash
 curl -f http://localhost:8000/health   # {"status":"ok"}
+curl -f http://localhost:8000/ready    # {"status":"ready","checks":{"database":true,"redis":true}}
 curl -f http://localhost:3000/         # real HTML
 ```
+
+`/health` and `/ready` answer different questions (step 273) — `/health`
+is a pure liveness check (is the process alive; both Dockerfiles' own
+`HEALTHCHECK` directives use this, and it stays that way on purpose so a
+brief Postgres/Redis blip doesn't cause a container restart). `/ready`
+does real Postgres/Redis checks and returns 503 if either fails — point
+your reverse proxy's own health check at `/ready` if it should stop
+routing traffic to an instance that can't actually serve a request,
+without killing that instance the way a failed liveness check would.
 
 ## Ongoing operations
 
