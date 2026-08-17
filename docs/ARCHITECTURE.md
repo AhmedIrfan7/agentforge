@@ -315,6 +315,8 @@ _Milestone 10 is in progress (steps 251–266) — this section grows as each st
 
 **Secrets management (step 253).** Environment variables, centralized through one typed `config.py:Settings` object — no scattered `os.environ.get()` calls. Full rationale, the real current secrets inventory, and the migration path to a dedicated vault if this project ever needs one: [`docs/adr/0004-secrets-management.md`](adr/0004-secrets-management.md).
 
+**Encryption at rest (step 254).** Audited every model in `models/__init__.py`'s own canonical registry — every credential-shaped column already hashes (passwords, backup codes, refresh tokens, API keys, invitation/verification tokens) or Fernet-encrypts (MFA TOTP secrets, which unlike a password must stay recoverable) its real value before storage; no plaintext secret column exists anywhere in the schema. Enforced as a standing regression test (`tests/test_sensitive_column_encryption.py`) that scans every real column name for credential-shaped tokens (password/secret/token/credential/key) and fails unless it's hashed, encrypted, or a reviewed, individually-justified exception (e.g. `Document.storage_key`, an object-storage path, not a secret).
+
 ## Infrastructure & deployment
 
 _To be filled in as Milestone 11 lands._
