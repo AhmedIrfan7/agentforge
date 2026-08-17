@@ -8,8 +8,8 @@ actively developed against a public 300-step roadmap
 (Open Source Readiness / Public Beta) — issue/PR templates, GitHub
 labels, and a first tagged beta release
 ([`v0.1.0-beta`](https://github.com/AhmedIrfan7/agentforge/releases/tag/v0.1.0-beta))
-are done; a public beta announcement is still landing (roadmap steps
-294–295). This file describes the real PR process that will apply once
+are all done, and the [beta announcement](https://github.com/AhmedIrfan7/agentforge/discussions/3)
+is live. This file describes the real PR process that will apply once
 Milestone 12 fully closes, not a hypothetical future one.
 
 Until then:
@@ -17,6 +17,16 @@ Until then:
 - **Bug reports and design feedback** on the direction in `AGENTS.md` /
   `docs/ROADMAP.md` are welcome via GitHub Issues.
 - **Pull requests** will start being accepted once Milestone 12 completes.
+
+## Issue triage
+
+New issues and discussion posts get the `needs-triage` label, plus a
+real component label (`apps/api`/`apps/web`/`apps/widget`/`infra`) and
+type label (`bug`/`enhancement`/`question`) once reviewed —
+`needs-triage` comes off once that's done. Nothing more elaborate than
+that for now (no triage board, no SLA) — this is a solo-maintained
+project at the moment; the label exists so incoming feedback is
+trackable, not to imply a team process that doesn't exist yet.
 
 ## Dev setup
 
