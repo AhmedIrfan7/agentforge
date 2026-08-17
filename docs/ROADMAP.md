@@ -342,7 +342,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 289. Document plugin/extension points
 - [x] 290. Add OpenAPI-generated API reference docs
 - [x] 291. Add demo knowledge base + assistant for new contributors
-- [ ] 292. Add `CHANGELOG.md` + semantic-versioning setup
+- [x] 292. Add `CHANGELOG.md` + semantic-versioning setup
 - [ ] 293. Tag `v0.1.0-beta` release
 - [ ] 294. Publish public beta announcement (GitHub Discussions)
 - [ ] 295. Collect and triage first round of community feedback
