@@ -319,7 +319,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 - [x] 269. Add self-hosted deployment documentation
 - [x] 270. Add CI/CD: build+push images on merge to main
 - [x] 271. Add staging-deployment workflow
-- [ ] 272. Add production-deployment workflow with manual approval gate
+- [x] 272. Add production-deployment workflow with manual approval gate
 - [ ] 273. Add health-check + readiness probes
 - [ ] 274. Add horizontal-scaling config for API/workers
 - [ ] 275. Add CDN config for widget assets
