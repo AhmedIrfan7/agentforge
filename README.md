@@ -97,6 +97,10 @@ make web-dev       # in a second terminal — Next.js dev server, http://localho
 
 Coming soon — the dashboard and embeddable widget are real and functional today (the Quickstart above runs them); this README doesn't have visual captures embedded yet. Tracked honestly rather than faked.
 
+## FAQ
+
+Common questions about what this is, the stack, hosting, and licensing: [`FAQ.md`](FAQ.md).
+
 ## Contributing
 
 Not yet open for external contributions — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the current status and plan.

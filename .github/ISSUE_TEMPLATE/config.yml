@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: FAQ
+    url: https://github.com/AhmedIrfan7/agentforge/blob/main/FAQ.md
+    about: Check here first — common questions about what this is, hosting, providers, licensing, and contributing.
   - name: Questions or general discussion
     url: https://github.com/AhmedIrfan7/agentforge/discussions
     about: For anything that isn't a bug report, feature request, or research question — CONTRIBUTING.md's own "Questions" section points here too.

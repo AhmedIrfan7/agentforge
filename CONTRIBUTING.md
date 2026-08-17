@@ -107,4 +107,5 @@ bind to.
 
 ## Questions
 
-Open a GitHub Discussion or Issue on this repository.
+Check [`FAQ.md`](FAQ.md) first — if it's not answered there, open a GitHub
+Discussion or Issue on this repository.
