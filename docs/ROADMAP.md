@@ -350,7 +350,7 @@ Real, two-way voice built on top of the existing anonymous-conversation infrastr
 ## Milestone 13 — v1.0 Release (steps 296–300)
 
 - [x] 296. Address beta feedback backlog
-- [ ] 297. Run full security review pass
+- [x] 297. Run full security review pass
 - [ ] 298. Run full performance benchmark pass
 - [ ] 299. Final documentation review
 - [ ] 300. Tag `v1.0.0` release
