@@ -4,7 +4,7 @@ This document describes the system **as implemented**, not as aspired to — it 
 
 ## Status
 
-Milestones 0–11 complete (Foundation through Infrastructure & Deployment); Milestone 12 (Open Source Readiness / Public Beta) in progress. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
+Milestones 0–12 complete (Foundation through Open Source Readiness / Public Beta — first tagged release [`v0.1.0-beta`](https://github.com/AhmedIrfan7/agentforge/releases/tag/v0.1.0-beta)); Milestone 13 (v1.0 Release) next. Sections below are filled in as the corresponding roadmap milestone completes — an empty section means that subsystem doesn't exist yet, not that it was forgotten. (Authentication & authorization, Milestone 2, is also built — its section is still a placeholder below; that's a documentation gap to close, not a sign the subsystem is missing.)
 
 ## Repository layout
 
