@@ -110,7 +110,7 @@ app = FastAPI(
         "documents. See https://github.com/AhmedIrfan7/agentforge for "
         "the full project."
     ),
-    version="0.1.0",
+    version="1.0.0",
     openapi_tags=OPENAPI_TAGS,
 )
 instrument_fastapi_app(app)

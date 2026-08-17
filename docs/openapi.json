@@ -3,7 +3,7 @@
   "info": {
     "title": "AgentForge API",
     "description": "REST API for AgentForge, a multi-tenant AI SaaS platform for chat and voice assistants backed by an organization's own documents. See https://github.com/AhmedIrfan7/agentforge for the full project.",
-    "version": "0.1.0"
+    "version": "1.0.0"
   },
   "paths": {
     "/auth/signup": {

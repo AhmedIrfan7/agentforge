@@ -9,9 +9,10 @@ follows [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 **Project version** — `apps/api/pyproject.toml`, `apps/api/main.py`
 (the FastAPI app's own `version=`), `apps/web/package.json`, and
 `packages/shared/package.json` are kept in sync and currently at
-`0.1.0`. This is the version a GitHub Release/tag refers to. Pre-1.0,
-per SemVer's own §4: any `0.MINOR` bump may include breaking changes —
-there's no public API stability guarantee yet.
+`1.0.0`. This is the version a GitHub Release/tag refers to. Per
+[SemVer](https://semver.org/), `1.0.0` is a real commitment: a breaking
+change to the public API from here requires a major version bump, not a
+silent change within a minor/patch release.
 
 **Widget script version** — `apps/widget/package.json` (currently
 `0.2.0`) is intentionally independent. It tracks the embeddable widget
@@ -22,6 +23,27 @@ and `versions.json` on the published widget CDN for its real version
 history.
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-08-17
+
+All 300 steps of the public roadmap complete. A solo-built, self-reviewed
+milestone, not an externally-audited or production-traffic-proven one —
+see the [GitHub Release](https://github.com/AhmedIrfan7/agentforge/releases/tag/v1.0.0)
+for the full, honestly-scoped notes.
+
+### Added
+
+- Real security review pass: 3 CodeQL alerts investigated and dismissed
+  with documented reasoning, Dependabot vulnerability alerts and
+  automated security fixes enabled, branch protection added to `main`.
+- Closed a previously self-documented gap: `STORAGE_SECRET_KEY` now
+  covered by the same production placeholder-rejection check as
+  `SECRET_KEY`/`JWT_SECRET`/`MFA_ENCRYPTION_KEY`.
+- Real performance benchmark script and documented local-dev latency
+  numbers for the core API paths ([`docs/performance-benchmark.md`](docs/performance-benchmark.md)).
+- The "Authentication & authorization" architecture doc section — empty
+  since Milestone 2 — is now written.
+- A working feedback-triage mechanism (`needs-triage` label + process).
 
 ## [0.1.0-beta] - 2026-08-17
 

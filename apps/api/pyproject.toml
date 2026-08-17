@@ -1,7 +1,7 @@
 [project]
 name = "agentforge-api"
-version = "0.1.0"
-description = "Add your description here"
+version = "1.0.0"
+description = "AgentForge REST API -- multi-tenant AI SaaS backend for chat and voice assistants."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
