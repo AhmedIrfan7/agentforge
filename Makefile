@@ -1,4 +1,4 @@
-.PHONY: help up down api-dev web-dev api-test api-lint api-format web-lint web-format web-build install api-migrate api-seed backup restore-drill api-openapi-export
+.PHONY: help up down api-dev web-dev worker-dev api-test api-lint api-format web-lint web-format web-build install api-migrate api-seed backup restore-drill api-openapi-export
 
 help:
 	@echo "AgentForge dev commands:"
@@ -8,6 +8,7 @@ help:
 	@echo "  make api-migrate - apply database migrations"
 	@echo "  make api-seed    - seed demo org/workspace/user (idempotent)"
 	@echo "  make api-dev     - run the FastAPI dev server"
+	@echo "  make worker-dev  - run the Celery worker (needed to process uploaded documents)"
 	@echo "  make web-dev     - run the Next.js dev server"
 	@echo "  make api-test    - run backend test suite"
 	@echo "  make api-lint    - run ruff + mypy on apps/api"
@@ -37,6 +38,9 @@ api-seed:
 
 api-dev:
 	cd apps/api && uv run uvicorn main:app --reload
+
+worker-dev:
+	cd apps/api && uv run celery -A celery_app worker --loglevel=info
 
 web-dev:
 	pnpm --filter @agentforge/web run dev

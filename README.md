@@ -88,8 +88,11 @@ make api-migrate   # applies every real Alembic migration
 make api-seed      # idempotent — seeds a demo org/workspace/user
 
 make api-dev       # FastAPI dev server, http://localhost:8000
+make worker-dev    # in a third terminal — Celery worker, processes uploaded documents
 make web-dev       # in a second terminal — Next.js dev server, http://localhost:3000
 ```
+
+`make api-seed` creates a demo organization/workspace/user plus a demo knowledge base, a demo document, and a demo assistant — a real, queryable example, not just an empty shell. The document only finishes processing (extraction → chunking → embedding) once `make worker-dev` is running.
 
 `make help` lists every other real command (lint/format/test/backup/restore-drill). For running the full stack in a production-like shape instead of separate dev servers, see [`docs/self-hosted-deployment.md`](docs/self-hosted-deployment.md).
 
