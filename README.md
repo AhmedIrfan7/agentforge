@@ -11,7 +11,7 @@
 
 Enterprise-grade, open-source, multi-tenant AI SaaS platform for building and deploying AI chatbots **and** AI voice bots that share one intelligence layer.
 
-> Status: pre-beta, actively developed against a public 300-step roadmap ([`docs/ROADMAP.md`](docs/ROADMAP.md)) — Milestones 0–11 (steps 1–280) are complete: multi-tenant auth/RBAC, document ingestion + RAG retrieval, a multi-agent orchestrator, an admin dashboard, security hardening, and real deployment infrastructure (Docker images, CI/CD, staging/production deploy workflows). No tagged release or hosted instance exists yet — see [`docs/self-hosted-deployment.md`](docs/self-hosted-deployment.md) to run it yourself.
+> Status: beta, actively developed against a public 300-step roadmap ([`docs/ROADMAP.md`](docs/ROADMAP.md)) — Milestones 0–11 (steps 1–280) are complete: multi-tenant auth/RBAC, document ingestion + RAG retrieval, a multi-agent orchestrator, an admin dashboard, security hardening, and real deployment infrastructure (Docker images, CI/CD, staging/production deploy workflows). First tagged release: [`v0.1.0-beta`](https://github.com/AhmedIrfan7/agentforge/releases/tag/v0.1.0-beta). No hosted instance exists yet — see [`docs/self-hosted-deployment.md`](docs/self-hosted-deployment.md) to run it yourself.
 
 ## What this is
 
@@ -106,7 +106,7 @@ Common questions about what this is, the stack, hosting, and licensing: [`FAQ.md
 
 ## Changelog
 
-[`CHANGELOG.md`](CHANGELOG.md) — versioning policy and what's changed. No release has been tagged yet.
+[`CHANGELOG.md`](CHANGELOG.md) — versioning policy and what's changed. Latest: [`v0.1.0-beta`](https://github.com/AhmedIrfan7/agentforge/releases/tag/v0.1.0-beta).
 
 ## Contributing
 

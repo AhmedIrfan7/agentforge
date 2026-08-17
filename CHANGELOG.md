@@ -21,10 +21,11 @@ changes. See [`docs/embedding.md`](docs/embedding.md#pinning-a-specific-widget-v
 and `versions.json` on the published widget CDN for its real version
 history.
 
-No release has been tagged yet — `docs/ROADMAP.md` step 293 will tag
-the first one, `v0.1.0-beta`, once Milestone 12 closes.
-
 ## [Unreleased]
+
+## [0.1.0-beta] - 2026-08-17
+
+First tagged release. See the [GitHub Release](https://github.com/AhmedIrfan7/agentforge/releases/tag/v0.1.0-beta) for the same notes.
 
 ### Added
 

@@ -21,15 +21,17 @@ for development.
 
 ## Can I use this in production today?
 
-It's pre-beta: every milestone through Infrastructure & Deployment
+It's beta: every milestone through Infrastructure & Deployment
 (Milestone 11) is complete — auth/RBAC, tenant isolation, the RAG
 pipeline, the agent system, voice, an admin dashboard, security
 hardening, observability, and real deployment tooling (Docker images,
-CI/CD, staging/production workflows) all exist and are tested. What's
-still missing is a tagged release, so version numbers aren't stable yet
-and no compatibility guarantees exist between commits. See the
-[Roadmap](README.md#roadmap) table in the README for exact status per
-milestone.
+CI/CD, staging/production workflows) all exist and are tested. The
+first tagged release is
+[`v0.1.0-beta`](https://github.com/AhmedIrfan7/agentforge/releases/tag/v0.1.0-beta),
+but pre-1.0 there's still no public API stability guarantee between
+releases (see [`CHANGELOG.md`](CHANGELOG.md)'s versioning policy). See
+the [Roadmap](README.md#roadmap) table in the README for exact status
+per milestone.
 
 ## Which LLM providers are supported?
 

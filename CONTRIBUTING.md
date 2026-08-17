@@ -5,11 +5,12 @@
 AgentForge is not yet open for external pull requests. The project is
 actively developed against a public 300-step roadmap
 ([`docs/ROADMAP.md`](docs/ROADMAP.md)) and is currently in Milestone 12
-(Open Source Readiness / Public Beta) — issue/PR templates, GitHub labels,
-and a first tagged beta release are still landing (roadmap steps 283–293).
-Opening PRs before those exist would mean contributors hitting an
-undocumented, unstructured process; this file describes the real process
-that will apply once they do, not a hypothetical future one.
+(Open Source Readiness / Public Beta) — issue/PR templates, GitHub
+labels, and a first tagged beta release
+([`v0.1.0-beta`](https://github.com/AhmedIrfan7/agentforge/releases/tag/v0.1.0-beta))
+are done; a public beta announcement is still landing (roadmap steps
+294–295). This file describes the real PR process that will apply once
+Milestone 12 fully closes, not a hypothetical future one.
 
 Until then:
 
