@@ -105,17 +105,21 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from agents.base import Agent
+from agents.conversation import ConversationAgent, ConversationInput
 from agents.planning import PlanningAgent
 from agents.registry import AgentRegistry, agent_registry
 from agents.retriever import RetrievedChunk, RetrieverAgent
 from agents.tracing import traced_run
+from config import settings
 from db import get_worker_session, set_tenant_context
 from embeddings.openai import OpenAIEmbeddingProvider
+from llm.openai import OpenAIProvider
 from repositories.chunk import ChunkRepository
 from vectorstore.pgvector import PgVectorStore
 
 _planning_agent = PlanningAgent()
 _retriever_agent = RetrieverAgent(OpenAIEmbeddingProvider(), PgVectorStore())
+_conversation_agent = ConversationAgent(OpenAIProvider())
 
 
 class OrchestratorState(TypedDict):
@@ -154,6 +158,20 @@ class _RetrieverGraphAgent(Agent[str, list[RetrievedChunk]]):
         async with get_worker_session() as session:
             await set_tenant_context(session, self._tenant_id)
             repo = ChunkRepository(session, self._tenant_id)
+            # Hybrid (dense + keyword, RRF-fused) when a real embedding key
+            # is configured -- meaningfully better recall than keyword-only
+            # full-text matching for a natural-language question (semantic
+            # similarity doesn't need every query word to literally appear
+            # in the chunk the way Postgres's plainto_tsquery does). Falls
+            # back to keyword-only otherwise, the one mechanism that's
+            # always worked with no API key -- search_dense/search_hybrid
+            # would raise EmbeddingProviderError without a real key, and
+            # this path must keep working in that environment (CI, and any
+            # deployment that hasn't configured an LLM provider yet).
+            if settings.openai_api_key:
+                return await _retriever_agent.search_hybrid(
+                    self._tenant_id, repo, self._knowledge_base_id, input
+                )
             return await _retriever_agent.search_keyword(repo, self._knowledge_base_id, input)
 
 
@@ -163,6 +181,20 @@ async def _execute_node(state: OrchestratorState) -> dict[str, object]:
 
     agent = _RetrieverGraphAgent(state["tenant_id"], state["knowledge_base_id"])
     results = await traced_run(agent, state["query"], tenant_id=state["tenant_id"])
+
+    # Real generation when a real LLM key is configured: a grounded answer
+    # synthesized from whatever chunks retrieval found (including "found
+    # nothing" -- ConversationAgent still returns a real, honest sentence
+    # for that case, not a bare "No results found."). Without a key, keep
+    # the previous honest behavior -- the raw retrieved text is the truth
+    # of what's in the documents; there's no model to phrase it with.
+    if settings.openai_api_key:
+        conversation_input = ConversationInput(query=state["query"], chunks=results)
+        llm_response = await traced_run(
+            _conversation_agent, conversation_input, tenant_id=state["tenant_id"]
+        )
+        return {"response": llm_response.content, "chunks": results}
+
     if not results:
         return {"response": "No results found.", "chunks": []}
     return {"response": "\n\n".join(r.text for r in results), "chunks": results}

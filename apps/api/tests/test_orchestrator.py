@@ -24,13 +24,18 @@ proves on its own.
 
 import uuid
 from collections.abc import MutableMapping
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
 import structlog.testing
 
+import orchestrator as orchestrator_module
+from agents.conversation import ConversationAgent
 from agents.registry import AgentRegistry
+from agents.retriever import RetrievedChunk
 from db import get_session, set_tenant_context
+from llm.base import LLMResponse, Message
 from models.chunk import Chunk
 from models.document import Document
 from models.knowledge_base import KnowledgeBase
@@ -248,3 +253,116 @@ async def test_handle_traces_planning_but_not_retriever_for_an_empty_query() -> 
     assert result.response == "   "
     events = _agent_execution_events(logs)
     assert [e["agent_name"] for e in events] == ["planning"]
+
+
+@dataclass
+class _FakeHybridRetrieverAgent:
+    """Stands in for the real RetrieverAgent's search_hybrid -- avoids a
+    real OPENAI_API_KEY embedding call (network + cost) while still
+    proving _RetrieverGraphAgent.run() actually calls search_hybrid, not
+    search_keyword, once settings.openai_api_key is truthy."""
+
+    chunks: list[RetrievedChunk]
+    received_queries: list[str] = field(default_factory=list)
+
+    async def search_hybrid(
+        self,
+        tenant_id: uuid.UUID,
+        chunk_repo: object,
+        knowledge_base_id: uuid.UUID,
+        query: str,
+        *,
+        top_k: int = 10,
+        filters: object | None = None,
+    ) -> list[RetrievedChunk]:
+        self.received_queries.append(query)
+        return self.chunks
+
+
+@dataclass
+class _RecordingLLMProvider:
+    name: str = "fake"
+    response_content: str = "a real generated answer"
+    received_messages: list[list[Message]] = field(default_factory=list)
+
+    async def complete(self, messages: list[Message]) -> LLMResponse:
+        self.received_messages.append(messages)
+        return LLMResponse(content=self.response_content, prompt_tokens=10, completion_tokens=5)
+
+
+@pytest.mark.anyio
+async def test_handle_uses_hybrid_retrieval_and_real_generation_when_a_key_is_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact gap the user hit live: a natural-language question whose
+    words don't all literally appear in the source text returned a raw
+    chunk dump (or "No results found.") from keyword-only search with no
+    generation model. With a real key configured, the graph must call
+    search_hybrid (not search_keyword) and phrase the answer through a
+    real ConversationAgent -- proven here via fakes standing in for the
+    real embedding/LLM providers, so this test needs no real network
+    call or API key."""
+    tenant_id, kb_id = await _new_org_workspace_kb_with_chunk(
+        "orch-hybrid-gen", text="Ahmed has experience with React and FastAPI."
+    )
+    chunk = RetrievedChunk(
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        text="Ahmed has experience with React and FastAPI.",
+        score=0.95,
+    )
+    fake_retriever = _FakeHybridRetrieverAgent(chunks=[chunk])
+    fake_llm = _RecordingLLMProvider(response_content="Yes, he has React and FastAPI experience.")
+
+    monkeypatch.setattr(orchestrator_module, "settings", _TruthyKeySettings())
+    monkeypatch.setattr(orchestrator_module, "_retriever_agent", fake_retriever)
+    monkeypatch.setattr(orchestrator_module, "_conversation_agent", ConversationAgent(fake_llm))
+
+    orchestrator = Orchestrator(AgentRegistry())
+    result = await orchestrator.handle(
+        "does he have any experience", tenant_id=tenant_id, knowledge_base_id=kb_id
+    )
+
+    assert result.response == "Yes, he has React and FastAPI experience."
+    assert result.chunks == [chunk]
+    assert fake_retriever.received_queries == ["does he have any experience"]
+    sent_user_message = next(m for m in fake_llm.received_messages[0] if m.role == "user")
+    assert "React and FastAPI" in sent_user_message.content
+    assert "does he have any experience" in sent_user_message.content
+
+
+@pytest.mark.anyio
+async def test_handle_generates_an_honest_answer_when_hybrid_retrieval_finds_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of the same bug report: "No results found." was
+    dishonest -- it reads like an error, not an answer. With a key
+    configured, an empty-chunks result must still go through the real
+    ConversationAgent and come back as a real, honest sentence."""
+    tenant_id, kb_id = await _new_org_workspace_kb("orch-hybrid-empty")
+    fake_retriever = _FakeHybridRetrieverAgent(chunks=[])
+    fake_llm = _RecordingLLMProvider(response_content="No, he does not have a PhD mentioned.")
+
+    monkeypatch.setattr(orchestrator_module, "settings", _TruthyKeySettings())
+    monkeypatch.setattr(orchestrator_module, "_retriever_agent", fake_retriever)
+    monkeypatch.setattr(orchestrator_module, "_conversation_agent", ConversationAgent(fake_llm))
+
+    orchestrator = Orchestrator(AgentRegistry())
+    result = await orchestrator.handle(
+        "does he have a PhD", tenant_id=tenant_id, knowledge_base_id=kb_id
+    )
+
+    assert result.response == "No, he does not have a PhD mentioned."
+    assert result.chunks == []
+    sent_user_message = next(m for m in fake_llm.received_messages[0] if m.role == "user")
+    assert "no relevant documents were found" in sent_user_message.content
+
+
+@dataclass
+class _TruthyKeySettings:
+    """A minimal stand-in for config.settings with just the one field
+    orchestrator.py actually reads (`settings.openai_api_key`) -- not a
+    mock of the whole Settings model, matching this file's own
+    established "real, narrow fake" convention."""
+
+    openai_api_key: str = "sk-test-fake-key-for-orchestrator-branch-coverage"
