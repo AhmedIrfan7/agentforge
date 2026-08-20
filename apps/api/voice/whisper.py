@@ -69,5 +69,15 @@ class WhisperSTTProvider:
                 response.raise_for_status()
                 payload = response.json()
                 return TranscriptionResult(text=payload["text"], language=payload.get("language"))
+            except httpx.HTTPStatusError as exc:
+                # The response BODY (OpenAI's own real error message, e.g.
+                # "Invalid file format" or "Audio file is too short") is
+                # the one piece of information raise_for_status()'s own
+                # exception string doesn't carry -- without it, a real
+                # caller only ever sees "400 Bad Request", never why.
+                raise SpeechProviderError(
+                    f"OpenAI Whisper transcription request failed: "
+                    f"{exc.response.status_code} {exc.response.text}"
+                ) from exc
             except (httpx.HTTPError, KeyError) as exc:
                 raise SpeechProviderError("OpenAI Whisper transcription request failed.") from exc

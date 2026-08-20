@@ -240,6 +240,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from auth.jwt import TokenError, decode_anonymous_session_token
 from db import get_session, set_tenant_context
 from errors import TooManyRequestsError
+from logging_config import get_logger
 from message_processing import generate_assistant_reply
 from rate_limit import MESSAGE_SEND_RATE_LIMIT, check_rate_limit
 from repositories.assistant import AssistantRepository, get_public_assistant_by_id
@@ -255,6 +256,8 @@ from voice.tracing import (
     log_turn_processing,
 )
 from voice.whisper import WhisperSTTProvider
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/public/assistants/{assistant_id}/voice-sessions", tags=["public-voice"])
 
@@ -472,6 +475,19 @@ async def _finalize_turn(
         result = await _stt_provider.transcribe(bytes(buffer), mime_type=auth.mime_type)
         stt_latency_ms = (time.perf_counter() - stt_start) * 1000
     except SpeechProviderError:
+        # The real cause (a non-2xx response from OpenAI, or a malformed
+        # payload missing "text") was previously discarded entirely --
+        # the client only ever saw a generic message, and nothing was
+        # logged server-side either, making a real failure undiagnosable.
+        # logger.exception (same convention as errors.py:123/main.py:212)
+        # captures the real traceback, including WhisperSTTProvider's own
+        # chained __cause__ (the underlying httpx error/response body).
+        logger.exception(
+            "voice_transcription_failed",
+            voice_session_id=str(auth.voice_session_id),
+            audio_bytes=len(buffer),
+            mime_type=auth.mime_type,
+        )
         log_turn_processing(
             VoiceTurnProcessingTrace(
                 voice_session_id=auth.voice_session_id,
