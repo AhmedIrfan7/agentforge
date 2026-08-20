@@ -11,7 +11,7 @@
 
 Enterprise-grade, open-source, multi-tenant AI SaaS platform for building and deploying AI chatbots **and** AI voice bots that share one intelligence layer.
 
-> Status: beta, actively developed against a public 300-step roadmap ([`docs/ROADMAP.md`](docs/ROADMAP.md)) — Milestones 0–12 (steps 1–295) are complete: multi-tenant auth/RBAC, document ingestion + RAG retrieval, a multi-agent orchestrator, an admin dashboard, security hardening, real deployment infrastructure (Docker images, CI/CD, staging/production deploy workflows), and open-source readiness (issue templates, extension-point docs, this first tagged release). First tagged release: [`v0.1.0-beta`](https://github.com/AhmedIrfan7/agentforge/releases/tag/v0.1.0-beta). No hosted instance exists yet — see [`docs/self-hosted-deployment.md`](docs/self-hosted-deployment.md) to run it yourself.
+> Status: v1.0, all 300 steps of the public roadmap complete ([`docs/ROADMAP.md`](docs/ROADMAP.md)) — multi-tenant auth/RBAC, document ingestion + RAG retrieval with real LLM-generated answers, a multi-agent orchestrator, an admin dashboard, security hardening, real deployment infrastructure (Docker images, CI/CD, staging/production deploy workflows), and open-source readiness (issue templates, extension-point docs). A solo-built, self-reviewed release, not an externally-audited or production-traffic-proven one. Latest tagged release: [`v1.0.0`](https://github.com/AhmedIrfan7/agentforge/releases/tag/v1.0.0). No hosted instance exists yet — see [`docs/self-hosted-deployment.md`](docs/self-hosted-deployment.md) to run it yourself.
 
 ## What this is
 
@@ -106,7 +106,7 @@ Common questions about what this is, the stack, hosting, and licensing: [`FAQ.md
 
 ## Changelog
 
-[`CHANGELOG.md`](CHANGELOG.md) — versioning policy and what's changed. Latest: [`v0.1.0-beta`](https://github.com/AhmedIrfan7/agentforge/releases/tag/v0.1.0-beta).
+[`CHANGELOG.md`](CHANGELOG.md) — versioning policy and what's changed. Latest: [`v1.0.0`](https://github.com/AhmedIrfan7/agentforge/releases/tag/v1.0.0).
 
 ## Contributing
 
@@ -131,7 +131,7 @@ Full 300-step roadmap with every individual step: [`docs/ROADMAP.md`](docs/ROADM
 | 10 — Security & Observability | ✅ Complete |
 | 11 — Infrastructure & Deployment | ✅ Complete |
 | 12 — Open Source Readiness / Public Beta | ✅ Complete |
-| 13 — v1.0 Release | 🚧 In progress |
+| 13 — v1.0 Release | ✅ Complete |
 
 ## License
 

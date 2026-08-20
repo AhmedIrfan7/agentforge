@@ -24,6 +24,22 @@ history.
 
 ## [Unreleased]
 
+### Added
+
+- Real LLM-generated answers in the RAG response path. A retrieval hit
+  used to return the raw retrieved chunk text itself; `ConversationAgent`
+  (`apps/api/agents/conversation.py`) now synthesizes a grounded, honest
+  answer from whatever chunks retrieval found — including a real,
+  honest sentence when nothing relevant exists, replacing the previous
+  bare "No results found." Hybrid (dense + keyword) retrieval also
+  replaces keyword-only search for this path. Both are gated behind a
+  configured `OPENAI_API_KEY`; without one, behavior is unchanged.
+- Real error logging for voice transcription failures
+  (`apps/api/routers/public_voice.py`, `apps/api/voice/whisper.py`) — a
+  failed transcription previously discarded its real cause entirely,
+  leaving both the client and the server logs with no way to diagnose
+  it. The real OpenAI error response body is now captured and logged.
+
 ## [1.0.0] - 2026-08-17
 
 All 300 steps of the public roadmap complete. A solo-built, self-reviewed
