@@ -17,6 +17,7 @@ class UserRead(BaseModel):
     email: str
     full_name: str
     created_at: datetime
+    is_platform_admin: bool
 
 
 class LoginRequest(BaseModel):

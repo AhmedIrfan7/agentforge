@@ -37,6 +37,7 @@ async def test_signup_creates_user_with_hashed_password() -> None:
     assert response.status_code == 201
     body = response.json()
     assert body["email"] == "signup-test-1@example.com"
+    assert body["is_platform_admin"] is False
     assert "password" not in body
     assert "hashed_password" not in body
 

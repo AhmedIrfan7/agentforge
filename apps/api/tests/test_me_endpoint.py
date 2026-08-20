@@ -56,6 +56,7 @@ async def test_me_with_a_valid_token_returns_the_authenticated_user() -> None:
     assert body["full_name"] == "Me Test"
     assert "id" in body
     assert "created_at" in body
+    assert body["is_platform_admin"] is False
     assert "hashed_password" not in body
 
 
