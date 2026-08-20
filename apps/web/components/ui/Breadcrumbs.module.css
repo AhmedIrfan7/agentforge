@@ -1,0 +1,33 @@
+.nav {
+  margin-bottom: var(--space-2);
+}
+
+.list {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  list-style: none;
+  font-size: 0.8125rem;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.link {
+  color: var(--color-primary);
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.current {
+  color: var(--color-muted);
+}
+
+.separator {
+  color: var(--color-muted-faint);
+}

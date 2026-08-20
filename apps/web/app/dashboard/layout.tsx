@@ -7,30 +7,33 @@
 // run in the browser, the same reasoning lib/AuthContext.tsx's own
 // docstring already gives for why this can't be a Server Component.
 //
-// Real nav links only ever appear here once their own real page lands
-// -- Settings (234), Workspaces (235), Members (239), Invitations
-// (240), API keys (241), Analytics (243), Audit log (247), System
-// health (248), Platform admin (249) so far; knowledge-bases/etc. each
-// add their own entry as their own step lands, matching how this
-// codebase everywhere else avoids wiring a UI affordance to a route
-// that doesn't exist yet.
+// Nav is grouped into logical sections (dashboard UX pass) instead of
+// one flat row of 9 links -- Workspace / Organization / Insights /
+// Platform. "Platform" (System health, Platform admin) now only
+// renders when `user.is_platform_admin` is true -- that field didn't
+// exist on UserRead until this same pass added it; before, these links
+// were shown to every authenticated user and relied entirely on the
+// backend's own 403 for a non-admin who clicked them.
 //
-// System health and Platform admin are both visible to every
-// authenticated user, same as Audit log -- their own GET endpoints
-// enforce User.is_platform_admin server-side (a global flag, not a
-// per-org role UserRead doesn't even expose to the client), so hiding
-// either link client-side would need a new field just to duplicate a
-// check the backend already makes.
+// Renders OrgSwitcher next to the brand -- its own
+// useCurrentOrganization() call is independent of whatever the page
+// below it also calls (no shared OrganizationContext exists yet, a
+// known, accepted minor inefficiency, not a correctness bug: both
+// instances resolve to the same organization via the same
+// localStorage-persisted id).
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useAuth } from "@/lib/AuthContext";
+import { useCurrentOrganization } from "@/lib/useCurrentOrganization";
+import { OrgSwitcher } from "@/components/organizations/OrgSwitcher";
 import styles from "./layout.module.css";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { status, user, logout } = useAuth();
+  const { organization, organizations, setOrganization } = useCurrentOrganization();
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -46,33 +49,57 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className={styles.shell}>
       <nav className={styles.nav}>
         <span className={styles.brand}>AgentForge</span>
-        <Link href="/dashboard/workspaces" className={styles.navLink}>
-          Workspaces
-        </Link>
-        <Link href="/dashboard/members" className={styles.navLink}>
-          Members
-        </Link>
-        <Link href="/dashboard/invitations" className={styles.navLink}>
-          Invitations
-        </Link>
-        <Link href="/dashboard/api-keys" className={styles.navLink}>
-          API keys
-        </Link>
-        <Link href="/dashboard/analytics" className={styles.navLink}>
-          Analytics
-        </Link>
-        <Link href="/dashboard/audit-log" className={styles.navLink}>
-          Audit log
-        </Link>
-        <Link href="/dashboard/system-health" className={styles.navLink}>
-          System health
-        </Link>
-        <Link href="/dashboard/platform-admin" className={styles.navLink}>
-          Platform admin
-        </Link>
-        <Link href="/dashboard/settings" className={styles.navLink}>
-          Settings
-        </Link>
+        <OrgSwitcher
+          organizations={organizations}
+          currentOrganizationId={organization?.id}
+          onSelect={setOrganization}
+        />
+
+        <div className={styles.navGroup}>
+          <span className={styles.navGroupLabel}>Workspace</span>
+          <Link href="/dashboard/workspaces" className={styles.navLink}>
+            Workspaces
+          </Link>
+        </div>
+
+        <div className={styles.navGroup}>
+          <span className={styles.navGroupLabel}>Organization</span>
+          <Link href="/dashboard/members" className={styles.navLink}>
+            Members
+          </Link>
+          <Link href="/dashboard/invitations" className={styles.navLink}>
+            Invitations
+          </Link>
+          <Link href="/dashboard/api-keys" className={styles.navLink}>
+            API keys
+          </Link>
+          <Link href="/dashboard/settings" className={styles.navLink}>
+            Settings
+          </Link>
+        </div>
+
+        <div className={styles.navGroup}>
+          <span className={styles.navGroupLabel}>Insights</span>
+          <Link href="/dashboard/analytics" className={styles.navLink}>
+            Analytics
+          </Link>
+          <Link href="/dashboard/audit-log" className={styles.navLink}>
+            Audit log
+          </Link>
+        </div>
+
+        {user.is_platform_admin && (
+          <div className={styles.navGroup}>
+            <span className={styles.navGroupLabel}>Platform</span>
+            <Link href="/dashboard/system-health" className={styles.navLink}>
+              System health
+            </Link>
+            <Link href="/dashboard/platform-admin" className={styles.navLink}>
+              Platform admin
+            </Link>
+          </div>
+        )}
+
         <div className={styles.navSpacer} />
         <span className={styles.userEmail}>{user.email}</span>
         <button

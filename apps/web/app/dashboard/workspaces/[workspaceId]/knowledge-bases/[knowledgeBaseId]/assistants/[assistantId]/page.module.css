@@ -113,3 +113,26 @@
 .submit:hover:not(:disabled) {
   filter: brightness(90%);
 }
+
+.panelStack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 560px;
+  margin-top: 20px;
+}
+
+.gateHint {
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+
+.embedCode {
+  padding: 12px 14px;
+  border-radius: var(--radius-control);
+  background: rgba(128, 128, 128, 0.08);
+  font-size: 0.8125rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

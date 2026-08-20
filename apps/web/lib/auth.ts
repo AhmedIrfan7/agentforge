@@ -23,10 +23,18 @@ export interface AuthUser {
   email: string;
   full_name: string;
   created_at: string;
+  is_platform_admin: boolean;
 }
 
 export type LoginResult =
-  { ok: true } | { ok: false; reason: "invalid_credentials" | "mfa_required" | "unknown" };
+  | { ok: true }
+  | { ok: false; reason: "invalid_credentials" | "unknown" }
+  | { ok: false; reason: "mfa_required"; mfaTicket: string };
+
+export type SignupResult =
+  { ok: true } | { ok: false; reason: "email_taken" | "invalid" | "unknown" };
+
+export type MfaVerifyResult = { ok: true } | { ok: false; reason: "invalid_code" | "unknown" };
 
 function readToken(key: string): string | null {
   if (typeof window === "undefined") {
@@ -70,12 +78,57 @@ export async function login(email: string, password: string): Promise<LoginResul
     { access_token: string; refresh_token: string } | { mfa_required: true; mfa_ticket: string };
 
   if ("mfa_required" in body) {
-    // Honest, tracked gap: this dashboard has no MFA-verification step
-    // yet (no roadmap step through 250 names one) -- surfaced clearly
-    // rather than crashing on a response shape this client can't use.
-    return { ok: false, reason: "mfa_required" };
+    return { ok: false, reason: "mfa_required", mfaTicket: body.mfa_ticket };
   }
 
+  storeTokens(body.access_token, body.refresh_token);
+  return { ok: true };
+}
+
+export async function signup(
+  email: string,
+  password: string,
+  fullName: string,
+): Promise<SignupResult> {
+  const response = await fetch(`${API_BASE_URL}/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, full_name: fullName }),
+  });
+
+  if (response.status === 409) {
+    return { ok: false, reason: "email_taken" };
+  }
+  if (response.status === 422) {
+    return { ok: false, reason: "invalid" };
+  }
+  if (!response.ok) {
+    return { ok: false, reason: "unknown" };
+  }
+
+  // POST /auth/signup returns 201 + the created user only, no tokens
+  // (schemas/auth.py:SignupRequest / routers/auth.py's own signup
+  // handler) -- log the new account in immediately so signup is one
+  // real step for the user, not two.
+  const loginResult = await login(email, password);
+  return loginResult.ok ? { ok: true } : { ok: false, reason: "unknown" };
+}
+
+export async function verifyMfa(mfaTicket: string, code: string): Promise<MfaVerifyResult> {
+  const response = await fetch(`${API_BASE_URL}/auth/mfa/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mfa_ticket: mfaTicket, code }),
+  });
+
+  if (response.status === 401) {
+    return { ok: false, reason: "invalid_code" };
+  }
+  if (!response.ok) {
+    return { ok: false, reason: "unknown" };
+  }
+
+  const body = (await response.json()) as { access_token: string; refresh_token: string };
   storeTokens(body.access_token, body.refresh_token);
   return { ok: true };
 }

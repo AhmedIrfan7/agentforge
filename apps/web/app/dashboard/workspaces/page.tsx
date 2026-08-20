@@ -15,10 +15,11 @@
 // lives) rather than duplicating that form here too.
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { slugify } from "@/lib/slugify";
 import { useCurrentOrganization } from "@/lib/useCurrentOrganization";
 import { createWorkspace, deleteWorkspace, listWorkspaces, type Workspace } from "@/lib/workspaces";
+import { Button, EmptyState } from "@/components/ui";
 import styles from "./page.module.css";
 
 export default function WorkspacesPage() {
@@ -56,6 +57,7 @@ function WorkspaceList({ organizationId }: { organizationId: string }) {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   // A real bug lived here, caught live via Playwright, not by
   // inspection: with no cancellation guard, React's Strict Mode
@@ -139,6 +141,7 @@ function WorkspaceList({ organizationId }: { organizationId: string }) {
         <label className={styles.field}>
           <span>Name</span>
           <input
+            ref={nameInputRef}
             value={name}
             onChange={(event) => {
               const value = event.target.value;
@@ -173,7 +176,15 @@ function WorkspaceList({ organizationId }: { organizationId: string }) {
       {workspaces === null && !listError && <p className={styles.status}>Loading…</p>}
 
       {workspaces !== null && workspaces.length === 0 && (
-        <p className={styles.subtext}>No workspaces yet.</p>
+        <EmptyState
+          title="No workspaces yet."
+          hint="Workspaces group knowledge bases and assistants -- create your first one to get started."
+          action={
+            <Button variant="secondary" onClick={() => nameInputRef.current?.focus()}>
+              Create your first workspace
+            </Button>
+          }
+        />
       )}
 
       {workspaces !== null && workspaces.length > 0 && (

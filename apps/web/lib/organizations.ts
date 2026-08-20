@@ -57,7 +57,12 @@ async function parseOrThrow<T>(response: Response): Promise<T> {
 }
 
 export async function listOrganizations(): Promise<Organization[]> {
-  const response = await authorizedFetch("/organizations?limit=1&offset=0");
+  // Was `?limit=1&offset=0` -- silently capped every caller to at most
+  // ONE organization even though the backend genuinely supports a user
+  // belonging to several (repo.list_for_user). Real bug: an org switcher
+  // is pointless if the client can never see more than one org to
+  // switch to. 50 comfortably covers this feature's real scale today.
+  const response = await authorizedFetch("/organizations?limit=50&offset=0");
   const body = await parseOrThrow<{ items: Organization[] }>(response);
   return body.items;
 }

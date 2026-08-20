@@ -64,5 +64,8 @@ test("knowledge bases: create within a workspace, reach the documents page", asy
   await expect(page.getByRole("heading", { name: "Documents" })).toBeVisible();
   await expect(page.getByText("No documents yet.")).toBeVisible();
   await expect(page.locator('input[type="file"]')).toBeVisible();
-  await expect(page.getByRole("button", { name: "Upload" })).toBeVisible();
+  // exact: true -- the dashboard UX pass added a second real button
+  // here, the empty-state's own "Upload your first document" CTA, whose
+  // name would otherwise also match a loose substring search.
+  await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeVisible();
 });

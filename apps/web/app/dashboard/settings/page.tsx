@@ -14,15 +14,14 @@
 
 import { useEffect, useState } from "react";
 import {
-  createOrganization,
   getSecuritySettings,
   updateOrganization,
   updateSecuritySettings,
   type Organization,
   type SecuritySettings,
 } from "@/lib/organizations";
-import { slugify } from "@/lib/slugify";
 import { useCurrentOrganization } from "@/lib/useCurrentOrganization";
+import { CreateOrganizationForm } from "@/components/organizations/CreateOrganizationForm";
 import styles from "./page.module.css";
 
 export default function SettingsPage() {
@@ -73,7 +72,12 @@ export default function SettingsPage() {
   }
 
   if (!organization) {
-    return <CreateOrganizationForm onCreated={setOrganization} />;
+    return (
+      <CreateOrganizationForm
+        onCreated={setOrganization}
+        subtext="You don't belong to an organization yet."
+      />
+    );
   }
 
   return (
@@ -101,72 +105,6 @@ export default function SettingsPage() {
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-function CreateOrganizationForm({ onCreated }: { onCreated: (org: Organization) => void }) {
-  const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [slugEdited, setSlugEdited] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    try {
-      // Only organization CREATION marks this form as failed --
-      // onCreated's own follow-up (loading security settings) is
-      // independently handled by the parent, so a failure there can
-      // never be mistaken for "the organization wasn't created" and
-      // risk a confusing duplicate submit.
-      const org = await createOrganization(name, slug);
-      onCreated(org);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div className={styles.wrapper}>
-      <h1 className={styles.heading}>Create your organization</h1>
-      <p className={styles.subtext}>You don&apos;t belong to an organization yet.</p>
-      <form className={styles.card} onSubmit={handleSubmit}>
-        <label className={styles.field}>
-          <span>Name</span>
-          <input
-            value={name}
-            onChange={(event) => {
-              const value = event.target.value;
-              setName(value);
-              if (!slugEdited) {
-                setSlug(slugify(value));
-              }
-            }}
-            required
-          />
-        </label>
-        <label className={styles.field}>
-          <span>Slug</span>
-          <input
-            value={slug}
-            onChange={(event) => {
-              setSlugEdited(true);
-              setSlug(event.target.value);
-            }}
-            pattern="[a-z0-9]+(-[a-z0-9]+)*"
-            required
-          />
-        </label>
-        {error && <p className={styles.error}>{error}</p>}
-        <button type="submit" className={styles.submit} disabled={submitting}>
-          {submitting ? "Creating…" : "Create organization"}
-        </button>
-      </form>
     </div>
   );
 }

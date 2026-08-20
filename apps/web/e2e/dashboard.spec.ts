@@ -43,9 +43,11 @@ test("logging in reaches the dashboard, logging out returns to /login", async ({
   await page.getByRole("button", { name: "Sign in" }).click();
 
   await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(
-    page.getByRole("heading", { name: `Welcome back, ${user.fullName}.` }),
-  ).toBeVisible();
+  // A brand-new signup has no organization yet -- the dashboard UX pass
+  // made the home page honestly show the zero-org create-organization
+  // form here instead of a "Welcome back" greeting that would otherwise
+  // paper over having nothing real to show yet.
+  await expect(page.getByRole("heading", { name: "Create your organization" })).toBeVisible();
   await expect(page.getByText(user.email)).toBeVisible();
 
   await page.getByRole("button", { name: "Log out" }).click();

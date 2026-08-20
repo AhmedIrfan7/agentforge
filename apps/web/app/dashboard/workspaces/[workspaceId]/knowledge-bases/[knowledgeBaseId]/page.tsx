@@ -11,6 +11,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { getDocumentStatus, listDocuments, uploadDocument, type Document } from "@/lib/documents";
 import { useCurrentOrganization } from "@/lib/useCurrentOrganization";
+import { Breadcrumbs, Button, EmptyState } from "@/components/ui";
 import styles from "./page.module.css";
 
 // The real, exhaustive set of terminal statuses the ingestion pipeline
@@ -151,6 +152,16 @@ function DocumentList({
 
   return (
     <div className={styles.wrapper}>
+      <Breadcrumbs
+        items={[
+          { label: "Workspaces", href: "/dashboard/workspaces" },
+          {
+            label: "Knowledge bases",
+            href: `/dashboard/workspaces/${workspaceId}/knowledge-bases`,
+          },
+          { label: "Documents" },
+        ]}
+      />
       <h1 className={styles.heading}>Documents</h1>
       <Link
         href={`/dashboard/workspaces/${workspaceId}/knowledge-bases/${knowledgeBaseId}/assistants`}
@@ -173,7 +184,15 @@ function DocumentList({
       {documents === null && !listError && <p className={styles.status}>Loading…</p>}
 
       {documents !== null && documents.length === 0 && (
-        <p className={styles.subtext}>No documents yet.</p>
+        <EmptyState
+          title="No documents yet."
+          hint="Upload a document above so this knowledge base's assistants have something real to answer from."
+          action={
+            <Button variant="secondary" onClick={() => fileInputRef.current?.click()}>
+              Upload your first document
+            </Button>
+          }
+        />
       )}
 
       {documents !== null && documents.length > 0 && (

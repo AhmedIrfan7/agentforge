@@ -22,6 +22,8 @@ import {
   type AgentConfiguration,
 } from "@/lib/assistants";
 import { useCurrentOrganization } from "@/lib/useCurrentOrganization";
+import { generateEmbedCode } from "@/lib/embedCode";
+import { Breadcrumbs, Button, Card, CardHeading, CardSubtext } from "@/components/ui";
 import styles from "./page.module.css";
 
 export default function AssistantBuilderPage() {
@@ -91,13 +93,76 @@ function AssistantBuilder({
   }
 
   return (
-    <BuilderForm
-      organizationId={organizationId}
-      workspaceId={workspaceId}
-      knowledgeBaseId={knowledgeBaseId}
-      assistant={assistant}
-      onSaved={setAssistant}
-    />
+    <>
+      <BuilderForm
+        organizationId={organizationId}
+        workspaceId={workspaceId}
+        knowledgeBaseId={knowledgeBaseId}
+        assistant={assistant}
+        onSaved={setAssistant}
+      />
+      <TestAndEmbedPanel assistantId={assistant.id} isPublic={assistant.is_public} />
+    </>
+  );
+}
+
+function TestAndEmbedPanel({ assistantId, isPublic }: { assistantId: string; isPublic: boolean }) {
+  const [copied, setCopied] = useState(false);
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const embedCode = generateEmbedCode({
+    assistantId,
+    widgetScriptUrl: "https://ahmedirfan7.github.io/agentforge/widget.js",
+    apiUrl,
+  });
+
+  async function handleCopy(): Promise<void> {
+    await navigator.clipboard.writeText(embedCode);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className={styles.panelStack}>
+      <Card>
+        <CardHeading>Test this assistant</CardHeading>
+        <CardSubtext>
+          Opens the real chat used by embedded-widget visitors, so you can try it exactly as a real
+          user would.
+        </CardSubtext>
+        {isPublic ? (
+          <Button href={`/chat?assistantId=${assistantId}`} target="_blank">
+            Test this assistant
+          </Button>
+        ) : (
+          <p className={styles.gateHint}>
+            Enable &quot;Public&quot; above and save to test this assistant.
+          </p>
+        )}
+      </Card>
+
+      <Card>
+        <CardHeading>Get embed code</CardHeading>
+        <CardSubtext>
+          Paste this before your page&apos;s closing <code>&lt;/body&gt;</code> tag to embed this
+          assistant on any site.
+        </CardSubtext>
+        {isPublic ? (
+          <>
+            <pre className={styles.embedCode}>
+              <code>{embedCode}</code>
+            </pre>
+            <Button onClick={() => void handleCopy()} variant="secondary">
+              {copied ? "Copied!" : "Copy"}
+            </Button>
+          </>
+        ) : (
+          <p className={styles.gateHint}>
+            Enable &quot;Public&quot; above and save -- an embedded snippet won&apos;t work for real
+            visitors until then.
+          </p>
+        )}
+      </Card>
+    </div>
   );
 }
 
@@ -180,6 +245,24 @@ function BuilderForm({
 
   return (
     <form className={styles.wrapper} onSubmit={handleSubmit}>
+      <Breadcrumbs
+        items={[
+          { label: "Workspaces", href: "/dashboard/workspaces" },
+          {
+            label: "Knowledge bases",
+            href: `/dashboard/workspaces/${workspaceId}/knowledge-bases`,
+          },
+          {
+            label: "Documents",
+            href: `/dashboard/workspaces/${workspaceId}/knowledge-bases/${knowledgeBaseId}`,
+          },
+          {
+            label: "Assistants",
+            href: `/dashboard/workspaces/${workspaceId}/knowledge-bases/${knowledgeBaseId}/assistants`,
+          },
+          { label: assistant.name },
+        ]}
+      />
       <h1 className={styles.heading}>{assistant.name}</h1>
 
       <div className={styles.card}>

@@ -17,9 +17,9 @@ That's it. A launcher button appears in the bottom-right corner; clicking it ope
 
 ## Getting your assistant ID
 
-**Honest gap:** there's no dashboard yet to click a button and copy this snippet — that's Milestone 9's admin dashboard (roadmap step 233+). Until then, create the assistant directly through the API (`POST` your way through `/organizations` → `/workspaces` → `/knowledge-bases` → `/assistants`, same chain every backend test in this project uses) and set `is_public: true` on it. **Only public assistants are embeddable** — this is a real, deliberate security boundary: an assistant stays private (`is_public: false` by default) until an org admin opts it in.
+Create the assistant through the dashboard (an organization's knowledge base → Assistants → create), open it, and set **Public** on — this is a real, deliberate security boundary: an assistant stays private (`is_public: false` by default) until an org admin opts it in. **Only public assistants are embeddable.**
 
-`apps/web/lib/embedCode.ts:generateEmbedCode` already builds the exact snippet below from an assistant id + theme options, tested (`e2e/embedCode.spec.ts`) but not yet wired to any UI — step 233's dashboard is its real future caller.
+Once it's public and saved, the assistant's own page has a **Get embed code** panel with the exact snippet below, pre-filled with the real assistant id, ready to copy. `apps/web/lib/embedCode.ts:generateEmbedCode` is what builds it (tested, `e2e/embedCode.spec.ts`).
 
 ## Configuration reference
 
@@ -81,9 +81,7 @@ Below a 480px-wide viewport, the chat window switches to a real full-screen layo
 
 Honest, tracked gaps — not silently worked around:
 
-- **No LLM-generated responses.** A real hit's response is the retrieved knowledge-base text itself, or a literal "No results found." — no chat/generation model exists in this environment yet (same gap [`docs/ARCHITECTURE.md`](ARCHITECTURE.md#conversation-engine) documents for the conversation engine generally).
 - **No custom greeting message, animation customization, i18n/language selection, or arbitrary custom CSS** — AGENTS.md's own customization list names all of these; only theme (color/font/logo/position/color-scheme) is implemented so far.
-- **No dashboard UI to generate or copy this snippet** — `lib/embedCode.ts` is real and tested, unwired until Milestone 9 (step 233+).
 
 ## Where this is implemented
 

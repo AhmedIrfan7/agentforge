@@ -9,10 +9,11 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createAssistant, deleteAssistant, listAssistants, type Assistant } from "@/lib/assistants";
 import { slugify } from "@/lib/slugify";
 import { useCurrentOrganization } from "@/lib/useCurrentOrganization";
+import { Breadcrumbs, Button, EmptyState } from "@/components/ui";
 import styles from "./page.module.css";
 
 export default function AssistantsPage() {
@@ -56,6 +57,7 @@ function AssistantList({
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   // Cancellation-guarded mount effect -- the real fix workspaces/
   // page.tsx's own effect needed at step 236 (Strict Mode's dev-only
@@ -122,6 +124,20 @@ function AssistantList({
 
   return (
     <div className={styles.wrapper}>
+      <Breadcrumbs
+        items={[
+          { label: "Workspaces", href: "/dashboard/workspaces" },
+          {
+            label: "Knowledge bases",
+            href: `/dashboard/workspaces/${workspaceId}/knowledge-bases`,
+          },
+          {
+            label: "Documents",
+            href: `/dashboard/workspaces/${workspaceId}/knowledge-bases/${knowledgeBaseId}`,
+          },
+          { label: "Assistants" },
+        ]}
+      />
       <h1 className={styles.heading}>Assistants</h1>
 
       <form className={styles.card} onSubmit={handleCreate}>
@@ -129,6 +145,7 @@ function AssistantList({
         <label className={styles.field}>
           <span>Name</span>
           <input
+            ref={nameInputRef}
             value={name}
             onChange={(event) => {
               const value = event.target.value;
@@ -163,7 +180,15 @@ function AssistantList({
       {assistants === null && !listError && <p className={styles.status}>Loading…</p>}
 
       {assistants !== null && assistants.length === 0 && (
-        <p className={styles.subtext}>No assistants yet.</p>
+        <EmptyState
+          title="No assistants yet."
+          hint="An assistant is what visitors actually talk to -- create one to test it or embed it on a site."
+          action={
+            <Button variant="secondary" onClick={() => nameInputRef.current?.focus()}>
+              Create your first assistant
+            </Button>
+          }
+        />
       )}
 
       {assistants !== null && assistants.length > 0 && (

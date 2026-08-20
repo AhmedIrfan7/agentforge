@@ -63,3 +63,31 @@
 .submit:hover:not(:disabled) {
   filter: brightness(90%);
 }
+
+.altAction {
+  font-size: 0.875rem;
+  color: rgba(128, 128, 128, 0.9);
+  text-align: center;
+}
+
+.altAction a {
+  color: #4f46e5;
+}
+
+.altAction a:hover {
+  text-decoration: underline;
+}
+
+.backButton {
+  padding: 8px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: rgba(128, 128, 128, 0.9);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.backButton:hover {
+  text-decoration: underline;
+}

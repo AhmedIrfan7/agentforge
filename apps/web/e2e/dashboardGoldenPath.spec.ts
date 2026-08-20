@@ -93,7 +93,10 @@ test("dashboard golden path: login, upload a real doc, chat, see it in analytics
       "Our refund policy allows returns within 90 days of purchase for a full refund.",
     ),
   });
-  await page.getByRole("button", { name: "Upload" }).click();
+  // exact: true -- the dashboard UX pass added a second real button
+  // here, the empty-state's own "Upload your first document" CTA, whose
+  // name would otherwise also match a loose substring search.
+  await page.getByRole("button", { name: "Upload", exact: true }).click();
   await expect(page.getByText("refund-policy.txt", { exact: true })).toBeVisible();
 
   // Real antivirus scan + real storage + real extraction (and a real,

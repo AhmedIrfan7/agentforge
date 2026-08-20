@@ -1,6 +1,29 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* Design tokens (dashboard UX pass) -- extracted from the literals
+     every page.module.css file already repeated by hand (card border/
+     radius, primary/destructive/success colors, muted text). No
+     dark-mode override needed: these rgba-gray values already render
+     correctly in both themes today, which is exactly why the existing
+     code used them instead of solid colors -- so this reproduces
+     today's rendered output rather than changing it. */
+  --color-primary: #4f46e5;
+  --color-destructive: #dc2626;
+  --color-success: #16a34a;
+  --color-border: rgba(128, 128, 128, 0.25);
+  --color-border-strong: rgba(128, 128, 128, 0.4);
+  --color-muted: rgba(128, 128, 128, 0.9);
+  --color-muted-faint: rgba(128, 128, 128, 0.8);
+  --radius-card: 12px;
+  --radius-control: 8px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
 }
 
 @media (prefers-color-scheme: dark) {

@@ -14,9 +14,20 @@ import { expect, test } from "@playwright/test";
 // already can); that real, live path is covered there instead, plus
 // this step's own manual live-verification against 100+ real
 // organizations already in the local dev database.
+//
+// The dashboard UX pass made UserRead expose is_platform_admin for
+// real (previously the frontend couldn't see the flag at all), so the
+// nav link itself is now correctly hidden from a non-admin instead of
+// being shown and then 403ing -- this test now proves BOTH real
+// guarantees: the link genuinely isn't in the DOM, and the backend
+// still enforces the same 403 for anyone who navigates to the URL
+// directly (defense in depth -- the UI hiding it is not the only
+// thing standing between a non-admin and this page).
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-test("platform admin: a non-platform-admin user sees the real 403", async ({ page }) => {
+test("platform admin: a non-platform-admin user has no nav link and gets the real 403 directly", async ({
+  page,
+}) => {
   const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const email = `e2e-platform-admin-${suffix}@example.com`;
   const password = "correct horse battery staple";
@@ -33,7 +44,8 @@ test("platform admin: a non-platform-admin user sees the real 403", async ({ pag
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
 
-  await page.getByRole("link", { name: "Platform admin" }).click();
-  await expect(page).toHaveURL(/\/dashboard\/platform-admin$/);
+  await expect(page.getByRole("link", { name: "Platform admin" })).not.toBeVisible();
+
+  await page.goto("/dashboard/platform-admin");
   await expect(page.getByText("Platform admin access required.")).toBeVisible();
 });

@@ -8,7 +8,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createKnowledgeBase,
   deleteKnowledgeBase,
@@ -17,6 +17,7 @@ import {
 } from "@/lib/knowledgeBases";
 import { slugify } from "@/lib/slugify";
 import { useCurrentOrganization } from "@/lib/useCurrentOrganization";
+import { Breadcrumbs, Button, EmptyState } from "@/components/ui";
 import styles from "./page.module.css";
 
 export default function KnowledgeBasesPage() {
@@ -49,6 +50,7 @@ function KnowledgeBaseList({
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   // Cancellation-guarded, matching the real fix workspaces/page.tsx's
   // own effect needed (found live via Playwright): without it,
@@ -115,6 +117,12 @@ function KnowledgeBaseList({
 
   return (
     <div className={styles.wrapper}>
+      <Breadcrumbs
+        items={[
+          { label: "Workspaces", href: "/dashboard/workspaces" },
+          { label: "Knowledge bases" },
+        ]}
+      />
       <h1 className={styles.heading}>Knowledge bases</h1>
 
       <form className={styles.card} onSubmit={handleCreate}>
@@ -122,6 +130,7 @@ function KnowledgeBaseList({
         <label className={styles.field}>
           <span>Name</span>
           <input
+            ref={nameInputRef}
             value={name}
             onChange={(event) => {
               const value = event.target.value;
@@ -156,7 +165,15 @@ function KnowledgeBaseList({
       {knowledgeBases === null && !listError && <p className={styles.status}>Loading…</p>}
 
       {knowledgeBases !== null && knowledgeBases.length === 0 && (
-        <p className={styles.subtext}>No knowledge bases yet.</p>
+        <EmptyState
+          title="No knowledge bases yet."
+          hint="A knowledge base holds the documents an assistant answers from -- create one to start uploading."
+          action={
+            <Button variant="secondary" onClick={() => nameInputRef.current?.focus()}>
+              Create your first knowledge base
+            </Button>
+          }
+        />
       )}
 
       {knowledgeBases !== null && knowledgeBases.length > 0 && (

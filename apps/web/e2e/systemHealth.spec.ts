@@ -15,9 +15,18 @@ import { expect, test } from "@playwright/test";
 // instead, plus this step's own manual live-verification (a real
 // worker process observed going online/offline, real queue depth,
 // real provider configuration state).
+//
+// The dashboard UX pass made UserRead expose is_platform_admin for
+// real, so the nav link is now correctly hidden from a non-admin
+// instead of being shown and then 403ing -- this proves both real
+// guarantees: the link genuinely isn't in the DOM, and the backend
+// still enforces the same 403 for direct navigation (defense in
+// depth, not just the UI hiding it).
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-test("system health: a non-platform-admin user sees the real 403", async ({ page }) => {
+test("system health: a non-platform-admin user has no nav link and gets the real 403 directly", async ({
+  page,
+}) => {
   const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const email = `e2e-system-health-${suffix}@example.com`;
   const password = "correct horse battery staple";
@@ -34,7 +43,8 @@ test("system health: a non-platform-admin user sees the real 403", async ({ page
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
 
-  await page.getByRole("link", { name: "System health" }).click();
-  await expect(page).toHaveURL(/\/dashboard\/system-health$/);
+  await expect(page.getByRole("link", { name: "System health" })).not.toBeVisible();
+
+  await page.goto("/dashboard/system-health");
   await expect(page.getByText("Platform admin access required.")).toBeVisible();
 });
